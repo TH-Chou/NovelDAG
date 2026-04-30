@@ -84,6 +84,9 @@ pub struct Consensus {
 
     /// The genesis certificates.
     genesis: Vec<Certificate>,
+    /// Pre-computed order_dag results keyed by leader_round, computed one round ahead
+    /// of the wave boundary to reduce commit-time latency.
+    precomputed: HashMap<Round, Vec<Certificate>>,
 }
 
 impl Consensus {
@@ -121,6 +124,7 @@ impl Consensus {
                 tx_primary,
                 tx_output,
                 genesis: Certificate::genesis(&committee),
+                precomputed: HashMap::new(),
             }
             .run()
             .await;
@@ -171,6 +175,18 @@ impl Consensus {
                 .or_insert_with(HashMap::new)
                 .insert(certificate.origin(), (certificate.digest(), certificate));
 
+            // Pre-compute order_dag for the upcoming wave if we're one round before the boundary.
+            // This shifts the DFS traversal work ahead of the commit decision point.
+            let upcoming = round + 1;
+            if upcoming >= ROUNDS_PER_WAVE && upcoming % ROUNDS_PER_WAVE == 0 {
+                let pre_leader_round = upcoming - (ROUNDS_PER_WAVE - 1);
+                if pre_leader_round > state.last_committed_round {
+                    if let Some(ordered) = self.precompute_order(pre_leader_round, upcoming, &state) {
+                        self.precomputed.insert(pre_leader_round, ordered);
+                    }
+                }
+            }
+
             // Try to order the dag to commit using the section-6 rule from DAG构建(1).md:
             // - trigger only when round r ends and r is a multiple of 4;
             // - elect leader at round r-3;
@@ -192,6 +208,7 @@ impl Consensus {
             }
 
             // We only consider a round ended for commit purposes once we have a quorum for that round.
+            // 延迟构成-阶段2：如果当前轮 stake 未达 quorum，会在这里直接等待，提交无法推进。
             if !self.round_has_quorum(commit_round, &state.dag) {
                 #[cfg(feature = "benchmark")]
                 {
@@ -223,6 +240,14 @@ impl Consensus {
             };
 
             let b3 = leader.clone();
+            #[cfg(feature = "benchmark")]
+            info!(
+                "DIAG_COMMIT_CANDIDATE commit_round={} leader_round={} leader_author={}",
+                commit_round,
+                b3.round(),
+                b3.origin()
+            );
+            // 延迟构成-阶段3：同作者链 b3->b2->b1 不完整时，commit 会持续被跳过。
             let Some(b2) = self.certificate_by_author(leader_round + 1, b3.origin(), &state.dag) else {
                 #[cfg(feature = "benchmark")]
                 {
@@ -241,6 +266,7 @@ impl Consensus {
             if !self.embedded_qc_links(b2, &b3, commit_round)
                 || !self.embedded_qc_links(b1, b2, commit_round)
             {
+                // 延迟构成-阶段4：embedded QC 链不满足时，当前波次不会产生命中提交。
                 #[cfg(feature = "benchmark")]
                 {
                     diag_skip_qc_chain_invalid += 1;
@@ -250,13 +276,22 @@ impl Consensus {
             }
 
             debug!("Leader {:?} satisfies section-6 commit rule", b3);
-            let mut sequence = Vec::new();
-            for x in self.order_dag(&b3, &state) {
-                // Update and clean up internal state.
-                state.update(&x, self.gc_depth);
+            #[cfg(feature = "benchmark")]
+            info!(
+                "DIAG_COMMIT_CHAIN_OK commit_round={} leader_round={} expected_commit_gap={}",
+                commit_round,
+                b3.round(),
+                commit_round.saturating_sub(b3.round())
+            );
+            // Use pre-computed order if available, otherwise compute on demand.
+            let sequence = if let Some(cached) = self.precomputed.remove(&leader_round) {
+                cached
+            } else {
+                self.order_dag(&b3, &state)
+            };
 
-                // Add the certificate to the sequence.
-                sequence.push(x);
+            for x in &sequence {
+                state.update(x, self.gc_depth);
             }
 
             // Log the latest committed round of every authority (for debug).
@@ -267,7 +302,22 @@ impl Consensus {
             }
 
             // Output the sequence in the right order.
+            #[cfg(feature = "benchmark")]
+            let leader_id = b3.header.id.clone();
+            #[cfg(feature = "benchmark")]
+            let leader_round = b3.round();
             for certificate in sequence {
+                #[cfg(feature = "benchmark")]
+                if certificate.header.id == leader_id {
+                    info!(
+                        "DIAG_LEADER_COMMIT committed_leader_round={} commit_round={} commit_gap={} leader_author={}",
+                        leader_round,
+                        commit_round,
+                        commit_round.saturating_sub(leader_round),
+                        certificate.origin()
+                    );
+                }
+
                 #[cfg(not(feature = "benchmark"))]
                 info!("Committed {}", certificate.header);
 
@@ -387,6 +437,29 @@ impl Consensus {
         Some(seed)
     }
 
+    /// Pre-compute order_dag one round before the wave boundary.
+    /// Returns None if the leader chain is not (yet) complete.
+    fn precompute_order(
+        &self,
+        leader_round: Round,
+        commit_round: Round,
+        state: &State,
+    ) -> Option<Vec<Certificate>> {
+        let (_, leader) = self.leader(leader_round, commit_round, &state.dag)?;
+        let b3 = leader.clone();
+
+        let b2 = self.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)?;
+        let b1 = self.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)?;
+
+        if !self.embedded_qc_links(b2, &b3, commit_round)
+            || !self.embedded_qc_links(b1, b2, commit_round)
+        {
+            return None;
+        }
+
+        Some(self.order_dag(&b3, state))
+    }
+
     fn round_has_quorum(&self, round: Round, dag: &Dag) -> bool {
         let Some(certificates) = dag.get(&round) else {
             return false;
@@ -418,6 +491,8 @@ impl Consensus {
         let Some(qc) = child.header.qc.as_ref() else {
             return false;
         };
+        // 这里做的是“链接校验”而非收集 parent：
+        // child 的 embedded QC 必须准确指向 parent，并且投票轮次早于 commit_round。
         qc.target == parent.header.id
             && qc.round == parent.round()
             && qc.round < commit_round

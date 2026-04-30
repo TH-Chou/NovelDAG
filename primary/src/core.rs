@@ -11,7 +11,7 @@ use config::Committee;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
-use network::{CancelHandler, ReliableSender};
+use network::{CancelHandler, ReliableSender, SimpleSender};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -65,8 +65,12 @@ pub struct Core {
     certificates_by_round: HashMap<Round, HashMap<PublicKey, Certificate>>,
     /// Next round whose completion we still need to signal to the proposer.
     next_round_to_signal: Round,
-    /// A network sender to send the batches to the other workers.
+    /// Rounds for which we sent a proposer signal without QC (own cert not yet ready).
+    pending_qc_signals: HashSet<Round>,
+    /// A network sender to broadcast headers and certificates reliably.
     network: ReliableSender,
+    /// A best-effort network sender for votes (no retry needed).
+    vote_network: SimpleSender,
     /// Keeps the cancel handlers of the messages we sent.
     cancel_handlers: HashMap<Round, Vec<CancelHandler>>,
 }
@@ -115,7 +119,9 @@ impl Core {
                 votes_aggregator: VotesAggregator::new(),
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
                 next_round_to_signal: 1,
+                pending_qc_signals: HashSet::new(),
                 network: ReliableSender::new(),
+                vote_network: SimpleSender::new(),
                 cancel_handlers: HashMap::with_capacity(2 * gc_depth as usize),
             }
             .run()
@@ -153,10 +159,6 @@ impl Core {
                 break;
             }
 
-            let Some(own_certificate) = by_authority.get(&self.name) else {
-                break;
-            };
-
             let parents_1 = self.round_digests(round);
             if parents_1.is_empty() {
                 break;
@@ -179,11 +181,19 @@ impl Core {
                 break;
             }
 
+            // Send signal even without own certificate — the QC can arrive later.
+            let own_certificate = by_authority.get(&self.name);
+            let qc = own_certificate.map(|c| Self::certificate_to_embedded_qc(c));
+
+            if qc.is_none() {
+                self.pending_qc_signals.insert(round + 1);
+            }
+
             let signal = ProposerSignal {
                 round: round + 1,
                 parents_1,
                 parents_2,
-                qc: Some(Self::certificate_to_embedded_qc(own_certificate)),
+                qc,
             };
 
             self.tx_proposer
@@ -192,6 +202,21 @@ impl Core {
                 .expect("Failed to send certificate");
 
             self.next_round_to_signal += 1;
+        }
+    }
+
+    /// Send a QC-only follow-up signal when our own certificate arrives late.
+    async fn send_qc_signal(&mut self, certificate: &Certificate) {
+        let target_round = certificate.round() + 1;
+        if self.pending_qc_signals.remove(&target_round) {
+            let qc = Self::certificate_to_embedded_qc(certificate);
+            let signal = ProposerSignal {
+                round: target_round,
+                parents_1: Vec::new(),
+                parents_2: Vec::new(),
+                qc: Some(qc),
+            };
+            let _ = self.tx_proposer.send(signal).await;
         }
     }
 
@@ -231,6 +256,7 @@ impl Core {
         // Ensure we have the parents. If at least one parent is missing, the synchronizer returns an empty
         // vector; it will gather the missing parents (as well as all ancestors) from other nodes and then
         // reschedule processing of this header.
+        // 延迟构成-Primary阶段C：这里是两跳 parent 依赖等待点，缺失会直接挂起当前 header 处理。
         let (parents_1, parents_2) = self.synchronizer.get_parents(header).await?;
         if parents_1.is_empty() && !header.parents.is_empty() {
             debug!("Processing of {} suspended: missing parent(s)", header.id);
@@ -288,6 +314,7 @@ impl Core {
 
         // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
         // reschedule processing of this header once we have it.
+        // 延迟构成-Primary阶段D：payload 不齐也会挂起，间接拖慢后续投票/证书形成。
         if self.synchronizer.missing_payload(header).await? {
             debug!("Processing of {} suspended: missing payload", header);
             return Ok(());
@@ -320,11 +347,8 @@ impl Core {
                     .primary_to_primary;
                 let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
                     .expect("Failed to serialize our own vote");
-                let handler = self.network.send(address, Bytes::from(bytes)).await;
-                self.cancel_handlers
-                    .entry(header.round)
-                    .or_insert_with(Vec::new)
-                    .push(handler);
+                // Use best-effort sender for votes: lost votes are tolerated (still have 2f+1 redundancy).
+                self.vote_network.send(address, Bytes::from(bytes)).await;
             }
         }
         Ok(())
@@ -399,7 +423,14 @@ impl Core {
             .entry(certificate.round())
             .or_insert_with(HashMap::new)
             .insert(certificate.origin(), certificate.clone());
+
         self.try_signal_proposer().await;
+
+        // If this is our own newly-formed certificate, send a QC follow-up in case
+        // the proposer was signaled without QC earlier.
+        if certificate.origin() == self.name {
+            self.send_qc_signal(&certificate).await;
+        }
 
         // Send it to the consensus layer.
         let id = certificate.header.id.clone();

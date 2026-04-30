@@ -236,9 +236,17 @@ impl Proposer {
                     }
 
                     self.round = signal.round;
-                    self.parents_1 = signal.parents_1;
-                    self.parents_2 = signal.parents_2;
-                    self.last_qc = signal.qc;
+                    // Only overwrite parents if the signal carries them (non-empty).
+                    // A QC-only follow-up has empty parents and only updates last_qc.
+                    if !signal.parents_1.is_empty() {
+                        self.parents_1 = signal.parents_1;
+                    }
+                    if !signal.parents_2.is_empty() {
+                        self.parents_2 = signal.parents_2;
+                    }
+                    if signal.qc.is_some() {
+                        self.last_qc = signal.qc;
+                    }
                     debug!("Dag moved to round {}", self.round);
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {

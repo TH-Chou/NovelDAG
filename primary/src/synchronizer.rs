@@ -23,6 +23,8 @@ pub struct Synchronizer {
     tx_certificate_waiter: Sender<Certificate>,
     /// The genesis and its digests.
     genesis: Vec<(Digest, Certificate)>,
+    /// In-memory cache of recently-read certificates, avoiding repeated RocksDB reads.
+    certificate_cache: HashMap<Digest, Certificate>,
 }
 
 impl Synchronizer {
@@ -33,15 +35,18 @@ impl Synchronizer {
         tx_header_waiter: Sender<WaiterMessage>,
         tx_certificate_waiter: Sender<Certificate>,
     ) -> Self {
+        let genesis: Vec<_> = Certificate::genesis(committee)
+            .into_iter()
+            .map(|x| (x.digest(), x))
+            .collect();
+        let certificate_cache = genesis.iter().map(|(d, c)| (d.clone(), c.clone())).collect();
         Self {
             name,
             store,
             tx_header_waiter,
             tx_certificate_waiter,
-            genesis: Certificate::genesis(committee)
-                .into_iter()
-                .map(|x| (x.digest(), x))
-                .collect(),
+            genesis,
+            certificate_cache,
         }
     }
 
@@ -106,6 +111,11 @@ impl Synchronizer {
                 parents_1.push(genesis.clone());
                 continue;
             }
+            // Check in-memory cache before hitting RocksDB.
+            if let Some(certificate) = self.certificate_cache.get(digest) {
+                parents_1.push(certificate.clone());
+                continue;
+            }
 
             let mut store = self.store.clone();
             let digest = digest.clone();
@@ -114,7 +124,11 @@ impl Synchronizer {
 
         for (digest, result) in join_all(read_parents_1).await {
             match result? {
-                Some(certificate) => parents_1.push(bincode::deserialize(&certificate)?),
+                Some(certificate_bytes) => {
+                    let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
+                    self.certificate_cache.insert(digest, certificate.clone());
+                    parents_1.push(certificate);
+                }
                 None => missing.push(digest),
             }
         }
@@ -130,6 +144,11 @@ impl Synchronizer {
                 parents_2.push(genesis.clone());
                 continue;
             }
+            // Check in-memory cache before hitting RocksDB.
+            if let Some(certificate) = self.certificate_cache.get(digest) {
+                parents_2.push(certificate.clone());
+                continue;
+            }
 
             let mut store = self.store.clone();
             let digest = digest.clone();
@@ -138,7 +157,11 @@ impl Synchronizer {
 
         for (digest, result) in join_all(read_parents_2).await {
             match result? {
-                Some(certificate) => parents_2.push(bincode::deserialize(&certificate)?),
+                Some(certificate_bytes) => {
+                    let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
+                    self.certificate_cache.insert(digest, certificate.clone());
+                    parents_2.push(certificate);
+                }
                 None => missing.push(digest),
             }
         }
@@ -151,6 +174,7 @@ impl Synchronizer {
             .send(WaiterMessage::SyncParents(missing, header.clone()))
             .await
             .expect("Failed to send sync parents request");
+        // 延迟构成-Sync阶段3：进入 waiter 异步补齐流程，本次 header 处理会挂起并等待重投递。
         Ok((Vec::new(), Vec::new()))
     }
 
@@ -159,6 +183,9 @@ impl Synchronizer {
     pub async fn deliver_certificate(&mut self, certificate: &Certificate) -> DagResult<bool> {
         for digest in &certificate.header.parents {
             if self.genesis.iter().any(|(x, _)| x == digest) {
+                continue;
+            }
+            if self.certificate_cache.contains_key(digest) {
                 continue;
             }
 
@@ -173,6 +200,9 @@ impl Synchronizer {
 
         for digest in &certificate.header.parents_2 {
             if self.genesis.iter().any(|(x, _)| x == digest) {
+                continue;
+            }
+            if self.certificate_cache.contains_key(digest) {
                 continue;
             }
 
