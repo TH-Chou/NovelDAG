@@ -14,11 +14,11 @@ class BenchError(Exception):
 class PathMaker:
     @staticmethod
     def benchmark_root():
-        return Path(__file__).resolve().parent.parent
+        return Path(__file__).resolve().parent
 
     @staticmethod
     def workspace_root():
-        return PathMaker.benchmark_root().parent
+        return Path(__file__).resolve().parent.parent.parent
 
     @staticmethod
     def binary_path():
