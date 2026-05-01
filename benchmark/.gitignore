@@ -3,12 +3,12 @@ benchmark_client
 results
 plots
 
-# Benchmark runtime artifacts (generated inside benchmark/benchmark/)
-benchmark/.db-*
-benchmark/logs/
-benchmark/.node-*.json
-benchmark/.committee.json
-benchmark/.parameters.json
+# Benchmark runtime artifacts
+.db-*
+logs/
+.node-*.json
+.committee.json
+.parameters.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
