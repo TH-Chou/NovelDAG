@@ -141,11 +141,12 @@ async fn commit_one() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates to the consensus. Only the last certificate should trigger
-    // commits, so the task should not block.
-    while let Some(certificate) = certificates.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
+    // Feed all certificates concurrently so the consensus output channel is never blocked.
+    tokio::spawn(async move {
+        while let Some(certificate) = certificates.pop_front() {
+            tx_waiter.send(certificate).await.unwrap();
+        }
+    });
 
     // At r=4 we should commit the leader at r-3 = 1.
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
@@ -243,14 +244,22 @@ async fn not_enough_support() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates to the consensus. Only the last certificate should trigger
-    // commits, so the task should not block.
-    while let Some(certificate) = certificates.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
+    // Feed all certificates concurrently so the consensus output channel is never blocked.
+    tokio::spawn(async move {
+        while let Some(certificate) = certificates.pop_front() {
+            tx_waiter.send(certificate).await.unwrap();
+        }
+    });
 
     let no_commit = timeout(Duration::from_millis(300), rx_output.recv()).await;
-    assert!(no_commit.is_err(), "unexpected commit under broken b3-b2-b1 chain");
+    match no_commit {
+        // Timeout means no commit arrived — expected under the broken chain.
+        Err(_) => {}
+        // If the channel closed without data, that also means no commit.
+        Ok(None) => {}
+        // A commit arrived unexpectedly — the chain should have prevented it.
+        Ok(Some(_)) => panic!("unexpected commit under broken b3-b2-b1 chain"),
+    }
 }
 
 // Run for 6 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
@@ -291,11 +300,13 @@ async fn missing_leader() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates to the consensus. We should only commit upon receiving the last
-    // certificate, so calls below should not block the task.
-    while let Some(certificate) = certificates.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
+    // Feed all certificates concurrently so the consensus output channel is drained
+    // even when a commit fires before all certs are ingested.
+    tokio::spawn(async move {
+        while let Some(certificate) = certificates.pop_front() {
+            tx_waiter.send(certificate).await.unwrap();
+        }
+    });
 
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
         .await
@@ -354,13 +365,18 @@ async fn reject_commit_when_qc_vote_round_not_less_than_commit_round() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    while let Some(certificate) = certificates.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
+    tokio::spawn(async move {
+        while let Some(certificate) = certificates.pop_front() {
+            tx_waiter.send(certificate).await.unwrap();
+        }
+    });
 
     let no_commit = timeout(Duration::from_millis(300), rx_output.recv()).await;
-    assert!(
-        no_commit.is_err(),
-        "unexpected commit when qc vote round is not less than commit round"
-    );
+    match no_commit {
+        Err(_) => {}
+        Ok(None) => {}
+        Ok(Some(_)) => panic!(
+            "unexpected commit when qc vote round is not less than commit round"
+        ),
+    }
 }

@@ -142,11 +142,7 @@ impl Consensus {
         #[cfg(feature = "benchmark")]
         let mut diag_commit_round_checks = 0u64;
         #[cfg(feature = "benchmark")]
-        let mut diag_skip_not_wave_boundary = 0u64;
-        #[cfg(feature = "benchmark")]
         let mut diag_skip_round_no_quorum = 0u64;
-        #[cfg(feature = "benchmark")]
-        let mut diag_skip_leader_already_committed = 0u64;
         #[cfg(feature = "benchmark")]
         let mut diag_skip_leader_unavailable = 0u64;
         #[cfg(feature = "benchmark")]
@@ -175,11 +171,11 @@ impl Consensus {
                 .or_insert_with(HashMap::new)
                 .insert(certificate.origin(), (certificate.digest(), certificate));
 
-            // Pre-compute order_dag for the upcoming wave if we're one round before the boundary.
-            // This shifts the DFS traversal work ahead of the commit decision point.
+            // Pre-compute order_dag for the upcoming commit round.
+            // With pipelined commits, we precompute at every round ≥ 3.
             let upcoming = round + 1;
-            if upcoming >= ROUNDS_PER_WAVE && upcoming % ROUNDS_PER_WAVE == 0 {
-                let pre_leader_round = upcoming - (ROUNDS_PER_WAVE - 1);
+            if upcoming >= 4 {
+                let pre_leader_round = upcoming - 3;
                 if pre_leader_round > state.last_committed_round {
                     if let Some(ordered) = self.precompute_order(pre_leader_round, upcoming, &state) {
                         self.precomputed.insert(pre_leader_round, ordered);
@@ -188,10 +184,10 @@ impl Consensus {
             }
 
             // Try to order the dag to commit using the section-6 rule from DAG构建(1).md:
-            // - trigger only when round r ends and r is a multiple of 4;
             // - elect leader at round r-3;
             // - require same-author chain b3 (r-3), b2 (r-2), b1 (r-1);
             // - require embedded QC links b2->b3 and b1->b2.
+            // With pipelining, we check at every round ≥ 4 (no wave-boundary restriction).
             let commit_round = round;
 
             #[cfg(feature = "benchmark")]
@@ -199,11 +195,7 @@ impl Consensus {
                 diag_commit_round_checks += 1;
             }
 
-            if commit_round < ROUNDS_PER_WAVE || commit_round % ROUNDS_PER_WAVE != 0 {
-                #[cfg(feature = "benchmark")]
-                {
-                    diag_skip_not_wave_boundary += 1;
-                }
+            if commit_round < 4 {
                 continue;
             }
 
@@ -217,16 +209,8 @@ impl Consensus {
                 continue;
             }
 
-            // Get the certificate of the wave leader. If we already ordered this leader,
-            // there is nothing to do.
-            let leader_round = commit_round - (ROUNDS_PER_WAVE - 1);
-            if leader_round <= state.last_committed_round {
-                #[cfg(feature = "benchmark")]
-                {
-                    diag_skip_leader_already_committed += 1;
-                }
-                continue;
-            }
+            // Get the certificate of the wave leader.
+            let leader_round = commit_round - 3;
 
             let (_, leader) = match self.leader(leader_round, commit_round, &state.dag) {
                 Some(x) => x,
@@ -238,6 +222,15 @@ impl Consensus {
                     continue;
                 }
             };
+
+            // If this leader's block was already committed, skip.
+            if state
+                .last_committed
+                .get(&leader.origin())
+                .map_or(false, |r| *r >= leader.round())
+            {
+                continue;
+            }
 
             let b3 = leader.clone();
             #[cfg(feature = "benchmark")]
@@ -345,14 +338,12 @@ impl Consensus {
             #[cfg(feature = "benchmark")]
             if commit_round % 20 == 0 {
                 info!(
-                    "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_not_wave_boundary={} skip_round_no_quorum={} skip_leader_already_committed={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={}",
+                    "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_round_no_quorum={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={}",
                     commit_round,
                     diag_seen_certificates,
                     diag_commit_round_checks,
                     diag_commits_emitted,
-                    diag_skip_not_wave_boundary,
                     diag_skip_round_no_quorum,
-                    diag_skip_leader_already_committed,
                     diag_skip_leader_unavailable,
                     diag_skip_missing_b2,
                     diag_skip_missing_b1,
