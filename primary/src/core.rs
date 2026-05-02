@@ -332,8 +332,9 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            let local_round = self.current_header.round.max(header.round);
-            let vote = Vote::new(header, local_round, &self.name, &mut self.signature_service).await;
+            // Use header.round as voter_round so that votes in embedded QCs
+            // always satisfy voter_round < commit_round for later pipeline commits.
+            let vote = Vote::new(header, header.round, &self.name, &mut self.signature_service).await;
             debug!("Created {:?}", vote);
             if vote.origin == self.name {
                 self.process_vote(vote)
@@ -449,10 +450,15 @@ impl Core {
             DagError::TooOld(header.id.clone(), header.round)
         );
 
+        // Reject headers with round numbers that are too far in the future.
+        let max_future_round = self.current_header.round.saturating_add(10);
+        ensure!(
+            header.round <= max_future_round,
+            DagError::TooOld(header.id.clone(), header.round)
+        );
+
         // Verify the header's signature.
         header.verify(&self.committee)?;
-
-        // TODO [issue #3]: Prevent bad nodes from sending junk headers with high round numbers.
 
         Ok(())
     }
