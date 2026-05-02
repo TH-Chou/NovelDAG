@@ -130,6 +130,7 @@ impl Primary {
         let synchronizer = Synchronizer::new(
             name,
             &committee,
+            parameters.dag_protocol,
             store.clone(),
             /* tx_header_waiter */ tx_sync_headers,
             /* tx_certificate_waiter */ tx_sync_certificates,
@@ -142,6 +143,7 @@ impl Primary {
         Core::spawn(
             name,
             committee.clone(),
+            parameters.dag_protocol,
             store.clone(),
             synchronizer,
             signature_service.clone(),
@@ -189,6 +191,8 @@ impl Primary {
         Proposer::spawn(
             name,
             &committee,
+            parameters.dag_protocol,
+            parameters.consensus_protocol,
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,

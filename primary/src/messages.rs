@@ -1,7 +1,7 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crate::error::{DagError, DagResult};
 use crate::primary::Round;
-use config::{Committee, WorkerId};
+use config::{Committee, DagProtocol, WorkerId};
 use crypto::{Digest, Hash, PublicKey, Signature, SignatureService};
 use ed25519_dalek::Digest as _;
 use ed25519_dalek::Sha512;
@@ -61,25 +61,45 @@ impl Header {
         }
     }
 
-    pub fn verify(&self, committee: &Committee) -> DagResult<()> {
+    pub fn verify(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
         // Ensure the header id is well formed.
         ensure!(self.digest() == self.id, DagError::InvalidHeaderId);
 
-        if self.round == 0 {
-            ensure!(
-                self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
-                DagError::MalformedHeader(self.id.clone())
-            );
-        } else if self.round == 1 {
-            ensure!(
-                self.parents_2.is_empty(),
-                DagError::MalformedHeader(self.id.clone())
-            );
-        } else {
-            ensure!(
-                !self.parents_2.is_empty() && self.qc.is_some(),
-                DagError::MalformedHeader(self.id.clone())
-            );
+        // Structural rules vary by protocol.
+        match dag_protocol {
+            DagProtocol::NovelDAG => {
+                if self.round == 0 {
+                    ensure!(
+                        self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                } else if self.round == 1 {
+                    ensure!(
+                        self.parents_2.is_empty(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                } else {
+                    ensure!(
+                        !self.parents_2.is_empty() && self.qc.is_some(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                }
+            }
+            DagProtocol::Narwhal | DagProtocol::Bullshark => {
+                // Narwhal/Bullshark headers only use the parents field;
+                // parents_2 and qc are allowed but not required.
+                if self.round == 0 {
+                    ensure!(
+                        self.parents.is_empty() && self.parents_2.is_empty(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                } else {
+                    ensure!(
+                        !self.parents.is_empty(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                }
+            }
         }
 
         // Ensure the authority has voting rights.
@@ -279,14 +299,14 @@ impl Certificate {
             .collect()
     }
 
-    pub fn verify(&self, committee: &Committee) -> DagResult<()> {
+    pub fn verify(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
         // Genesis certificates are always valid.
         if Self::genesis(committee).contains(self) {
             return Ok(());
         }
 
         // Check the embedded header.
-        self.header.verify(committee)?;
+        self.header.verify(committee, dag_protocol)?;
 
         // Ensure the certificate has a quorum.
         let mut weight = 0;

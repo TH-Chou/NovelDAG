@@ -2,7 +2,7 @@
 use crate::error::DagResult;
 use crate::header_waiter::WaiterMessage;
 use crate::messages::{Certificate, Header};
-use config::Committee;
+use config::{Committee, DagProtocol};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
 use futures::future::join_all;
@@ -17,6 +17,8 @@ pub struct Synchronizer {
     name: PublicKey,
     /// The committee information (used for re-verification of stored certificates).
     committee: Committee,
+    /// Which DAG protocol variant is running.
+    dag_protocol: DagProtocol,
     /// The persistent storage.
     store: Store,
     /// Send commands to the `HeaderWaiter`.
@@ -33,6 +35,7 @@ impl Synchronizer {
     pub fn new(
         name: PublicKey,
         committee: &Committee,
+        dag_protocol: DagProtocol,
         store: Store,
         tx_header_waiter: Sender<WaiterMessage>,
         tx_certificate_waiter: Sender<Certificate>,
@@ -45,6 +48,7 @@ impl Synchronizer {
         Self {
             name,
             committee: committee.clone(),
+            dag_protocol,
             store,
             tx_header_waiter,
             tx_certificate_waiter,
@@ -131,7 +135,7 @@ impl Synchronizer {
                     let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
                     // Re-verify certificates read from storage to guard against
                     // disk corruption or stray unverified data.
-                    certificate.verify(&self.committee)?;
+                    certificate.verify(&self.committee, self.dag_protocol)?;
                     self.certificate_cache.insert(digest, certificate.clone());
                     parents_1.push(certificate);
                 }
@@ -139,37 +143,40 @@ impl Synchronizer {
             }
         }
 
-        let mut read_parents_2 = Vec::new();
-        for digest in &header.parents_2 {
-            if let Some(genesis) = self
-                .genesis
-                .iter()
-                .find(|(x, _)| x == digest)
-                .map(|(_, x)| x)
-            {
-                parents_2.push(genesis.clone());
-                continue;
-            }
-            // Check in-memory cache before hitting RocksDB.
-            if let Some(certificate) = self.certificate_cache.get(digest) {
-                parents_2.push(certificate.clone());
-                continue;
-            }
-
-            let mut store = self.store.clone();
-            let digest = digest.clone();
-            read_parents_2.push(async move { (digest.clone(), store.read(digest.to_vec()).await) });
-        }
-
-        for (digest, result) in join_all(read_parents_2).await {
-            match result? {
-                Some(certificate_bytes) => {
-                    let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
-                    certificate.verify(&self.committee)?;
-                    self.certificate_cache.insert(digest, certificate.clone());
-                    parents_2.push(certificate);
+        // Second-hop parents are only required for NovelDAG.
+        if self.dag_protocol == DagProtocol::NovelDAG {
+            let mut read_parents_2 = Vec::new();
+            for digest in &header.parents_2 {
+                if let Some(genesis) = self
+                    .genesis
+                    .iter()
+                    .find(|(x, _)| x == digest)
+                    .map(|(_, x)| x)
+                {
+                    parents_2.push(genesis.clone());
+                    continue;
                 }
-                None => missing.push(digest),
+                // Check in-memory cache before hitting RocksDB.
+                if let Some(certificate) = self.certificate_cache.get(digest) {
+                    parents_2.push(certificate.clone());
+                    continue;
+                }
+
+                let mut store = self.store.clone();
+                let digest = digest.clone();
+                read_parents_2.push(async move { (digest.clone(), store.read(digest.to_vec()).await) });
+            }
+
+            for (digest, result) in join_all(read_parents_2).await {
+                match result? {
+                    Some(certificate_bytes) => {
+                        let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
+                        certificate.verify(&self.committee, self.dag_protocol)?;
+                        self.certificate_cache.insert(digest, certificate.clone());
+                        parents_2.push(certificate);
+                    }
+                    None => missing.push(digest),
+                }
             }
         }
 
@@ -205,21 +212,24 @@ impl Synchronizer {
             };
         }
 
-        for digest in &certificate.header.parents_2 {
-            if self.genesis.iter().any(|(x, _)| x == digest) {
-                continue;
-            }
-            if self.certificate_cache.contains_key(digest) {
-                continue;
-            }
+        // Second-hop parents are only required for NovelDAG.
+        if self.dag_protocol == DagProtocol::NovelDAG {
+            for digest in &certificate.header.parents_2 {
+                if self.genesis.iter().any(|(x, _)| x == digest) {
+                    continue;
+                }
+                if self.certificate_cache.contains_key(digest) {
+                    continue;
+                }
 
-            if self.store.read(digest.to_vec()).await?.is_none() {
-                self.tx_certificate_waiter
-                    .send(certificate.clone())
-                    .await
-                    .expect("Failed to send sync certificate request");
-                return Ok(false);
-            };
+                if self.store.read(digest.to_vec()).await?.is_none() {
+                    self.tx_certificate_waiter
+                        .send(certificate.clone())
+                        .await
+                        .expect("Failed to send sync certificate request");
+                    return Ok(false);
+                };
+            }
         }
         Ok(true)
     }

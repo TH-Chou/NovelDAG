@@ -58,6 +58,30 @@ pub trait Export: Serialize {
 pub type Stake = u32;
 pub type WorkerId = u32;
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DagProtocol {
+    Narwhal,
+    Bullshark,
+    NovelDAG,
+}
+
+impl Default for DagProtocol {
+    fn default() -> Self {
+        Self::NovelDAG
+    }
+}
+
+impl DagProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Narwhal => "narwhal",
+            Self::Bullshark => "bullshark",
+            Self::NovelDAG => "noveldag",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsensusProtocol {
@@ -101,6 +125,9 @@ pub struct Parameters {
     /// The delay after which the workers seal a batch of transactions, even if `max_batch_size`
     /// is not reached. Denominated in ms.
     pub max_batch_delay: u64,
+    /// The DAG protocol variant.
+    #[serde(default)]
+    pub dag_protocol: DagProtocol,
     /// The consensus leader election mode.
     #[serde(default)]
     pub consensus_protocol: ConsensusProtocol,
@@ -116,6 +143,7 @@ impl Default for Parameters {
             sync_retry_nodes: 3,
             batch_size: 500_000,
             max_batch_delay: 100,
+            dag_protocol: DagProtocol::NovelDAG,
             consensus_protocol: ConsensusProtocol::RoundRobin,
         }
     }
@@ -132,6 +160,7 @@ impl Parameters {
         info!("Sync retry nodes set to {} nodes", self.sync_retry_nodes);
         info!("Batch size set to {} B", self.batch_size);
         info!("Max batch delay set to {} ms", self.max_batch_delay);
+        info!("DAG protocol set to {}", self.dag_protocol.as_str());
         info!(
             "Consensus protocol set to {}",
             self.consensus_protocol.as_str()
@@ -208,6 +237,13 @@ impl Committee {
         // then (N + 2) / 3 = f + 1 + k/3 = f + 1
         let total_votes: Stake = self.authorities.values().map(|x| x.stake).sum();
         (total_votes + 2) / 3
+    }
+
+    /// Returns a leader node in a round-robin fashion.
+    pub fn leader(&self, seed: usize) -> PublicKey {
+        let mut keys: Vec<_> = self.authorities.keys().cloned().collect();
+        keys.sort();
+        keys[seed % self.size()]
     }
 
     /// Returns the primary addresses of the target primary.

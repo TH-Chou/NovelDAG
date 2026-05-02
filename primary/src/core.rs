@@ -1,5 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::aggregators::VotesAggregator;
+use crate::aggregators::{CertificatesAggregator, CertificatesVecAggregator, VotesAggregator};
 use crate::error::{DagError, DagResult};
 use crate::messages::{Certificate, EmbeddedQc, Header, Vote};
 use crate::primary::{PrimaryMessage, Round};
@@ -7,7 +7,7 @@ use crate::proposer::ProposerSignal;
 use crate::synchronizer::Synchronizer;
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use config::Committee;
+use config::{Committee, DagProtocol};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
@@ -27,6 +27,8 @@ pub struct Core {
     name: PublicKey,
     /// The committee information.
     committee: Committee,
+    /// Which DAG protocol variant is running.
+    dag_protocol: DagProtocol,
     /// The persistent storage.
     store: Store,
     /// Handles synchronization with other nodes and our workers.
@@ -61,6 +63,10 @@ pub struct Core {
     current_header: Header,
     /// Aggregates votes into a certificate.
     votes_aggregator: VotesAggregator,
+    /// Aggregates certificates to use as parents for new headers (Narwhal/Bullshark).
+    certificates_aggregators: HashMap<Round, Box<CertificatesAggregator>>,
+    /// Aggregates certificates to use as parents (Bullshark full-cert variant).
+    certificates_vec_aggregators: HashMap<Round, Box<CertificatesVecAggregator>>,
     /// Certificates observed per round keyed by authority.
     certificates_by_round: HashMap<Round, HashMap<PublicKey, Certificate>>,
     /// Next round whose completion we still need to signal to the proposer.
@@ -80,6 +86,7 @@ impl Core {
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
+        dag_protocol: DagProtocol,
         store: Store,
         synchronizer: Synchronizer,
         signature_service: SignatureService,
@@ -101,6 +108,7 @@ impl Core {
             Self {
                 name,
                 committee,
+                dag_protocol,
                 store,
                 synchronizer,
                 signature_service,
@@ -117,6 +125,8 @@ impl Core {
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
                 current_header: Header::default(),
                 votes_aggregator: VotesAggregator::new(),
+                certificates_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
+                certificates_vec_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
                 next_round_to_signal: 1,
                 pending_qc_signals: HashSet::new(),
@@ -194,6 +204,7 @@ impl Core {
                 parents_1,
                 parents_2,
                 qc,
+                certificates_1: Vec::new(),
             };
 
             self.tx_proposer
@@ -215,6 +226,7 @@ impl Core {
                 parents_1: Vec::new(),
                 parents_2: Vec::new(),
                 qc: Some(qc),
+                certificates_1: Vec::new(),
             };
             let _ = self.tx_proposer.send(signal).await;
         }
@@ -265,50 +277,70 @@ impl Core {
 
         if header.round == 0 {
             // Genesis/initialization headers have no parent quorum requirements.
-            // Their structural validity has already been checked by `Header::verify`.
         } else {
-            // Check first-hop parents (`r-1`).
-            let mut stake_1 = 0;
-            for x in &parents_1 {
-                ensure!(
-                    x.round() + 1 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                stake_1 += self.committee.stake(&x.origin());
-            }
-            ensure!(
-                stake_1 >= self.committee.quorum_threshold(),
-                DagError::HeaderRequiresQuorum(header.id.clone())
-            );
+            match self.dag_protocol {
+                DagProtocol::NovelDAG => {
+                    // Check first-hop parents (`r-1`).
+                    let mut stake_1 = 0;
+                    for x in &parents_1 {
+                        ensure!(
+                            x.round() + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_1 += self.committee.stake(&x.origin());
+                    }
+                    ensure!(
+                        stake_1 >= self.committee.quorum_threshold(),
+                        DagError::HeaderRequiresQuorum(header.id.clone())
+                    );
 
-            // Check second-hop parents (`r-2`) and embedded QC requirements.
-            let mut stake_2 = 0;
-            for x in &parents_2 {
-                ensure!(
-                    x.round() + 2 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                stake_2 += self.committee.stake(&x.origin());
-            }
-            if header.round >= 2 {
-                ensure!(
-                    stake_2 >= self.committee.quorum_threshold(),
-                    DagError::HeaderRequiresQuorum(header.id.clone())
-                );
-                let qc = header
-                    .qc
-                    .as_ref()
-                    .ok_or_else(|| DagError::MalformedHeader(header.id.clone()))?;
-                ensure!(
-                    qc.round + 1 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                ensure!(
-                    parents_1
-                        .iter()
-                        .any(|certificate| certificate.header.id == qc.target),
-                    DagError::MalformedHeader(header.id.clone())
-                );
+                    // Check second-hop parents (`r-2`) and embedded QC requirements.
+                    let mut stake_2 = 0;
+                    for x in &parents_2 {
+                        ensure!(
+                            x.round() + 2 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_2 += self.committee.stake(&x.origin());
+                    }
+                    if header.round >= 2 {
+                        ensure!(
+                            stake_2 >= self.committee.quorum_threshold(),
+                            DagError::HeaderRequiresQuorum(header.id.clone())
+                        );
+                        let qc = header
+                            .qc
+                            .as_ref()
+                            .ok_or_else(|| DagError::MalformedHeader(header.id.clone()))?;
+                        ensure!(
+                            qc.round + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        ensure!(
+                            parents_1
+                                .iter()
+                                .any(|certificate| certificate.header.id == qc.target),
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                    }
+                }
+                DagProtocol::Narwhal | DagProtocol::Bullshark => {
+                    // Single-parent validation: r-1 parents must form a quorum.
+                    let mut stake_1 = 0;
+                    for x in &parents_1 {
+                        ensure!(
+                            x.round() + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_1 += self.committee.stake(&x.origin());
+                    }
+                    if header.round > 0 {
+                        ensure!(
+                            stake_1 >= self.committee.quorum_threshold(),
+                            DagError::HeaderRequiresQuorum(header.id.clone())
+                        );
+                    }
+                }
             }
         }
 
@@ -348,8 +380,17 @@ impl Core {
                     .primary_to_primary;
                 let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
                     .expect("Failed to serialize our own vote");
-                // Use best-effort sender for votes: lost votes are tolerated (still have 2f+1 redundancy).
-                self.vote_network.send(address, Bytes::from(bytes)).await;
+                if self.dag_protocol == DagProtocol::NovelDAG {
+                    // Best-effort sender for votes: lost votes are tolerated (still have 2f+1 redundancy).
+                    self.vote_network.send(address, Bytes::from(bytes)).await;
+                } else {
+                    // Reliable sender for Narwhal/Bullshark (original behavior).
+                    let handler = self.network.send(address, Bytes::from(bytes)).await;
+                    self.cancel_handlers
+                        .entry(header.round)
+                        .or_insert_with(Vec::new)
+                        .push(handler);
+                }
             }
         }
         Ok(())
@@ -420,17 +461,62 @@ impl Core {
         let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
         self.store.write(certificate.digest().to_vec(), bytes).await;
 
-        self.certificates_by_round
-            .entry(certificate.round())
-            .or_insert_with(HashMap::new)
-            .insert(certificate.origin(), certificate.clone());
+        match self.dag_protocol {
+            DagProtocol::NovelDAG => {
+                self.certificates_by_round
+                    .entry(certificate.round())
+                    .or_insert_with(HashMap::new)
+                    .insert(certificate.origin(), certificate.clone());
 
-        self.try_signal_proposer().await;
+                self.try_signal_proposer().await;
 
-        // If this is our own newly-formed certificate, send a QC follow-up in case
-        // the proposer was signaled without QC earlier.
-        if certificate.origin() == self.name {
-            self.send_qc_signal(&certificate).await;
+                // If this is our own newly-formed certificate, send a QC follow-up.
+                if certificate.origin() == self.name {
+                    self.send_qc_signal(&certificate).await;
+                }
+            }
+            DagProtocol::Narwhal => {
+                if let Some(parents) = self
+                    .certificates_aggregators
+                    .entry(certificate.round())
+                    .or_insert_with(|| Box::new(CertificatesAggregator::new()))
+                    .append(certificate.clone(), &self.committee)?
+                {
+                    let signal = ProposerSignal {
+                        round: certificate.round() + 1,
+                        parents_1: parents,
+                        parents_2: Vec::new(),
+                        qc: None,
+                        certificates_1: Vec::new(),
+                    };
+                    self.tx_proposer
+                        .send(signal)
+                        .await
+                        .expect("Failed to send certificate");
+                }
+            }
+            DagProtocol::Bullshark => {
+                if let Some(parents) = self
+                    .certificates_vec_aggregators
+                    .entry(certificate.round())
+                    .or_insert_with(|| Box::new(CertificatesVecAggregator::new()))
+                    .append(certificate.clone(), &self.committee)?
+                {
+                    let parents_1: Vec<Digest> =
+                        parents.iter().map(|c| c.digest()).collect();
+                    let signal = ProposerSignal {
+                        round: certificate.round(),
+                        parents_1,
+                        parents_2: Vec::new(),
+                        qc: None,
+                        certificates_1: parents,
+                    };
+                    self.tx_proposer
+                        .send(signal)
+                        .await
+                        .expect("Failed to send certificate");
+                }
+            }
         }
 
         // Send it to the consensus layer.
@@ -458,7 +544,7 @@ impl Core {
         );
 
         // Verify the header's signature.
-        header.verify(&self.committee)?;
+        header.verify(&self.committee, self.dag_protocol)?;
 
         Ok(())
     }
@@ -488,7 +574,7 @@ impl Core {
         );
 
         // Verify the certificate (and the embedded header).
-        certificate.verify(&self.committee).map_err(DagError::from)
+        certificate.verify(&self.committee, self.dag_protocol).map_err(DagError::from)
     }
 
     // Main loop listening to incoming messages.
@@ -549,6 +635,8 @@ impl Core {
                 let gc_round = round - self.gc_depth;
                 self.last_voted.retain(|k, _| k >= &gc_round);
                 self.processing.retain(|k, _| k >= &gc_round);
+                self.certificates_aggregators.retain(|k, _| k >= &gc_round);
+                self.certificates_vec_aggregators.retain(|k, _| k >= &gc_round);
                 self.cancel_handlers.retain(|k, _| k >= &gc_round);
                 self.gc_round = gc_round;
             }

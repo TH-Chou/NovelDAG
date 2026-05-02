@@ -1,5 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
+use config::DagProtocol;
 use crate::common::{
     certificate, committee, committee_with_base_port, header, headers, keys, listener, votes,
 };
@@ -47,6 +48,7 @@ async fn process_header() {
     let synchronizer = Synchronizer::new(
         name,
         &committee,
+        DagProtocol::NovelDAG,
         store.clone(),
         /* tx_header_waiter */ tx_sync_headers,
         /* tx_certificate_waiter */ tx_sync_certificates,
@@ -56,6 +58,7 @@ async fn process_header() {
     Core::spawn(
         name,
         committee,
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -114,6 +117,7 @@ async fn process_header_missing_parent() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         /* tx_header_waiter */ tx_sync_headers,
         /* tx_certificate_waiter */ tx_sync_certificates,
@@ -123,6 +127,7 @@ async fn process_header_missing_parent() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -174,6 +179,7 @@ async fn process_header_missing_payload() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         /* tx_header_waiter */ tx_sync_headers,
         /* tx_certificate_waiter */ tx_sync_certificates,
@@ -183,6 +189,7 @@ async fn process_header_missing_payload() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -236,6 +243,7 @@ async fn process_votes() {
     let synchronizer = Synchronizer::new(
         name,
         &committee,
+        DagProtocol::NovelDAG,
         store.clone(),
         /* tx_header_waiter */ tx_sync_headers,
         /* tx_certificate_waiter */ tx_sync_certificates,
@@ -245,6 +253,7 @@ async fn process_votes() {
     Core::spawn(
         name,
         committee.clone(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -314,6 +323,7 @@ async fn process_certificates() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         /* tx_header_waiter */ tx_sync_headers,
         /* tx_certificate_waiter */ tx_sync_certificates,
@@ -323,6 +333,7 @@ async fn process_certificates() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -392,6 +403,7 @@ async fn process_certificates() {
             round: 1,
             votes: own_certificate.votes,
         }),
+        certificates_1: Vec::new(),
     };
     assert_eq!(received.round, expected.round);
     assert_eq!(received.parents_1.len(), expected.parents_1.len());
@@ -436,6 +448,7 @@ async fn process_header_round_2_requires_qc() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         tx_sync_headers,
         tx_sync_certificates,
@@ -444,6 +457,7 @@ async fn process_header_round_2_requires_qc() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -508,6 +522,7 @@ async fn process_header_round_2_rejects_qc_target_outside_parents_1() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         tx_sync_headers,
         tx_sync_certificates,
@@ -516,6 +531,7 @@ async fn process_header_round_2_rejects_qc_target_outside_parents_1() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -608,6 +624,7 @@ async fn process_header_round_2_rejects_qc_vote_with_wrong_target() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         tx_sync_headers,
         tx_sync_certificates,
@@ -616,6 +633,7 @@ async fn process_header_round_2_rejects_qc_vote_with_wrong_target() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,
@@ -702,6 +720,7 @@ async fn process_certificate_rejects_vote_origin_mismatch() {
     let synchronizer = Synchronizer::new(
         name,
         &committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         tx_sync_headers,
         tx_sync_certificates,
@@ -710,6 +729,7 @@ async fn process_certificate_rejects_vote_origin_mismatch() {
     Core::spawn(
         name,
         committee(),
+        DagProtocol::NovelDAG,
         store.clone(),
         synchronizer,
         signature_service,

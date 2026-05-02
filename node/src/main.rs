@@ -108,6 +108,7 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
             Consensus::spawn_with_protocol(
                 committee,
                 parameters.gc_depth,
+                parameters.dag_protocol,
                 parameters.consensus_protocol,
                 /* rx_primary */ rx_new_certificates,
                 /* tx_primary */ tx_feedback,

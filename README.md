@@ -5,13 +5,41 @@
 [![python](https://img.shields.io/badge/python-3.9-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-390/)
 [![license](https://img.shields.io/badge/license-Apache-blue.svg?style=flat-square)](LICENSE)
 
-This repository is a research-oriented DAG consensus codebase derived from Narwhal/Tusk and adapted for protocol experimentation.
+This repository is a research-oriented DAG consensus codebase derived from Narwhal/Tusk and adapted for protocol experimentation. **Three DAG consensus protocols — Narwhal, Bullshark, and NovelDAG — are now unified in a single workspace**, selected at runtime via configuration.
 
 - Implementation language: Rust
 - Benchmark/automation scripts: Python + Fabric
 - Core crates: `primary`, `consensus`, `worker`, `node`, `network`, `crypto`, `store`, `config`
 
 The code is intended for experimentation and benchmarking, not production deployment.
+
+## Three Protocols, One Codebase
+
+Narwhal, Bullshark, and NovelDAG share the same crates. Protocol-specific logic is isolated in the consensus layer:
+
+| Protocol | Consensus module | Leader rule | Commit rule |
+| --- | --- | --- | --- |
+| Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
+| Bullshark | [consensus/src/bullshark.rs](consensus/src/bullshark.rs) | Elected at round `r` | f+1 support from `r+1` children, linked-path ordering |
+| NovelDAG | [consensus/src/noveldag.rs](consensus/src/noveldag.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
+
+Both **RoundRobin** and **CommonCoin** leader election modes are supported independently of the DAG protocol via the `consensus_protocol` parameter.
+
+### Runtime selection
+
+In your `parameters.json` (or equivalent settings), set:
+
+```json
+{
+  "dag_protocol": "noveldag",
+  "consensus_protocol": "common_coin"
+}
+```
+
+- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"noveldag"` (default: `"noveldag"`)
+- `consensus_protocol`: `"round_robin"` | `"common_coin"` (default: `"round_robin"`)
+
+The `Header`, `Certificate`, and `Vote` wire formats use NovelDAG's extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values, so all three protocols share the same message schemas.
 
 ## Quick Start
 
