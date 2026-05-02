@@ -533,6 +533,32 @@ impl Consensus {
                     already_ordered.insert(digest);
                 }
             }
+
+            // Also traverse second-hop parents (parents_2) to ensure causal completeness
+            // when a Byzantine leader omits some r-1 parents from parents_1.
+            if x.round() >= 2 {
+                for parent in &x.header.parents_2 {
+                    let (digest, certificate) = match state
+                        .dag
+                        .get(&(x.round() - 2))
+                        .map(|x| x.values().find(|(x, _)| x == parent))
+                        .flatten()
+                    {
+                        Some(x) => x,
+                        None => continue,
+                    };
+
+                    let mut skip = already_ordered.contains(&digest);
+                    skip |= state
+                        .last_committed
+                        .get(&certificate.origin())
+                        .map_or(false, |r| *r >= certificate.round());
+                    if !skip {
+                        buffer.push(certificate);
+                        already_ordered.insert(digest);
+                    }
+                }
+            }
         }
 
         // Ensure we do not commit garbage collected certificates.
