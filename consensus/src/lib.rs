@@ -168,6 +168,15 @@ impl Consensus {
             debug!("Processing {:?}", certificate);
             let round = certificate.round();
 
+            // Drop certificates whose origin's round is already committed.
+            if state
+                .last_committed
+                .get(&certificate.origin())
+                .map_or(false, |r| *r >= round)
+            {
+                continue;
+            }
+
             // Add the new certificate to the local storage.
             state
                 .dag
@@ -386,12 +395,12 @@ impl Consensus {
                 let coin = self
                     .common_coin(coin_round, dag)
                     .unwrap_or_else(|| self.round_robin_coin(round));
-                let mut keys: Vec<_> = by_round.keys().cloned().collect();
-                if keys.is_empty() {
-                    return None;
-                }
+                // Use the full committee for leader selection so that an adversary
+                // cannot bias the outcome by suppressing certificates from specific
+                // authorities at the coin round.
+                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                 keys.sort();
-                keys[coin as usize % keys.len()]
+                keys[coin as usize % self.committee.size()]
             }
         };
 
@@ -527,7 +536,7 @@ impl Consensus {
                 skip |= state
                     .last_committed
                     .get(&certificate.origin())
-                    .map_or_else(|| false, |r| r == &certificate.round());
+                    .map_or(false, |r| *r >= certificate.round());
                 if !skip {
                     buffer.push(certificate);
                     already_ordered.insert(digest);

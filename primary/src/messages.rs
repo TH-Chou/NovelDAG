@@ -99,6 +99,12 @@ impl Header {
             DagError::MalformedHeader(self.id.clone())
         );
 
+        // Validate the coin share: it must not be excessively large.
+        ensure!(
+            self.coin_share.len() <= 256,
+            DagError::MalformedHeader(self.id.clone())
+        );
+
         // If present, validate the embedded QC consistency and signatures.
         if let Some(qc) = &self.qc {
             ensure!(

@@ -15,6 +15,8 @@ use tokio::sync::mpsc::Sender;
 pub struct Synchronizer {
     /// The public key of this primary.
     name: PublicKey,
+    /// The committee information (used for re-verification of stored certificates).
+    committee: Committee,
     /// The persistent storage.
     store: Store,
     /// Send commands to the `HeaderWaiter`.
@@ -42,6 +44,7 @@ impl Synchronizer {
         let certificate_cache = genesis.iter().map(|(d, c)| (d.clone(), c.clone())).collect();
         Self {
             name,
+            committee: committee.clone(),
             store,
             tx_header_waiter,
             tx_certificate_waiter,
@@ -126,6 +129,9 @@ impl Synchronizer {
             match result? {
                 Some(certificate_bytes) => {
                     let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
+                    // Re-verify certificates read from storage to guard against
+                    // disk corruption or stray unverified data.
+                    certificate.verify(&self.committee)?;
                     self.certificate_cache.insert(digest, certificate.clone());
                     parents_1.push(certificate);
                 }
@@ -159,6 +165,7 @@ impl Synchronizer {
             match result? {
                 Some(certificate_bytes) => {
                     let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
+                    certificate.verify(&self.committee)?;
                     self.certificate_cache.insert(digest, certificate.clone());
                     parents_2.push(certificate);
                 }
