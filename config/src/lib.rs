@@ -63,6 +63,7 @@ pub type WorkerId = u32;
 pub enum DagProtocol {
     Narwhal,
     Bullshark,
+    #[serde(rename = "noveldag")]
     NovelDAG,
 }
 

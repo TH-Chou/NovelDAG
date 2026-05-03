@@ -1,5 +1,6 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
 import csv
+from collections import defaultdict
 from fabric import task
 
 from benchmark.local import LocalBench
@@ -8,7 +9,7 @@ from benchmark.utils import Print, BenchError
 
 
 @task
-def local(ctx, debug=True, protocol='round_robin'):
+def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag'):
     ''' Run benchmarks on localhost '''
     if protocol not in ('round_robin', 'common_coin'):
         raise BenchError('Invalid protocol: must be round_robin or common_coin')
@@ -30,6 +31,7 @@ def local(ctx, debug=True, protocol='round_robin'):
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
         'consensus_protocol': protocol,
+        'dag_protocol': dag_protocol,
     }
     try:
         ret = LocalBench(bench_params, node_params).run(debug)
@@ -567,6 +569,7 @@ def remote(
     ctx,
     debug=False,
     protocol='round_robin',
+    dag_protocol='noveldag',
     faults=3,
     nodes=10,
     workers=1,
@@ -600,6 +603,7 @@ def remote(
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
         'consensus_protocol': protocol,
+        'dag_protocol': dag_protocol,
     }
     try:
         Bench(ctx).run(bench_params, node_params, debug)
@@ -612,6 +616,7 @@ def remote_run_batch(
     ctx,
     debug=False,
     protocol='round_robin',
+    dag_protocol='noveldag',
     batch_id='default',
     faults=3,
     nodes=10,
@@ -650,6 +655,7 @@ def remote_run_batch(
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
         'consensus_protocol': protocol,
+        'dag_protocol': dag_protocol,
     }
     try:
         Bench(ctx).run_batch(bench_params, node_params, str(batch_id), debug)
@@ -705,3 +711,387 @@ def logs(ctx):
         print(LogParser.process('./logs', faults='?').result())
     except ParseError as e:
         Print.error(BenchError('Failed to parse logs', e))
+
+
+@task
+def compare_dag_protocols(
+    ctx,
+    duration=60,
+    debug=True,
+    faults=0,
+    nodes=10,
+    workers=1,
+    rate=120_000,
+    tx_size=512,
+    runs=2,
+    consensus='round_robin',
+    output_csv='results/dag_protocol_comparison.csv',
+):
+    ''' Compare narwhal, bullshark, noveldag on remote testbed at fixed rate '''
+    from benchmark.remote import Bench
+
+    protocols = ['narwhal', 'bullshark', 'noveldag']
+    bench_params = {
+        'faults': int(faults),
+        'nodes': [int(nodes)],
+        'workers': int(workers),
+        'collocate': True,
+        'rate': [int(rate)],
+        'tx_size': int(tx_size),
+        'duration': int(duration),
+        'runs': int(runs),
+    }
+
+    rows = []
+    try:
+        for proto in protocols:
+            Print.heading(
+                f'Running {proto} | nodes={nodes} faults={faults} '
+                f'rate={rate:,} duration={duration}s'
+            )
+            node_params = {
+                'header_size': 1_000,
+                'max_header_delay': 200,
+                'gc_depth': 50,
+                'sync_retry_delay': 10_000,
+                'sync_retry_nodes': 3,
+                'batch_size': 500_000,
+                'max_batch_delay': 200,
+                'consensus_protocol': consensus,
+                'dag_protocol': proto,
+            }
+            bench = Bench(ctx)
+            bench.run(bench_params, node_params, debug)
+
+            # Parse result files produced by Bench.run()
+            for run_i in range(1, int(runs) + 1):
+                result_path = PathMaker.result_file(
+                    int(faults), int(nodes), int(workers), True,
+                    int(rate), int(tx_size)
+                )
+                try:
+                    with open(result_path, 'r') as f:
+                        text = f.read()
+                    # Parse the LogParser result format
+                    metrics = _parse_result_text(text)
+                    rows.append({
+                        'rate': rate,
+                        'protocol': proto,
+                        'run': run_i,
+                        'consensus_tps': f'{metrics["consensus_tps"]:.2f}',
+                        'consensus_latency_ms': f'{metrics["consensus_latency_ms"]:.2f}',
+                        'end_to_end_tps': f'{metrics["end_to_end_tps"]:.2f}',
+                        'end_to_end_latency_ms': f'{metrics["end_to_end_latency_ms"]:.2f}',
+                    })
+                except FileNotFoundError:
+                    Print.warn(f'Result file not found: {result_path}')
+
+        # Save CSV
+        _write_metrics_csv(output_csv, rows)
+        _print_dag_summary(rows, protocols)
+
+    except BenchError as e:
+        Print.error(e)
+
+
+@task
+def sweep_dag_rates(
+    ctx,
+    duration=30,
+    debug=True,
+    nodes=10,
+    faults=3,
+    workers=1,
+    tx_size=512,
+    runs=2,
+    rate_start=60_000,
+    rate_step=30_000,
+    rate_end=300_000,
+    protocols='narwhal,bullshark,noveldag',
+    consensus='round_robin',
+    output_csv='results/remote_dag_sweep.csv',
+):
+    ''' Rate sweep across all three DAG protocols on remote testbed '''
+    from benchmark.remote import Bench
+
+    protocol_list = [p.strip() for p in protocols.split(',')]
+    rates = list(range(int(rate_start), int(rate_end) + 1, int(rate_step)))
+
+    bench_params = {
+        'faults': int(faults),
+        'nodes': [int(nodes)],
+        'workers': int(workers),
+        'collocate': True,
+        'rate': rates,
+        'tx_size': int(tx_size),
+        'duration': int(duration),
+        'runs': int(runs),
+    }
+
+    all_rows = []
+    total = len(protocol_list) * len(rates) * int(runs)
+    current = 0
+
+    try:
+        for proto in protocol_list:
+            Print.heading(
+                f'Sweeping {proto} | nodes={nodes} faults={faults} '
+                f'rates={rates[0]:,}..{rates[-1]:,} runs={runs}'
+            )
+            node_params = {
+                'header_size': 1_000,
+                'max_header_delay': 200,
+                'gc_depth': 50,
+                'sync_retry_delay': 10_000,
+                'sync_retry_nodes': 3,
+                'batch_size': 500_000,
+                'max_batch_delay': 200,
+                'consensus_protocol': consensus,
+                'dag_protocol': proto,
+            }
+            bench = Bench(ctx)
+            bench.run(bench_params, node_params, debug)
+
+            # Collect results from individual result files
+            for r in rates:
+                for run_i in range(1, int(runs) + 1):
+                    current += 1
+                    result_path = PathMaker.result_file(
+                        int(faults), int(nodes), int(workers), True,
+                        r, int(tx_size)
+                    )
+                    try:
+                        with open(result_path, 'r') as f:
+                            text = f.read()
+                        metrics = _parse_result_text(text)
+                        all_rows.append({
+                            'rate': r,
+                            'protocol': proto,
+                            'consensus_tps': f'{metrics["consensus_tps"]:.2f}',
+                            'consensus_latency_ms': f'{metrics["consensus_latency_ms"]:.2f}',
+                            'end_to_end_tps': f'{metrics["end_to_end_tps"]:.2f}',
+                            'end_to_end_latency_ms': f'{metrics["end_to_end_latency_ms"]:.2f}',
+                        })
+                        Print.info(
+                            f'  [{current}/{total}] rate={r:,} proto={proto} '
+                            f'lat={metrics["consensus_latency_ms"]:.1f}ms '
+                            f'tps={metrics["end_to_end_tps"]:,.0f}'
+                        )
+                    except FileNotFoundError:
+                        Print.warn(f'  [{current}/{total}] Missing: {result_path}')
+
+        # Save CSV
+        _write_metrics_csv(output_csv, all_rows)
+        _print_dag_summary(all_rows, protocol_list)
+
+    except BenchError as e:
+        Print.error(e)
+
+
+@task
+def plot_dag_sweep(
+    ctx,
+    csv_path='results/remote_dag_sweep.csv',
+    out_dir='results',
+):
+    ''' Generate comparison charts from a dag sweep CSV '''
+    import matplotlib.pyplot as plt
+
+    protocols = []
+    raw = {}
+    try:
+        with open(csv_path, newline='') as f:
+            for row in csv.DictReader(f):
+                proto = row['protocol']
+                rate = int(float(row['rate']))
+                tps = float(row['end_to_end_tps'])
+                lat = float(row['consensus_latency_ms'])
+                raw.setdefault(proto, []).append((rate, tps, lat))
+    except FileNotFoundError:
+        Print.error(BenchError(f'CSV not found: {csv_path}', FileNotFoundError()))
+        return
+
+    protocols = list(raw.keys())
+    # Average per protocol per rate, sorted by rate
+    data = {}
+    for proto in protocols:
+        by_rate = defaultdict(list)
+        for rate, tps, lat in raw[proto]:
+            by_rate[rate].append((tps, lat))
+        rates = sorted(by_rate.keys())
+        data[proto] = {
+            'rates': rates,
+            'tps': [sum(t for t, _ in by_rate[r]) / len(by_rate[r]) for r in rates],
+            'lats': [sum(l for _, l in by_rate[r]) / len(by_rate[r]) for r in rates],
+        }
+
+    markers = {'narwhal': 's', 'bullshark': '^', 'noveldag': 'o'}
+    colors = {'narwhal': '#2196F3', 'bullshark': '#4CAF50', 'noveldag': '#FF9800'}
+
+    # Chart 1: Consensus Latency vs End-to-End Throughput
+    fig, ax = plt.subplots(figsize=(12, 7))
+    for proto in protocols:
+        d = data[proto]
+        ax.plot(d['tps'], d['lats'], color=colors.get(proto), marker=markers.get(proto),
+                markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+        for r, t, l in zip(d['rates'], d['tps'], d['lats']):
+            ax.annotate(f'{r//1000}k', (t, l), textcoords='offset points',
+                        xytext=(5, 5), fontsize=6, alpha=0.7)
+    ax.set_xlabel('End-to-End Throughput (tx/s)')
+    ax.set_ylabel('Consensus Latency (ms)')
+    ax.set_title('Consensus Latency vs Achieved Throughput')
+    ax.set_ylim(bottom=0)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    latency_png = f'{out_dir}/remote_latency_vs_tps.png'
+    fig.savefig(latency_png, dpi=120)
+    plt.close(fig)
+    print(f'Saved: {latency_png}')
+
+    # Chart 2: TPS vs Input Rate
+    fig, ax = plt.subplots(figsize=(12, 7))
+    max_rate = 0
+    for proto in protocols:
+        d = data[proto]
+        ax.plot(d['rates'], d['tps'], color=colors.get(proto), marker=markers.get(proto),
+                markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+        max_rate = max(max_rate, max(d['rates']))
+    ax.plot([0, max_rate], [0, max_rate], 'k--', alpha=0.3, linewidth=1, label='Ideal')
+    ax.set_xlabel('Input Rate (tx/s)')
+    ax.set_ylabel('End-to-End Throughput (tx/s)')
+    ax.set_title('Throughput vs Input Rate')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    tps_png = f'{out_dir}/remote_tps_vs_rate.png'
+    fig.savefig(tps_png, dpi=120)
+    plt.close(fig)
+    print(f'Saved: {tps_png}')
+
+    Print.heading('Charts generated')
+
+
+@task
+def full_dag_bench(
+    ctx,
+    duration=30,
+    nodes=10,
+    faults=3,
+    workers=1,
+    tx_size=512,
+    runs=2,
+    rate_start=60_000,
+    rate_step=30_000,
+    rate_end=300_000,
+    protocols='narwhal,bullshark,noveldag',
+    consensus='round_robin',
+    output_csv='results/remote_dag_sweep.csv',
+    debug=True,
+):
+    ''' All-in-one: sweep all three DAG protocols on cloud, then generate charts '''
+    Print.heading('=== Phase 1/2: Rate Sweep ===')
+    sweep_dag_rates(
+        ctx,
+        duration=duration,
+        debug=debug,
+        nodes=nodes,
+        faults=faults,
+        workers=workers,
+        tx_size=tx_size,
+        runs=runs,
+        rate_start=rate_start,
+        rate_step=rate_step,
+        rate_end=rate_end,
+        protocols=protocols,
+        consensus=consensus,
+        output_csv=output_csv,
+    )
+
+    Print.heading('=== Phase 2/2: Generate Charts ===')
+    plot_dag_sweep(ctx, csv_path=output_csv, out_dir='results')
+
+
+def _parse_result_text(text):
+    ''' Parse a LogParser result text into a metrics dict. '''
+    import re
+    metrics = {
+        'consensus_tps': 0.0,
+        'consensus_latency_ms': 0.0,
+        'end_to_end_tps': 0.0,
+        'end_to_end_latency_ms': 0.0,
+    }
+    for line in text.split('\n'):
+        m = re.match(r'\s*Consensus TPS:\s*([\d,]+(?:\.\d+)?)', line)
+        if m:
+            metrics['consensus_tps'] = float(m.group(1).replace(',', ''))
+        m = re.match(r'\s*Consensus latency:\s*([\d,]+(?:\.\d+)?)\s*ms', line)
+        if m:
+            metrics['consensus_latency_ms'] = float(m.group(1).replace(',', ''))
+        m = re.match(r'\s*End-to-end TPS:\s*([\d,]+(?:\.\d+)?)', line)
+        if m:
+            metrics['end_to_end_tps'] = float(m.group(1).replace(',', ''))
+        m = re.match(r'\s*End-to-end latency:\s*([\d,]+(?:\.\d+)?)\s*ms', line)
+        if m:
+            metrics['end_to_end_latency_ms'] = float(m.group(1).replace(',', ''))
+    return metrics
+
+
+def _write_metrics_csv(path, rows):
+    ''' Write benchmark rows to CSV. '''
+    with open(path, 'w', newline='') as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                'rate', 'protocol',
+                'consensus_tps', 'consensus_latency_ms',
+                'end_to_end_tps', 'end_to_end_latency_ms',
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f'Saved {len(rows)} rows to {path}')
+
+
+def _print_dag_summary(rows, protocols):
+    ''' Print consensus latency and TPS summary table. '''
+    by_proto_rate = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        r = int(float(row['rate']))
+        by_proto_rate[row['protocol']][r].append(row)
+
+    rates = sorted({int(float(r['rate'])) for r in rows})
+
+    Print.heading('\n=== Consensus Latency (ms) ===')
+    header = f"{'Rate':>10}"
+    for p in protocols:
+        header += f' {p:>12}'
+    print(header)
+    print('-' * (10 + 13 * len(protocols)))
+    for r in rates:
+        line = f'{r:>10,}'
+        for p in protocols:
+            items = by_proto_rate.get(p, {}).get(r, [])
+            if items:
+                avg = sum(float(x['consensus_latency_ms']) for x in items) / len(items)
+                line += f' {avg:>12.1f}'
+            else:
+                line += f' {"N/A":>12}'
+        print(line)
+
+    Print.heading('\n=== End-to-End TPS ===')
+    header = f"{'Rate':>10}"
+    for p in protocols:
+        header += f' {p:>12}'
+    print(header)
+    print('-' * (10 + 13 * len(protocols)))
+    for r in rates:
+        line = f'{r:>10,}'
+        for p in protocols:
+            items = by_proto_rate.get(p, {}).get(r, [])
+            if items:
+                avg = sum(float(x['end_to_end_tps']) for x in items) / len(items)
+                line += f' {avg:>12.0f}'
+            else:
+                line += f' {"N/A":>12}'
+        print(line)

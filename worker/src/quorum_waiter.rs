@@ -72,6 +72,14 @@ impl QuorumWaiter {
             // delivered and we send its digest to the primary (that will include it into
             // the dag). This should reduce the amount of synching.
             let mut total_stake = self.stake;
+            // A single node (n=1, f=0) already meets the quorum by itself.
+            if total_stake >= self.committee.quorum_threshold() {
+                self.tx_batch
+                    .send(batch)
+                    .await
+                    .expect("Failed to deliver batch");
+                continue;
+            }
             while let Some(stake) = wait_for_quorum.next().await {
                 total_stake += stake;
                 if total_stake >= self.committee.quorum_threshold() {
