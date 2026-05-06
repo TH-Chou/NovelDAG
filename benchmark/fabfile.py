@@ -5,7 +5,7 @@ from fabric import task
 
 from benchmark.local import LocalBench
 from benchmark.logs import ParseError, LogParser
-from benchmark.utils import Print, BenchError
+from benchmark.utils import Print, BenchError, PathMaker
 
 
 @task
@@ -767,7 +767,7 @@ def compare_dag_protocols(
             for run_i in range(1, int(runs) + 1):
                 result_path = PathMaker.result_file(
                     int(faults), int(nodes), int(workers), True,
-                    int(rate), int(tx_size)
+                    int(rate), int(tx_size), proto
                 )
                 try:
                     with open(result_path, 'r') as f:
@@ -858,7 +858,7 @@ def sweep_dag_rates(
                     current += 1
                     result_path = PathMaker.result_file(
                         int(faults), int(nodes), int(workers), True,
-                        r, int(tx_size)
+                        r, int(tx_size), proto
                     )
                     try:
                         with open(result_path, 'r') as f:

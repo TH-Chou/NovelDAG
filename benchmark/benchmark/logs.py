@@ -254,7 +254,7 @@ class LogParser:
 
     def print(self, filename):
         assert isinstance(filename, str)
-        with open(filename, 'a') as f:
+        with open(filename, 'w') as f:
             f.write(self.result())
 
     @classmethod
