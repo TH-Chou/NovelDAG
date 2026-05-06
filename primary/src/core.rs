@@ -191,12 +191,14 @@ impl Core {
                 break;
             }
 
-            // Send signal even without own certificate — the QC can arrive later.
+            // Require our own certificate's QC before signalling the proposer.
+            // Without it the proposer would deadlock: the follow-up QC signal
+            // arrives too late once the proposer has advanced to a later round.
             let own_certificate = by_authority.get(&self.name);
             let qc = own_certificate.map(|c| Self::certificate_to_embedded_qc(c));
-
-            if qc.is_none() {
-                self.pending_qc_signals.insert(round + 1);
+            let needs_qc = round >= 1; // proposer target round >= 2
+            if needs_qc && qc.is_none() {
+                break;
             }
 
             let signal = ProposerSignal {
@@ -380,17 +382,11 @@ impl Core {
                     .primary_to_primary;
                 let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
                     .expect("Failed to serialize our own vote");
-                if self.dag_protocol == DagProtocol::NovelDAG {
-                    // Best-effort sender for votes: lost votes are tolerated (still have 2f+1 redundancy).
-                    self.vote_network.send(address, Bytes::from(bytes)).await;
-                } else {
-                    // Reliable sender for Narwhal/Bullshark (original behavior).
-                    let handler = self.network.send(address, Bytes::from(bytes)).await;
-                    self.cancel_handlers
-                        .entry(header.round)
-                        .or_insert_with(Vec::new)
-                        .push(handler);
-                }
+                let handler = self.network.send(address, Bytes::from(bytes)).await;
+                self.cancel_handlers
+                    .entry(header.round)
+                    .or_insert_with(Vec::new)
+                    .push(handler);
             }
         }
         Ok(())
