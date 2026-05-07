@@ -73,6 +73,8 @@ pub struct Consensus {
     dag_protocol: DagProtocol,
     /// The consensus leader election mode.
     pub(crate) consensus_protocol: ConsensusProtocol,
+    /// The public key of this authority, used by NovelDAG for round-completion detection.
+    pub(crate) name: PublicKey,
 
     /// Receives new certificates from the primary. The primary should send us new certificates only
     /// if it already sent us its whole history.
@@ -91,6 +93,7 @@ pub struct Consensus {
 
 impl Consensus {
     pub fn spawn(
+        name: PublicKey,
         committee: Committee,
         gc_depth: Round,
         rx_primary: Receiver<Certificate>,
@@ -98,6 +101,7 @@ impl Consensus {
         tx_output: Sender<Certificate>,
     ) {
         Self::spawn_with_protocol(
+            name,
             committee,
             gc_depth,
             DagProtocol::NovelDAG,
@@ -109,6 +113,7 @@ impl Consensus {
     }
 
     pub fn spawn_with_protocol(
+        name: PublicKey,
         committee: Committee,
         gc_depth: Round,
         dag_protocol: DagProtocol,
@@ -123,6 +128,7 @@ impl Consensus {
                 gc_depth,
                 dag_protocol,
                 consensus_protocol,
+                name,
                 rx_primary,
                 tx_primary,
                 tx_output,

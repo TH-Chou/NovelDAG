@@ -9,7 +9,7 @@ class CommandMaker:
     @staticmethod
     def cleanup():
         return (
-            f'rm -r .db-* ; rm .*.json ; mkdir -p {PathMaker.results_path()}'
+            f'rm -rf .db-* ; rm -f .*.json ; mkdir -p {PathMaker.results_path()}'
         )
 
     @staticmethod
@@ -63,4 +63,4 @@ class CommandMaker:
     def alias_binaries(origin):
         assert isinstance(origin, str)
         node, client = join(origin, 'node'), join(origin, 'benchmark_client')
-        return f'rm node ; rm benchmark_client ; ln -s {node} . ; ln -s {client} .'
+        return f'rm -rf node benchmark_client ; ln -sf {node} . ; ln -sf {client} .'

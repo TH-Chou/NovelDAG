@@ -346,23 +346,28 @@ class Bench:
                 PathMaker.primary_log_file(i),
                 PathMaker.primary_log_file(i)))
 
-        # Parallel download.
+        # Parallel download with retry and conservative concurrency.
         results = {'done': 0, 'errors': 0}
         lock = threading.Lock()
 
         def _download_one(host, remote, local):
-            try:
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
-                c.get(remote, local=local)
-                with lock:
-                    results['done'] += 1
-            except Exception as e:
-                with lock:
-                    results['errors'] += 1
-                Print.warn(f'Failed to download {remote} from {host}: {e}')
+            for attempt in range(1, self.SSH_RETRIES + 1):
+                try:
+                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c.get(remote, local=local)
+                    with lock:
+                        results['done'] += 1
+                    return
+                except Exception as e:
+                    if attempt == self.SSH_RETRIES:
+                        with lock:
+                            results['errors'] += 1
+                        Print.warn(f'Failed to download {remote} from {host}: {e}')
+                    else:
+                        sleep(self.SSH_RETRY_DELAY_SECONDS)
 
         Print.info(f'Downloading logs from {len(tasks)} remote paths...')
-        with ThreadPoolExecutor(max_workers=16) as pool:
+        with ThreadPoolExecutor(max_workers=8) as pool:
             futures = [
                 pool.submit(_download_one, host, remote, local)
                 for host, remote, local in tasks
@@ -427,26 +432,31 @@ class Bench:
             Print.warn('No checkpointed logs found on any host')
             return
 
-        # Parallel download.
+        # Parallel download with retry and conservative concurrency.
         results = {'done': 0, 'errors': 0}
         lock = threading.Lock()
 
         def _download_one(host, remote, local):
-            try:
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
-                c.get(remote, local=local)
-                with lock:
-                    results['done'] += 1
-            except Exception as e:
-                with lock:
-                    results['errors'] += 1
-                Print.warn(f'Failed to download {remote} from {host}: {e}')
+            for attempt in range(1, self.SSH_RETRIES + 1):
+                try:
+                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c.get(remote, local=local)
+                    with lock:
+                        results['done'] += 1
+                    return
+                except Exception as e:
+                    if attempt == self.SSH_RETRIES:
+                        with lock:
+                            results['errors'] += 1
+                        Print.warn(f'Failed to download {remote} from {host}: {e}')
+                    else:
+                        sleep(self.SSH_RETRY_DELAY_SECONDS)
 
         Print.info(
             f'Downloading {len(tasks)} log files from '
             f'{len(flat_hosts)} hosts in parallel...'
         )
-        with ThreadPoolExecutor(max_workers=min(len(tasks), 32)) as pool:
+        with ThreadPoolExecutor(max_workers=8) as pool:
             futures = [
                 pool.submit(_download_one, host, remote, local)
                 for host, remote, local in tasks
@@ -605,7 +615,7 @@ class Bench:
                         checkpoint_id = f'r{r}-run{i+1}'
                         self._checkpoint_logs(
                             committee_copy.ips(),
-                            node_parameters.dag_protocol,
+                            node_parameters.json['dag_protocol'],
                             checkpoint_id,
                         )
                     except (subprocess.SubprocessError, GroupException, ParseError, ExecutionError) as e:
@@ -618,7 +628,7 @@ class Bench:
         # Batch-download all checkpointed logs in parallel.
         self._batch_download(
             selected_hosts,
-            node_parameters.dag_protocol,
+            node_parameters.json['dag_protocol'],
             bench_parameters.rate,
         )
 
@@ -638,5 +648,5 @@ class Bench:
                     bench_parameters.collocate,
                     r,
                     bench_parameters.tx_size,
-                    node_parameters.dag_protocol,
+                    node_parameters.json['dag_protocol'],
                 ))

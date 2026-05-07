@@ -8,17 +8,17 @@
     "repo": {
         "name": "narwhal",
         "url": "https://github.com/TH-Chou/narwhal.git",
-        "branch": "master"
+        "branch": "unify-three-protocols"
     },
     "instances": {
         "type": "e2-standard-2",
         "project": "dagtest-zhoutianhao",
         "zones": [
-            "us-east1-b",
-            "us-west1-b",
-            "europe-west1-c",
-            "asia-east1-b",
-            "asia-southeast1-b"
+            "us-east4-b",
+            "us-west1-a",
+            "europe-west1-b",
+            "asia-east1-a",
+            "europe-west2-a"
         ],
         "network": "default",
         "image_project": "ubuntu-os-cloud",
@@ -35,7 +35,7 @@
         "repo": {
             "name": "narwhal",
             "url": "https://github.com/TH-Chou/narwhal.git",
-            "branch": "master"
+            "branch": "unify-three-protocols"
         },
         "instances": {
             "type": "m5.large",

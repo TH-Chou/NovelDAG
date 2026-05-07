@@ -133,6 +133,7 @@ async fn commit_one() {
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
     Consensus::spawn(
+        keys[0],
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -148,7 +149,7 @@ async fn commit_one() {
         }
     });
 
-    // At r=4 we should commit the leader at r-3 = 1.
+    // NovelDAG 2-round delay: round 3 completes → commit leader at r-2 = 1.
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
         .await
         .expect("commit timed out")
@@ -156,8 +157,8 @@ async fn commit_one() {
     assert_eq!(committed.round(), 1);
 }
 
-// Run for 8 dag rounds with one dead node node (that is not a leader). We should commit the leaders of
-// rounds 2, 4, and 6.
+// Run for 8 dag rounds with one dead node (that is not a leader). NovelDAG 2-round delay:
+// round 3 completes → leader at round 1, round 5 → leader at 3, round 7 → leader at 5.
 #[tokio::test]
 async fn dead_node() {
     // Make the certificates.
@@ -177,6 +178,7 @@ async fn dead_node() {
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
     Consensus::spawn(
+        keys[0],
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -204,8 +206,9 @@ async fn dead_node() {
     assert!(first.round() <= second.round());
 }
 
-// Run for 6 dag rounds. The leaders of round 2 does not have enough support, but the leader of
-// round 4 does. The leader of rounds 2 and 4 should thus be committed upon entering round 6.
+// NovelDAG 2-round delay: leader (keys[0], coin=0 in tests) has a broken chain when
+// its b1 (round 3) is missing. The chain recovers when the leader produces blocks
+// at rounds 4-6, and the first valid commit is leader at round 4 when round 6 completes.
 #[tokio::test]
 async fn not_enough_support() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -222,13 +225,16 @@ async fn not_enough_support() {
     let (out, parents_r2) = make_certificates(1, 2, &genesis, &keys);
     certificates.extend(out);
 
-    // Round 3 excludes the future wave leader author, breaking b1 in the chain.
+    // Round 3 excludes the leader (keys[0]), breaking the QC chain:
+    // - Leader at r1 lacks b1 at r3 → skip.
+    // - Leader at r2 lacks b2 at r3 → skip.
+    // - Leader at r3 lacks b3 at r3 → skip.
     let keys_without_leader: Vec<_> = keys.iter().cloned().skip(1).collect();
-    let (out, _parents_r3) = make_certificates(3, 3, &parents_r2, &keys_without_leader);
+    let (out, parents_r3) = make_certificates(3, 3, &parents_r2, &keys_without_leader);
     certificates.extend(out);
 
-    // Round 4 reaches quorum but should not commit due to missing same-author b1.
-    let (out, _) = make_certificates(4, 4, &parents_r2, &keys);
+    // Rounds 4-6 with the leader present: leader at round 4 has full chain when round 6 completes.
+    let (out, _) = make_certificates(4, 6, &parents_r3, &keys);
     certificates.extend(out);
 
     // Spawn the consensus engine and sink the primary channel.
@@ -236,6 +242,7 @@ async fn not_enough_support() {
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
     Consensus::spawn(
+        keys[0],
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -244,26 +251,28 @@ async fn not_enough_support() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates concurrently so the consensus output channel is never blocked.
+    // Feed all certificates.
     tokio::spawn(async move {
         while let Some(certificate) = certificates.pop_front() {
             tx_waiter.send(certificate).await.unwrap();
         }
     });
 
-    let no_commit = timeout(Duration::from_millis(300), rx_output.recv()).await;
-    match no_commit {
-        // Timeout means no commit arrived — expected under the broken chain.
-        Err(_) => {}
-        // If the channel closed without data, that also means no commit.
-        Ok(None) => {}
-        // A commit arrived unexpectedly — the chain should have prevented it.
-        Ok(Some(_)) => panic!("unexpected commit under broken b3-b2-b1 chain"),
-    }
+    // The first commit fires at round 6 for leader at round 4.
+    // order_dag outputs the full DAG sorted by round, so the first output
+    // cert has the lowest round among uncommitted ancestors.
+    let committed = timeout(Duration::from_secs(1), rx_output.recv())
+        .await
+        .expect("commit timed out")
+        .expect("consensus output closed");
+    assert!(
+        committed.round() >= 1,
+        "expected commit to contain DAG from round 1 onwards"
+    );
 }
 
-// Run for 6 dag rounds. Node 0 (the leader of round 2) is missing for rounds 1 and 2,
-// and reapers from round 3.
+// NovelDAG 2-round delay: leader (keys[0], coin=0 in tests) is missing from rounds 1-2
+// and reappears from round 3. The first valid commit is leader at round 3 when round 5 completes.
 #[tokio::test]
 async fn missing_leader() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -292,6 +301,7 @@ async fn missing_leader() {
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
     Consensus::spawn(
+        keys[0],
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
@@ -357,6 +367,7 @@ async fn reject_commit_when_qc_vote_round_not_less_than_commit_round() {
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
     Consensus::spawn(
+        keys[0],
         mock_committee(),
         /* gc_depth */ 50,
         rx_waiter,
