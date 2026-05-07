@@ -1,13 +1,18 @@
-
+#!/usr/bin/env python3
 import csv
+import sys
 from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import matplotlib.pyplot as plt
 
-csv_path = 'results/consensus_fault_comparison.csv'
-out_tps_png = 'results/consensus_tps_by_fault_matplotlib.png'
-out_tps_svg = 'results/consensus_tps_by_fault_matplotlib.svg'
-out_lat_png = 'results/consensus_latency_by_fault_matplotlib.png'
-out_lat_svg = 'results/consensus_latency_by_fault_matplotlib.svg'
+csv_path = 'csv_plots/consensus_fault_comparison.csv'
+out_tps_png = 'csv_plots/consensus_tps_by_fault_matplotlib.png'
+out_tps_svg = 'csv_plots/consensus_tps_by_fault_matplotlib.svg'
+out_lat_png = 'csv_plots/consensus_latency_by_fault_matplotlib.png'
+out_lat_svg = 'csv_plots/consensus_latency_by_fault_matplotlib.svg'
 
 rows = []
 with open(csv_path, newline='') as f:

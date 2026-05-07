@@ -99,8 +99,8 @@ def compare_consensus_groups(
     debug=True,
     rate=120_000,
     rounds=10,
-    output_csv='results/consensus_fault_comparison_avg.csv',
-    output_runs_csv='results/consensus_fault_comparison_runs.csv',
+    output_csv='csv_plots/consensus_fault_comparison_avg.csv',
+    output_runs_csv='csv_plots/consensus_fault_comparison_runs.csv',
 ):
     ''' Compare protocols on grouped faults with 16 nodes (faults=0,1,2,3,4,5), averaged over rounds '''
     node_params = {
@@ -247,8 +247,8 @@ def compare_consensus_rates_zero_fault(
     rate_start=30_000,
     rate_step=30_000,
     rate_end=240_000,
-    output_csv='results/consensus_rate_comparison_avg.csv',
-    output_runs_csv='results/consensus_rate_comparison_runs.csv',
+    output_csv='csv_plots/consensus_rate_comparison_avg.csv',
+    output_runs_csv='csv_plots/consensus_rate_comparison_runs.csv',
 ):
     ''' Compare consensus TPS vs injection rate at faults=0 for round_robin and common_coin '''
     node_params = {
@@ -399,11 +399,11 @@ def compare_consensus_rates_zero_fault(
 @task
 def plot_consensus_rates_zero_fault(
     ctx,
-    csv_path='results/consensus_rate_comparison_avg.csv',
-    out_png='results/consensus_tps_vs_rate_zero_fault_with_table.png',
-    out_svg='results/consensus_tps_vs_rate_zero_fault_with_table.svg',
-    out_latency_png='results/consensus_latency_vs_rate_zero_fault_with_table.png',
-    out_latency_svg='results/consensus_latency_vs_rate_zero_fault_with_table.svg',
+    csv_path='csv_plots/consensus_rate_comparison_avg.csv',
+    out_png='csv_plots/consensus_tps_vs_rate_zero_fault_with_table.png',
+    out_svg='csv_plots/consensus_tps_vs_rate_zero_fault_with_table.svg',
+    out_latency_png='csv_plots/consensus_latency_vs_rate_zero_fault_with_table.png',
+    out_latency_svg='csv_plots/consensus_latency_vs_rate_zero_fault_with_table.svg',
 ):
     ''' Plot consensus TPS and latency vs rate at faults=0 with summary tables above charts '''
     import matplotlib.pyplot as plt
@@ -725,7 +725,7 @@ def compare_dag_protocols(
     tx_size=512,
     runs=2,
     consensus='round_robin',
-    output_csv='results/dag_protocol_comparison.csv',
+    output_csv='csv_plots/dag_protocol_comparison.csv',
 ):
     ''' Compare narwhal, bullshark, noveldag on remote testbed at fixed rate '''
     from benchmark.remote import Bench
@@ -809,7 +809,7 @@ def sweep_dag_rates(
     rate_end=300_000,
     protocols='narwhal,bullshark,noveldag',
     consensus='round_robin',
-    output_csv='results/remote_dag_sweep.csv',
+    output_csv='csv_plots/remote_dag_sweep.csv',
 ):
     ''' Rate sweep across all three DAG protocols on remote testbed '''
     from benchmark.remote import Bench
@@ -891,7 +891,7 @@ def sweep_dag_rates(
 @task
 def plot_dag_sweep(
     ctx,
-    csv_path='results/remote_dag_sweep.csv',
+    csv_path='csv_plots/remote_dag_sweep.csv',
     out_dir='results',
 ):
     ''' Generate comparison charts from a dag sweep CSV '''
@@ -986,7 +986,7 @@ def full_dag_bench(
     rate_end=300_000,
     protocols='narwhal,bullshark,noveldag',
     consensus='round_robin',
-    output_csv='results/remote_dag_sweep.csv',
+    output_csv='csv_plots/remote_dag_sweep.csv',
     debug=True,
 ):
     ''' All-in-one: sweep all three DAG protocols on cloud, then generate charts '''

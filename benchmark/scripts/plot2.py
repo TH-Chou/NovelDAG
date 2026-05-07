@@ -1,14 +1,19 @@
-python3 - <<'PY'
+#!/usr/bin/env python3
 import csv
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-csv_path = 'results/my_runs.csv'
-out_png = 'results/my_runs_same_x_consensus_tps_box_rr012345_cc543210.png'
-out_svg = 'results/my_runs_same_x_consensus_tps_box_rr012345_cc543210.svg'
+csv_path = 'csv_plots/my_runs.csv'
+out_png = 'csv_plots/my_runs_same_x_consensus_latency_box_rr012345_cc543210.png'
+out_svg = 'csv_plots/my_runs_same_x_consensus_latency_box_rr012345_cc543210.svg'
 
 rows = []
 with open(csv_path, newline='') as f:
@@ -16,7 +21,7 @@ with open(csv_path, newline='') as f:
         rows.append({
             'fault': int(r['fault']),
             'protocol': r['protocol'],
-            'val': float(r['consensus_tps']),
+            'val': float(r['consensus_latency_ms']),
         })
 
 faults_rr = [0, 1, 2, 3, 4, 5]
@@ -57,8 +62,8 @@ for w in bp_cc['whiskers'] + bp_cc['caps'] + bp_cc['medians']:
 ax.set_xticks(centers)
 ax.set_xticklabels([str(f) for f in faults_rr])
 ax.set_xlabel('Fault Nodes (x-axis reference for round_robin)')
-ax.set_ylabel('Consensus TPS')
-ax.set_title('TPS Boxplot: round_robinvs common_coin 16 replicas')
+ax.set_ylabel('Consensus Latency (ms)')
+ax.set_title('Latency Boxplot: round_robin vs common_coin 16 replicas')
 ax.grid(axis='y', alpha=0.25)
 ax.legend(handles=[
     Line2D([0], [0], color='#1f77b4', lw=2, label='round_robin (outer)'),
@@ -69,4 +74,3 @@ fig.tight_layout()
 fig.savefig(out_png, dpi=180)
 fig.savefig(out_svg)
 print('generated:', out_png, out_svg)
-PY

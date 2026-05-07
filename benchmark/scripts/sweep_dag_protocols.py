@@ -2,8 +2,11 @@
 """Local rate sweep across all three DAG protocols with chart generation."""
 import argparse
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib
 
@@ -198,7 +201,7 @@ def parse_args():
     p.add_argument("--tx-size", type=int, default=512)
     p.add_argument("--debug", action="store_true", default=True)
     p.add_argument("--output-prefix", type=str,
-                   default="results/local_dag_sweep_n10_f1")
+                   default="csv_plots/local_dag_sweep_n10_f1")
     return p.parse_args()
 
 

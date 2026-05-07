@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib
 
@@ -117,7 +120,7 @@ def parse_args():
     parser.add_argument(
         "--output-prefix",
         type=str,
-        default="results/local_round_robin_rate_sweep_n10_f1_30000_210000_step30000",
+        default="csv_plots/local_round_robin_rate_sweep_n10_f1_30000_210000_step30000",
         help="Output prefix without extension",
     )
     return parser.parse_args()

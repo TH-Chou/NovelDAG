@@ -76,6 +76,7 @@ pub struct Core {
     /// A network sender to broadcast headers and certificates reliably.
     network: ReliableSender,
     /// A best-effort network sender for votes (no retry needed).
+    #[allow(dead_code)]
     vote_network: SimpleSender,
     /// Keeps the cancel handlers of the messages we sent.
     cancel_handlers: HashMap<Round, Vec<CancelHandler>>,

@@ -82,6 +82,14 @@ class PathMaker:
         )
 
     @staticmethod
+    def csv_plots_path():
+        return 'csv_plots'
+
+    @staticmethod
+    def paper_path():
+        return 'paper'
+
+    @staticmethod
     def plots_path():
         return 'plots'
 
