@@ -9,7 +9,7 @@ from benchmark.utils import Print, BenchError, PathMaker
 
 
 @task
-def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag'):
+def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag', rate=50_000):
     ''' Run benchmarks on localhost '''
     if protocol not in ('round_robin', 'common_coin'):
         raise BenchError('Invalid protocol: must be round_robin or common_coin')
@@ -18,7 +18,7 @@ def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag'):
         'faults': 0,
         'nodes': 4,
         'workers': 1,
-        'rate': 50_000,
+        'rate': int(rate),
         'tx_size': 512,
         'duration': 20,
     }

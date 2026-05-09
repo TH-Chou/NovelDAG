@@ -233,4 +233,13 @@ impl Synchronizer {
         }
         Ok(true)
     }
+
+    /// Add a certificate to the in-memory cache so that subsequent `get_parents()`
+    /// calls can find it without hitting the store (and thus without re-verification).
+    /// Used by NovelDAG to register synthetic peer certificates that carry empty
+    /// votes and would fail `Certificate::verify()` if read back from disk.
+    pub fn cache_certificate(&mut self, certificate: &Certificate) {
+        self.certificate_cache
+            .insert(certificate.digest(), certificate.clone());
+    }
 }

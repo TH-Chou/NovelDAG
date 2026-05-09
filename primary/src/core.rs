@@ -393,6 +393,30 @@ impl Core {
         Ok(())
     }
 
+    /// NovelDAG: peer blocks never arrive as independent Certificates — the
+    /// author's QC is piggybacked inside the next round's header.qc field.
+    /// To keep the downstream DAG-tracking logic uniform, we synthesize a
+    /// local empty-votes Certificate from every peer Header we successfully
+    /// processed. The consensus layer only reads certificate.header.* fields
+    /// (never certificate.votes), so an empty-votes certificate is
+    /// semantically equivalent to a real one here. This is only invoked at
+    /// the direct Header dispatch points — never inside process_certificate's
+    /// header-processing path, to avoid double-emitting a cert for the same
+    /// block.
+    async fn maybe_synthesize_peer_cert(&mut self, header: &Header) {
+        if self.dag_protocol != DagProtocol::NovelDAG || header.author == self.name {
+            return;
+        }
+        let synthetic = Certificate {
+            header: header.clone(),
+            votes: Vec::new(),
+        };
+        if let Err(e) = self.process_certificate(synthetic).await {
+            warn!("Failed to process synthetic certificate: {}", e);
+        }
+    }
+
+
     #[async_recursion]
     async fn process_vote(&mut self, vote: Vote) -> DagResult<()> {
         debug!("Processing {:?}", vote);
@@ -404,28 +428,34 @@ impl Core {
         {
             debug!("Assembled {:?}", certificate);
 
-            // Broadcast the certificate.
-            let addresses = self
-                .committee
-                .others_primaries(&self.name)
-                .iter()
-                .map(|(_, x)| x.primary_to_primary)
-                .collect();
-            let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate.clone()))
-                .expect("Failed to serialize our own certificate");
-            let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
-            self.cancel_handlers
-                .entry(certificate.round())
-                .or_insert_with(Vec::new)
-                .extend(handlers);
+            // Broadcast the certificate (Narwhal/Bullshark: the cert itself
+            // is the 3rd network phase). NovelDAG skips this phase entirely:
+            // the QC is delivered by piggybacking inside the next round's
+            // header.qc field, saving one delta of latency per round.
+            if self.dag_protocol != DagProtocol::NovelDAG {
+                let addresses = self
+                    .committee
+                    .others_primaries(&self.name)
+                    .iter()
+                    .map(|(_, x)| x.primary_to_primary)
+                    .collect();
+                let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate.clone()))
+                    .expect("Failed to serialize our own certificate");
+                let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
+                self.cancel_handlers
+                    .entry(certificate.round())
+                    .or_insert_with(Vec::new)
+                    .extend(handlers);
+            }
 
-            // Process the new certificate.
+            // Process the new certificate locally in all modes.
             self.process_certificate(certificate)
                 .await
                 .expect("Failed to process valid certificate");
         }
         Ok(())
     }
+
 
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
@@ -454,12 +484,15 @@ impl Core {
             return Ok(());
         }
 
-        // Store the certificate.
-        let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
-        self.store.write(certificate.digest().to_vec(), bytes).await;
-
         match self.dag_protocol {
             DagProtocol::NovelDAG => {
+                // NovelDAG certificates are never broadcast: peer blocks arrive
+                // as headers and are synthesised locally with empty votes. Skip
+                // disk storage — they would fail `Certificate::verify()` on
+                // re-read.  Instead, cache them in-memory so that
+                // `get_parents()` can find them without hitting the store.
+                self.synchronizer.cache_certificate(&certificate);
+
                 self.certificates_by_round
                     .entry(certificate.round())
                     .or_insert_with(HashMap::new)
@@ -473,6 +506,10 @@ impl Core {
                 }
             }
             DagProtocol::Narwhal => {
+                // Store to disk for crash recovery.
+                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                self.store.write(certificate.digest().to_vec(), bytes).await;
+
                 if let Some(parents) = self
                     .certificates_aggregators
                     .entry(certificate.round())
@@ -493,6 +530,10 @@ impl Core {
                 }
             }
             DagProtocol::Bullshark => {
+                // Store to disk for crash recovery.
+                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                self.store.write(certificate.digest().to_vec(), bytes).await;
+
                 if let Some(parents) = self
                     .certificates_vec_aggregators
                     .entry(certificate.round())
@@ -576,37 +617,46 @@ impl Core {
 
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
-        loop {
+            loop {
             let result = tokio::select! {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            match self.sanitize_header(&header) {
+                            let result = match self.sanitize_header(&header) {
                                 Ok(()) => self.process_header(&header).await,
-                                error => error
+                                error => error,
+                            };
+                            if result.is_ok() {
+                                self.maybe_synthesize_peer_cert(&header).await;
                             }
-
+                            result
                         },
                         PrimaryMessage::Vote(vote) => {
                             match self.sanitize_vote(&vote) {
                                 Ok(()) => self.process_vote(vote).await,
-                                error => error
+                                error => error,
                             }
                         },
                         PrimaryMessage::Certificate(certificate) => {
                             match self.sanitize_certificate(&certificate) {
-                                Ok(()) =>  self.process_certificate(certificate).await,
-                                error => error
+                                Ok(()) => self.process_certificate(certificate).await,
+                                error => error,
                             }
                         },
-                        _ => panic!("Unexpected core message")
+                        _ => panic!("Unexpected core message"),
                     }
                 },
 
                 // We receive here loopback headers from the `HeaderWaiter`. Those are headers for which we interrupted
                 // execution (we were missing some of their dependencies) and we are now ready to resume processing.
-                Some(header) = self.rx_header_waiter.recv() => self.process_header(&header).await,
+                Some(header) = self.rx_header_waiter.recv() => {
+                    let result = self.process_header(&header).await;
+                    if result.is_ok() {
+                        self.maybe_synthesize_peer_cert(&header).await;
+                    }
+                    result
+                },
 
                 // We receive here loopback certificates from the `CertificateWaiter`. Those are certificates for which
                 // we interrupted execution (we were missing some of their ancestors) and we are now ready to resume
@@ -638,5 +688,6 @@ impl Core {
                 self.gc_round = gc_round;
             }
         }
+
     }
 }

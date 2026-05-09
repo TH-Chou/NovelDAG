@@ -97,37 +97,29 @@ pub(crate) async fn run(consensus: &mut Consensus) {
 }
 
 /// Returns the certificate (and the certificate's digest) originated by the leader of the
-/// specified round (if any).
+/// specified round (if any). Unified: both RoundRobin and CommonCoin draw from the full
+/// committee so every honest node computes the same leader identity.
 fn leader<'a>(
     consensus: &Consensus,
     round: Round,
     dag: &'a Dag,
 ) -> Option<&'a (Digest, Certificate)> {
     let by_round = dag.get(&round)?;
-    let leader = match consensus.consensus_protocol {
-        ConsensusProtocol::RoundRobin => round_robin_leader(consensus, round),
-        ConsensusProtocol::CommonCoin => {
-            let coin = consensus
-                .common_coin(round, dag)
-                .unwrap_or_else(|| consensus.round_robin_coin(round));
-            let mut keys: Vec<_> = by_round.keys().cloned().collect();
-            if keys.is_empty() {
-                return None;
-            }
-            keys.sort();
-            keys[coin as usize % keys.len()]
-        }
+
+    let coin = match consensus.consensus_protocol {
+        ConsensusProtocol::RoundRobin => consensus.round_robin_coin(round),
+        ConsensusProtocol::CommonCoin => consensus
+            .common_coin(round, dag)
+            .unwrap_or_else(|| consensus.round_robin_coin(round)),
     };
+    let mut keys: Vec<_> = consensus.committee.authorities.keys().cloned().collect();
+    keys.sort();
+    let leader = keys[coin as usize % consensus.committee.size()];
 
     by_round.get(&leader)
 }
 
-fn round_robin_leader(consensus: &Consensus, round: Round) -> PublicKey {
-    let coin = consensus.round_robin_coin(round);
-    let mut keys: Vec<_> = consensus.committee.authorities.keys().cloned().collect();
-    keys.sort();
-    keys[coin as usize % consensus.committee.size()]
-}
+
 
 /// Order the past leaders that we didn't already commit.
 fn order_leaders(

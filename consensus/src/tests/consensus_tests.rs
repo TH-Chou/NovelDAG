@@ -64,9 +64,7 @@ fn mock_certificate(
     (certificate.digest(), certificate)
 }
 
-// Creates one certificate per authority starting and finishing at the specified rounds (inclusive).
-// Outputs a VecDeque of certificates (the certificate with higher round is on the front) and a set
-// of digests to be used as parents for the certificates of the next round.
+// Creates one certificate per authority from `start` to `stop` (inclusive).
 fn make_certificates(
     start: Round,
     stop: Round,
@@ -116,11 +114,10 @@ fn make_certificates(
     (certificates, next_parents)
 }
 
-// Run for 4 dag rounds in ideal conditions (all nodes reference all other nodes). We should commit
-// the leader of round 2.
+// NovelDAG wave = 4. Running rounds 1..=4 with a full DAG reaches the first wave
+// boundary at r=4; the Section-6 rule then commits the leader at r-3 = 1.
 #[tokio::test]
 async fn commit_one() {
-    // Make certificates for rounds 1 to 4.
     let keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     let genesis = Certificate::genesis(&mock_committee())
         .iter()
@@ -128,7 +125,6 @@ async fn commit_one() {
         .collect::<BTreeSet<_>>();
     let (mut certificates, _) = make_certificates(1, 4, &genesis, &keys);
 
-    // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
@@ -142,14 +138,14 @@ async fn commit_one() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates concurrently so the consensus output channel is never blocked.
     tokio::spawn(async move {
         while let Some(certificate) = certificates.pop_front() {
             tx_waiter.send(certificate).await.unwrap();
         }
     });
 
-    // NovelDAG 2-round delay: round 3 completes → commit leader at r-2 = 1.
+    // Wave boundary at r=4 commits the leader at round 1; order_dag emits the
+    // whole sub-DAG sorted by round, so the first output has round 1.
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
         .await
         .expect("commit timed out")
@@ -157,11 +153,10 @@ async fn commit_one() {
     assert_eq!(committed.round(), 1);
 }
 
-// Run for 8 dag rounds with one dead node (that is not a leader). NovelDAG 2-round delay:
-// round 3 completes → leader at round 1, round 5 → leader at 3, round 7 → leader at 5.
+// Rounds 1..=8 with one dead non-leader node. Two wave boundaries fire:
+// r=4 → leader at r1, r=8 → leader at r5.
 #[tokio::test]
 async fn dead_node() {
-    // Make the certificates.
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort(); // Ensure we don't remove one of the leaders.
     let _ = keys.pop().unwrap();
@@ -173,7 +168,6 @@ async fn dead_node() {
 
     let (mut certificates, _) = make_certificates(1, 8, &genesis, &keys);
 
-    // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
@@ -187,14 +181,12 @@ async fn dead_node() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates to the consensus.
     tokio::spawn(async move {
         while let Some(certificate) = certificates.pop_front() {
             tx_waiter.send(certificate).await.unwrap();
         }
     });
 
-    // We should observe commits at wave boundaries under the new rule.
     let first = timeout(Duration::from_secs(1), rx_output.recv())
         .await
         .expect("first commit timed out")
@@ -206,9 +198,9 @@ async fn dead_node() {
     assert!(first.round() <= second.round());
 }
 
-// NovelDAG 2-round delay: leader (keys[0], coin=0 in tests) has a broken chain when
-// its b1 (round 3) is missing. The chain recovers when the leader produces blocks
-// at rounds 4-6, and the first valid commit is leader at round 4 when round 6 completes.
+// Leader (keys[0], coin=0 in tests) misses round 3, breaking the QC chain for
+// the wave ending at r=4 (b1 = leader@r3 is absent). The next wave ends at
+// r=8 with leader at r=5; the full b3/b2/b1 chain is present, so we commit.
 #[tokio::test]
 async fn not_enough_support() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -221,23 +213,19 @@ async fn not_enough_support() {
 
     let mut certificates = VecDeque::new();
 
-    // Rounds 1 and 2 are complete.
+    // Rounds 1..=2 are complete.
     let (out, parents_r2) = make_certificates(1, 2, &genesis, &keys);
     certificates.extend(out);
 
-    // Round 3 excludes the leader (keys[0]), breaking the QC chain:
-    // - Leader at r1 lacks b1 at r3 → skip.
-    // - Leader at r2 lacks b2 at r3 → skip.
-    // - Leader at r3 lacks b3 at r3 → skip.
+    // Round 3 excludes the leader: wave at r=4 fails because b1@r3 is missing.
     let keys_without_leader: Vec<_> = keys.iter().cloned().skip(1).collect();
     let (out, parents_r3) = make_certificates(3, 3, &parents_r2, &keys_without_leader);
     certificates.extend(out);
 
-    // Rounds 4-6 with the leader present: leader at round 4 has full chain when round 6 completes.
-    let (out, _) = make_certificates(4, 6, &parents_r3, &keys);
+    // Rounds 4..=8 with the leader: wave at r=8 sees a full chain at r=5..=7.
+    let (out, _) = make_certificates(4, 8, &parents_r3, &keys);
     certificates.extend(out);
 
-    // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
@@ -251,16 +239,15 @@ async fn not_enough_support() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates.
     tokio::spawn(async move {
         while let Some(certificate) = certificates.pop_front() {
             tx_waiter.send(certificate).await.unwrap();
         }
     });
 
-    // The first commit fires at round 6 for leader at round 4.
-    // order_dag outputs the full DAG sorted by round, so the first output
-    // cert has the lowest round among uncommitted ancestors.
+    // order_dag emits the sub-DAG sorted by round, so the first output is the
+    // lowest uncommitted round visible from the leader at r=5 — expected to be
+    // round 1 (or above).
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
         .await
         .expect("commit timed out")
@@ -271,8 +258,9 @@ async fn not_enough_support() {
     );
 }
 
-// NovelDAG 2-round delay: leader (keys[0], coin=0 in tests) is missing from rounds 1-2
-// and reappears from round 3. The first valid commit is leader at round 3 when round 5 completes.
+// Leader absent for rounds 1..=2, present from round 3 onwards. Wave at r=4
+// finds leader@r1 missing → skip. Wave at r=8 finds leader@r5 with a full
+// chain → commit.
 #[tokio::test]
 async fn missing_leader() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -285,18 +273,15 @@ async fn missing_leader() {
 
     let mut certificates = VecDeque::new();
 
-    // Remove the leader for rounds 1 and 2.
     let nodes: Vec<_> = keys.iter().cloned().skip(1).collect();
     let (out, parents) = make_certificates(1, 2, &genesis, &nodes);
     certificates.extend(out);
 
-    // Add back the leader for rounds 3 to 8.
     let (out, parents) = make_certificates(3, 8, &parents, &keys);
     certificates.extend(out);
 
     let _ = parents;
 
-    // Spawn the consensus engine and sink the primary channel.
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
     let (tx_output, mut rx_output) = channel(1);
@@ -310,8 +295,6 @@ async fn missing_leader() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    // Feed all certificates concurrently so the consensus output channel is drained
-    // even when a commit fires before all certs are ingested.
     tokio::spawn(async move {
         while let Some(certificate) = certificates.pop_front() {
             tx_waiter.send(certificate).await.unwrap();
@@ -325,8 +308,8 @@ async fn missing_leader() {
     assert!(committed.round() >= 1);
 }
 
-// At r=4, if the QC embedded in b1 (round 3) contains any vote with voter_round >= 4,
-// the section-6 commit rule must reject committing b3.
+// At the r=4 wave boundary, if any vote inside QC(b2) embedded in b1 has
+// voter_round >= commit_round, the Section-6 rule must reject the commit.
 #[tokio::test]
 async fn reject_commit_when_qc_vote_round_not_less_than_commit_round() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();

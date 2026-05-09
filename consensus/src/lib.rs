@@ -86,9 +86,9 @@ pub struct Consensus {
 
     /// The genesis certificates.
     pub(crate) genesis: Vec<Certificate>,
-    /// Pre-computed order_dag results keyed by leader_round, computed one round ahead
-    /// of the wave boundary to reduce commit-time latency (NovelDAG only).
-    pub(crate) precomputed: HashMap<Round, Vec<Certificate>>,
+    
+
+
 }
 
 impl Consensus {
@@ -133,7 +133,6 @@ impl Consensus {
                 tx_primary,
                 tx_output,
                 genesis: Certificate::genesis(&committee),
-                precomputed: HashMap::new(),
             }
             .run()
             .await;

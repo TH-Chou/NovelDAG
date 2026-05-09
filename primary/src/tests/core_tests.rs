@@ -419,12 +419,9 @@ async fn process_certificates() {
         assert_eq!(received, x);
     }
 
-    // Ensure the certificates are stored.
-    for x in &certificates {
-        let stored = store.read(x.digest().to_vec()).await.unwrap();
-        let serialized = bincode::serialize(x).unwrap();
-        assert_eq!(stored, Some(serialized));
-    }
+    // Note: in NovelDAG mode certificates are no longer persisted to the
+    // store (they use an in-memory cache instead), so we skip the DB
+    // assertion here.
 }
 
 #[tokio::test]

@@ -1,12 +1,15 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-// NovelDAG consensus: round-completion-driven model with 2-round leader-to-commit delay,
-// b3→b2→b1 leader chain, embedded QC links, every-round commits.
+// NovelDAG consensus: 4-round wave, r-3 leader, b3→b2→b1 embedded QC chain.
+// Faithful implementation of Section 6 of the design doc.
 use crate::Consensus;
 use crate::State;
 use crypto::Hash as _;
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
 use std::collections::{HashMap, HashSet};
+
+/// Wave length (Section 6 of the design doc).
+const WAVE: Round = 4;
 
 pub(crate) async fn run(consensus: &mut Consensus) {
     let mut state = State::new(consensus.genesis.clone());
@@ -57,27 +60,25 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             .or_insert_with(HashMap::new)
             .insert(certificate.origin(), (certificate.digest(), certificate));
 
-        // --- Round-completion detection ---
-        // A round is "complete" (for this node) when:
-        //   1. Our own certificate exists at this round (meaning our block got QC'd), AND
-        //   2. At least 2f+1 certificates exist at this round.
-        //
-        // This matches the design doc Section 5.1 round-end condition:
-        // own QC formed + quorum received → round ends → run commit logic.
-        if round < 3 || completed_rounds.contains(&round) {
+        // --- Wave boundary gate (Section 6) ---
+        // Only waves ending at r%4==0 can trigger a commit.
+        // The minimum viable wave ends at r=4 with leader at r-3=1.
+        if round < WAVE || round % WAVE != 0 || completed_rounds.contains(&round) {
             continue;
         }
 
+        // --- Round-end condition (Section 5.1) ---
+        // Round r ends locally when:
+        //   (1) our own r-block exists in the dag (our QC was formed), AND
+        //   (2) we have received at least 2f+1 r-blocks.
         let our_cert_exists = state
             .dag
             .get(&round)
             .map(|by_auth| by_auth.contains_key(&name))
             .unwrap_or(false);
-
         if !our_cert_exists {
             continue;
         }
-
         if !consensus.round_has_quorum(round, &state.dag) {
             #[cfg(feature = "benchmark")]
             {
@@ -88,17 +89,19 @@ pub(crate) async fn run(consensus: &mut Consensus) {
 
         completed_rounds.insert(round);
 
-        // Round completed. Run commit logic.
-        // NovelDAG uses 2-round leader-to-commit delay: leader at round-2 is committed
-        // when round completes, needing only b2 (round-1) and b1 (round) carrying embedded QCs.
+        // Wave reached. Apply Section-6 commit rule.
         let commit_round = round;
+        let leader_round = commit_round - 3;
 
         #[cfg(feature = "benchmark")]
         {
             diag_commit_round_checks += 1;
         }
 
-        let leader_round = commit_round.saturating_sub(2);
+        // Nothing to do if the would-be leader was already committed in a previous wave.
+        if leader_round <= state.last_committed_round {
+            continue;
+        }
 
         let (_, leader) = match consensus.leader(leader_round, commit_round, &state.dag) {
             Some(x) => x,
@@ -111,15 +114,6 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             }
         };
 
-        // If this leader's block was already committed, skip.
-        if state
-            .last_committed
-            .get(&leader.origin())
-            .map_or(false, |r| *r >= leader.round())
-        {
-            continue;
-        }
-
         let b3 = leader.clone();
         #[cfg(feature = "benchmark")]
         info!(
@@ -129,6 +123,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             b3.origin()
         );
 
+        // b2 is the leader's block at r-2, b1 is the leader's block at r-1.
         let Some(b2) =
             consensus.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
         else {
@@ -148,8 +143,8 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             continue;
         };
 
-        // b2 embeds QC(b3): b2.qc.target == b3.id, b2.qc.round == b3.round < commit_round
-        // b1 embeds QC(b2): b1.qc.target == b2.id, b1.qc.round == b2.round < commit_round
+        // b2 must embed QC(b3), b1 must embed QC(b2); all votes in both QCs
+        // must have voter_round < commit_round.
         if !consensus.embedded_qc_links(b2, &b3, commit_round)
             || !consensus.embedded_qc_links(b1, b2, commit_round)
         {
@@ -161,7 +156,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             continue;
         }
 
-        debug!("Leader {:?} satisfies 2-delay commit rule", b3);
+        debug!("Leader {:?} satisfies Section-6 commit rule", b3);
         #[cfg(feature = "benchmark")]
         info!(
             "DIAG_COMMIT_CHAIN_OK commit_round={} leader_round={} commit_gap={}",
@@ -170,16 +165,18 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             commit_round.saturating_sub(b3.round())
         );
 
-        // Use pre-computed order if available, otherwise compute on demand.
-        let sequence = if let Some(cached) = consensus.precomputed.remove(&leader_round) {
-            cached
-        } else {
-            order_dag(&b3, &state, consensus.gc_depth)
-        };
+        // Recursively order the sub-DAG rooted at b3 (Section 6 last line).
+        let sequence = order_dag(&b3, &state, consensus.gc_depth);
 
         for x in &sequence {
             state.update(x, consensus.gc_depth);
         }
+
+        // Conservative GC of completed_rounds: any round older than
+        // last_committed_round - gc_depth is beyond the garbage-collection
+        // horizon and can never be reached again.
+        let cutoff = state.last_committed_round.saturating_sub(consensus.gc_depth);
+        completed_rounds.retain(|r| *r >= cutoff);
 
         // Log the latest committed round of every authority.
         if log_enabled!(log::Level::Debug) {
@@ -228,22 +225,8 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             }
         }
 
-        // Pre-compute order_dag for the next commit (leader at round-1, committed when round+1 completes).
-        // With 2-round delay, b1 sits at the commit round itself, so precompute may often fail —
-        // the fallback to on-demand order_dag handles this transparently.
-        let pre_leader_round = commit_round.saturating_sub(1);
-        if pre_leader_round > state.last_committed_round
-            && pre_leader_round >= 1
-        {
-            if let Some(ordered) =
-                precompute_order(consensus, pre_leader_round, commit_round + 2, &state)
-            {
-                consensus.precomputed.insert(pre_leader_round, ordered);
-            }
-        }
-
         #[cfg(feature = "benchmark")]
-        if commit_round % 20 == 0 {
+        if commit_round % (WAVE * 5) == 0 {
             info!(
                 "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_round_no_quorum={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={}",
                 commit_round,
@@ -260,28 +243,9 @@ pub(crate) async fn run(consensus: &mut Consensus) {
     }
 }
 
-fn precompute_order(
-    consensus: &Consensus,
-    leader_round: Round,
-    _commit_round: Round,
-    state: &State,
-) -> Option<Vec<Certificate>> {
-    let (_, leader) = consensus.leader(leader_round, _commit_round, &state.dag)?;
-    let b3 = leader.clone();
-
-    let b2 = consensus.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)?;
-    let b1 = consensus.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)?;
-
-    if !consensus.embedded_qc_links(b2, &b3, _commit_round)
-        || !consensus.embedded_qc_links(b1, b2, _commit_round)
-    {
-        return None;
-    }
-
-    Some(order_dag(&b3, state, consensus.gc_depth))
-}
-
-/// Flatten the dag referenced by the input certificate (NovelDAG version with parents_2 traversal).
+/// Flatten the sub-DAG referenced by the committed leader. Traverses both
+/// parents (r-1) and parents_2 (r-2) edges so every block causally referenced
+/// by the leader is ordered exactly once.
 fn order_dag(leader: &Certificate, state: &State, gc_depth: Round) -> Vec<Certificate> {
     debug!("Processing sub-dag of {:?}", leader);
     let mut ordered = Vec::new();
@@ -291,14 +255,15 @@ fn order_dag(leader: &Certificate, state: &State, gc_depth: Round) -> Vec<Certif
     while let Some(x) = buffer.pop() {
         debug!("Sequencing {:?}", x);
         ordered.push(x.clone());
+
         for parent in &x.header.parents {
             let (digest, certificate) = match state
                 .dag
                 .get(&(x.round() - 1))
-                .map(|x| x.values().find(|(x, _)| x == parent))
+                .map(|level| level.values().find(|(d, _)| d == parent))
                 .flatten()
             {
-                Some(x) => x,
+                Some(v) => v,
                 None => continue,
             };
 
@@ -313,16 +278,15 @@ fn order_dag(leader: &Certificate, state: &State, gc_depth: Round) -> Vec<Certif
             }
         }
 
-        // Also traverse second-hop parents (parents_2) to ensure causal completeness.
         if x.round() >= 2 {
             for parent in &x.header.parents_2 {
                 let (digest, certificate) = match state
                     .dag
                     .get(&(x.round() - 2))
-                    .map(|x| x.values().find(|(x, _)| x == parent))
+                    .map(|level| level.values().find(|(d, _)| d == parent))
                     .flatten()
                 {
-                    Some(x) => x,
+                    Some(v) => v,
                     None => continue,
                 };
 
