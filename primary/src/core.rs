@@ -568,7 +568,7 @@ impl Core {
         Ok(())
     }
 
-    fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
+    async fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
         ensure!(
             self.gc_round <= header.round,
             DagError::TooOld(header.id.clone(), header.round)
@@ -581,8 +581,8 @@ impl Core {
             DagError::TooOld(header.id.clone(), header.round)
         );
 
-        // Verify the header's signature.
-        header.verify(&self.committee, self.dag_protocol)?;
+        // Verify the header's signature (CPU-bound; runs on blocking pool).
+        header.verify_async(&self.committee, self.dag_protocol).await?;
 
         Ok(())
     }
@@ -605,14 +605,16 @@ impl Core {
         vote.verify(&self.committee).map_err(DagError::from)
     }
 
-    fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
+    async fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
         ensure!(
             self.gc_round <= certificate.round(),
             DagError::TooOld(certificate.digest(), certificate.round())
         );
 
-        // Verify the certificate (and the embedded header).
-        certificate.verify(&self.committee, self.dag_protocol).map_err(DagError::from)
+        // Verify the certificate (and the embedded header); CPU-bound work
+        // runs on the blocking pool.
+        certificate.verify_async(&self.committee, self.dag_protocol).await?;
+        Ok(())
     }
 
     // Main loop listening to incoming messages.
@@ -623,7 +625,7 @@ impl Core {
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            let result = match self.sanitize_header(&header) {
+                            let result = match self.sanitize_header(&header).await {
                                 Ok(()) => self.process_header(&header).await,
                                 error => error,
                             };
@@ -639,7 +641,7 @@ impl Core {
                             }
                         },
                         PrimaryMessage::Certificate(certificate) => {
-                            match self.sanitize_certificate(&certificate) {
+                            match self.sanitize_certificate(&certificate).await {
                                 Ok(()) => self.process_certificate(certificate).await,
                                 error => error,
                             }

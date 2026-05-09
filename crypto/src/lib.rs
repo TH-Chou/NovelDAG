@@ -226,6 +226,18 @@ impl Signature {
         }
         dalek::verify_batch(&messages[..], &signatures[..], &keys[..])
     }
+
+    /// Async wrapper that runs batch verification on the blocking thread pool
+    /// to avoid stalling the async runtime with CPU-bound multi-scalar multiplication.
+    pub async fn verify_batch_async<'a, I>(digest: Digest, votes: I) -> Result<(), CryptoError>
+    where
+        I: IntoIterator<Item = &'a (PublicKey, Signature)> + Send + 'a,
+    {
+        let votes: Vec<(PublicKey, Signature)> = votes.into_iter().cloned().collect();
+        tokio::task::spawn_blocking(move || Self::verify_batch(&digest, &votes))
+            .await
+            .expect("verify_batch panicked")
+    }
 }
 
 /// This service holds the node's private key. It takes digests as input and returns a signature

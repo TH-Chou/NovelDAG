@@ -4,7 +4,7 @@ use crate::Consensus;
 use crate::Dag;
 use crate::State;
 use config::{ConsensusProtocol, Stake};
-use crypto::{Digest, Hash as _, PublicKey};
+use crypto::{Digest, Hash as _};
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
 use std::collections::{HashMap, HashSet};

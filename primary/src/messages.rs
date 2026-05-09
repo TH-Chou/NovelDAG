@@ -134,16 +134,24 @@ impl Header {
 
             let mut weight = 0;
             let mut used = HashSet::new();
+            let mut sigs: Vec<(PublicKey, Signature)> =
+                Vec::with_capacity(qc.votes.len());
             for vote in qc.votes.iter() {
                 ensure!(vote.id == qc.target, DagError::MalformedHeader(self.id.clone()));
                 ensure!(vote.round == qc.round, DagError::MalformedHeader(self.id.clone()));
                 ensure!(vote.origin == self.author, DagError::MalformedHeader(self.id.clone()));
 
                 ensure!(!used.contains(&vote.author), DagError::AuthorityReuse(vote.author));
-                vote.verify(committee)?;
+                ensure!(
+                    committee.stake(&vote.author) > 0,
+                    DagError::UnknownAuthority(vote.author)
+                );
+                sigs.push((vote.author, vote.signature.clone()));
                 used.insert(vote.author);
                 weight += committee.stake(&vote.author);
             }
+            // Batch-verify all QC vote signatures in a single multi-scalar multiplication.
+            Signature::verify_batch(&qc.target, &sigs)?;
             ensure!(
                 weight >= committee.quorum_threshold(),
                 DagError::CertificateRequiresQuorum
@@ -154,6 +162,16 @@ impl Header {
         self.signature
             .verify(&self.id, &self.author)
             .map_err(DagError::from)
+    }
+
+    /// Async variant that runs CPU-bound batch verification on the blocking
+    /// thread pool so the async runtime stays responsive.
+    pub async fn verify_async(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
+        let header = self.clone();
+        let committee = committee.clone();
+        tokio::task::spawn_blocking(move || header.verify(&committee, dag_protocol))
+            .await
+            .expect("Header::verify panicked")
     }
 }
 
@@ -311,6 +329,9 @@ impl Certificate {
         // Ensure the certificate has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
+        let mut sigs: Vec<(PublicKey, Signature)> =
+            Vec::with_capacity(self.votes.len());
+        let vote_digest = self.votes.first().map(|v| v.digest());
         for vote in self.votes.iter() {
             ensure!(vote.id == self.header.id, DagError::MalformedHeader(self.header.id.clone()));
             ensure!(vote.round == self.round(), DagError::MalformedHeader(self.header.id.clone()));
@@ -323,9 +344,17 @@ impl Certificate {
                 !used.contains(&vote.author),
                 DagError::AuthorityReuse(vote.author)
             );
-            vote.verify(committee)?;
+            ensure!(
+                committee.stake(&vote.author) > 0,
+                DagError::UnknownAuthority(vote.author)
+            );
+            sigs.push((vote.author, vote.signature.clone()));
             used.insert(vote.author);
             weight += committee.stake(&vote.author);
+        }
+        // Batch-verify all vote signatures in a single multi-scalar multiplication.
+        if let Some(digest) = vote_digest {
+            Signature::verify_batch(&digest, &sigs)?;
         }
         ensure!(
             weight >= committee.quorum_threshold(),
@@ -333,6 +362,16 @@ impl Certificate {
         );
 
         Ok(())
+    }
+
+    /// Async variant that runs CPU-bound batch verification on the blocking
+    /// thread pool so the async runtime stays responsive.
+    pub async fn verify_async(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
+        let certificate = self.clone();
+        let committee = committee.clone();
+        tokio::task::spawn_blocking(move || certificate.verify(&committee, dag_protocol))
+            .await
+            .expect("Certificate::verify panicked")
     }
 
     pub fn round(&self) -> Round {
