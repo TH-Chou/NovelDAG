@@ -150,8 +150,11 @@ impl Header {
                 used.insert(vote.author);
                 weight += committee.stake(&vote.author);
             }
-            // Batch-verify all QC vote signatures in a single multi-scalar multiplication.
-            Signature::verify_batch(&qc.target, &sigs)?;
+            // Batch-verify all QC vote signatures. All votes in a QC sign the
+            // same payload (id == target, same round/voter_round/origin).
+            if let Some(vote_digest) = qc.votes.first().map(|v| v.digest()) {
+                Signature::verify_batch(&vote_digest, &sigs)?;
+            }
             ensure!(
                 weight >= committee.quorum_threshold(),
                 DagError::CertificateRequiresQuorum
