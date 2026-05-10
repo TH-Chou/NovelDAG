@@ -22,6 +22,7 @@ Narwhal, Bullshark, and NovelDAG share the same crates. Protocol-specific logic 
 | Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
 | Bullshark | [consensus/src/bullshark.rs](consensus/src/bullshark.rs) | Elected at round `r` | f+1 support from `r+1` children, linked-path ordering |
 | NovelDAG | [consensus/src/noveldag.rs](consensus/src/noveldag.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
+| Wahoo | [primary/src/wahoo/](primary/src/wahoo/) (full state machine) + [consensus/src/wahoo.rs](consensus/src/wahoo.rs) (passthrough) | Even-round Elect: 2f+1 BLS partial sigs recover a coin selecting the leader of the previous (odd) round | `leader[r] ∧ done[r][leader] ∧ dag[r][leader]` at odd rounds, then transitive ancestor commit. 1:1 functional port of [Wahoo-main/wahoo/](Wahoo-main/wahoo/) (Go); see file-level mapping comments in `primary/src/wahoo/mod.rs`. |
 
 Both **RoundRobin** and **CommonCoin** leader election modes are supported independently of the DAG protocol via the `consensus_protocol` parameter.
 
@@ -36,10 +37,12 @@ In your `parameters.json` (or equivalent settings), set:
 }
 ```
 
-- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"noveldag"` (default: `"noveldag"`)
+- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"noveldag"` | `"wahoo"` (default: `"noveldag"`)
 - `consensus_protocol`: `"round_robin"` | `"common_coin"` (default: `"round_robin"`)
 
-The `Header`, `Certificate`, and `Vote` wire formats use NovelDAG's extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values, so all three protocols share the same message schemas.
+The `Header`, `Certificate`, and `Vote` wire formats use NovelDAG's extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values, so those three protocols share the same message schemas.
+
+**Wahoo deviates from the unified Header/Vote/Certificate schema** because the Go reference uses a different structural model (parity-dependent block tags, Ready/Done/Elect/ReVote messages, fast-path odd rounds). The Wahoo port keeps the same external interface (`dag_protocol = "wahoo"`, same `parameters.json`, same `tx_output` certificate stream) but internally bypasses the Narwhal-style Core/Proposer/Synchronizer pipeline. Wire-level Wahoo traffic is multiplexed through `PrimaryMessage::Wahoo(WahooMessage)`. See `primary/src/wahoo/messages.rs` for the schema and `Wahoo-main/wahoo/data_struct.go` for the Go source it matches 1:1.
 
 ## Quick Start
 
