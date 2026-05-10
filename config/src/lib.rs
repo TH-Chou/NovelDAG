@@ -65,6 +65,7 @@ pub enum DagProtocol {
     Bullshark,
     #[serde(rename = "noveldag")]
     NovelDAG,
+    Wahoo,
 }
 
 impl Default for DagProtocol {
@@ -79,6 +80,7 @@ impl DagProtocol {
             Self::Narwhal => "narwhal",
             Self::Bullshark => "bullshark",
             Self::NovelDAG => "noveldag",
+            Self::Wahoo => "wahoo",
         }
     }
 }
