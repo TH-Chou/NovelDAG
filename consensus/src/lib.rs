@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 mod bullshark;
 mod narwhal;
 mod noveldag;
+mod wahoo;
 
 #[cfg(test)]
 #[path = "tests/consensus_tests.rs"]
@@ -144,6 +145,7 @@ impl Consensus {
             DagProtocol::Narwhal => narwhal::run(self).await,
             DagProtocol::Bullshark => bullshark::run(self).await,
             DagProtocol::NovelDAG => noveldag::run(self).await,
+            DagProtocol::Wahoo => wahoo::run(self).await,
         }
     }
 

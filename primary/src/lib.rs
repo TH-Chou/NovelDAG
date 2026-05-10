@@ -12,6 +12,7 @@ mod payload_receiver;
 mod primary;
 mod proposer;
 mod synchronizer;
+mod wahoo;
 
 #[cfg(test)]
 #[path = "tests/common.rs"]
