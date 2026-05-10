@@ -85,7 +85,7 @@ impl Header {
                     );
                 }
             }
-            DagProtocol::Narwhal | DagProtocol::Bullshark => {
+            DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
                 // Narwhal/Bullshark headers only use the parents field;
                 // parents_2 and qc are allowed but not required.
                 if self.round == 0 {

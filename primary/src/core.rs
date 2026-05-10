@@ -327,7 +327,7 @@ impl Core {
                         );
                     }
                 }
-                DagProtocol::Narwhal | DagProtocol::Bullshark => {
+                DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
                     // Single-parent validation: r-1 parents must form a quorum.
                     let mut stake_1 = 0;
                     for x in &parents_1 {
@@ -529,7 +529,7 @@ impl Core {
                         .expect("Failed to send certificate");
                 }
             }
-            DagProtocol::Bullshark => {
+            DagProtocol::Bullshark | DagProtocol::Wahoo => {
                 // Store to disk for crash recovery.
                 let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
                 self.store.write(certificate.digest().to_vec(), bytes).await;

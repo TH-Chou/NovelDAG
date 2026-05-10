@@ -415,7 +415,7 @@ impl Proposer {
                     }
                 }
 
-                DagProtocol::Bullshark => {
+                DagProtocol::Bullshark | DagProtocol::Wahoo => {
                     let enough_parents = !self.last_parent_certs.is_empty();
                     let enough_digests = self.payload_size >= self.header_size;
                     let timer_expired = timer.is_elapsed();
@@ -477,7 +477,7 @@ impl Proposer {
                             self.parents_1 = signal.parents_1;
                             debug!("Dag moved to round {}", self.round);
                         }
-                        DagProtocol::Bullshark => {
+                        DagProtocol::Bullshark | DagProtocol::Wahoo => {
                             use std::cmp::Ordering;
                             match signal.round.cmp(&self.round) {
                                 Ordering::Greater => {
