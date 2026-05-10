@@ -317,7 +317,7 @@ async fn process_certificates() {
     // Create a new test store.
     let path = ".db_test_process_certificates";
     let _ = fs::remove_dir_all(path);
-    let mut store = Store::new(path).unwrap();
+    let store = Store::new(path).unwrap();
 
     // Make a synchronizer for the core.
     let synchronizer = Synchronizer::new(
