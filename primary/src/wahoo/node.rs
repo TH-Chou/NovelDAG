@@ -53,7 +53,7 @@ use crypto::{Digest, Hash as _, PublicKey, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 
@@ -181,6 +181,20 @@ pub struct Node {
     /// fallback for any f >= 1 scenario where one peer's Ready will
     /// never arrive.
     slow_path_armed: HashSet<Round>,
+    /// Wall-clock time we last broadcast a block of our own. Used to
+    /// enforce the `WAHOO_HEADER_DELAY_MS` floor between consecutive
+    /// block broadcasts, mirroring `Proposer`'s `max_header_delay`.
+    last_block_broadcast_at: Option<Instant>,
+    /// Sender side of the header-delay channel. When `try_to_next_round`
+    /// would advance but the throttle hasn't elapsed, it spawns a sleep
+    /// task that posts the deferred round number back here.
+    tx_header_delay: Sender<Round>,
+    /// Receiver side, moved out by `run`.
+    rx_header_delay: Option<Receiver<Round>>,
+    /// Rounds for which we've already scheduled a header-delay wake-up.
+    /// Prevents `try_to_next_round` from spawning duplicate timers if
+    /// it's called repeatedly before the wake-up fires.
+    header_delay_pending: HashSet<Round>,
 }
 
 /// Delay before we *arm* the slow-path Done for an odd-round block when
@@ -193,6 +207,26 @@ pub struct Node {
 /// constant is independent of `max_header_delay` because Wahoo's `Node`
 /// doesn't currently take a `Parameters` reference.
 const SLOW_PATH_TIMEOUT_MS: u64 = 500;
+
+/// Diagnostic switch. When `true`, the odd-round fast path
+/// (`count == node_num` → broadcast Done immediately) is disabled, so
+/// every odd round MUST wait for the `SLOW_PATH_TIMEOUT_MS` timer and
+/// then collect ≥ quorum_num Readies before emitting Done. Used to
+/// answer "is Wahoo's low-latency dominance over NovelDAG real, or is
+/// it just the fast-path skipping a quorum collection that the other
+/// protocols can't skip?".
+const DISABLE_FAST_PATH: bool = true;
+
+/// Apples-to-apples throttle for `try_to_next_round`. Mirrors
+/// `Proposer::max_header_delay` (200 ms in the default benchmark
+/// config): the local node will not broadcast block R+1 sooner than
+/// `WAHOO_HEADER_DELAY_MS` after it broadcast block R, so each block
+/// gets a chance to accumulate worker digests for the same window
+/// NovelDAG/Narwhal/Bullshark proposers use. Without this, Wahoo runs
+/// rounds at network speed (~10 ms each under loopback) and trivially
+/// out-throughputs the other three protocols even though the protocol
+/// itself is not faster — it just has no batching window.
+const WAHOO_HEADER_DELAY_MS: u64 = 200;
 
 impl Node {
     /// Construct a new Wahoo node (`node.go::NewNode`).
@@ -218,6 +252,7 @@ impl Node {
 
         let pb = Pb::new(name, quorum_num);
         let (tx_slow_path, rx_slow_path) = channel(1024);
+        let (tx_header_delay, rx_header_delay) = channel(1024);
 
         Self {
             name,
@@ -257,6 +292,10 @@ impl Node {
             tx_slow_path,
             rx_slow_path: Some(rx_slow_path),
             slow_path_armed: HashSet::new(),
+            last_block_broadcast_at: None,
+            tx_header_delay,
+            rx_header_delay: Some(rx_header_delay),
+            header_delay_pending: HashSet::new(),
         }
     }
 
@@ -279,6 +318,10 @@ impl Node {
             .rx_slow_path
             .take()
             .expect("slow-path receiver already taken");
+        let mut rx_header_delay = self
+            .rx_header_delay
+            .take()
+            .expect("header-delay receiver already taken");
         loop {
             tokio::select! {
                 Some(msg) = rx.recv() => {
@@ -289,6 +332,11 @@ impl Node {
                 }
                 Some(round) = rx_slow_path.recv() => {
                     self.handle_slow_path_timeout(round).await;
+                }
+                Some(round) = rx_header_delay.recv() => {
+                    self.header_delay_pending.remove(&round);
+                    self.broadcast_block(round).await;
+                    self.try_to_next_round_boxed(round).await;
                 }
                 else => break,
             }
@@ -477,6 +525,7 @@ impl Node {
             let previous_hash = self.select_previous_blocks(round.saturating_sub(1));
             let block = self.new_block(round, previous_hash);
             self.block_send.insert(round);
+            self.last_block_broadcast_at = Some(Instant::now());
 
             // Benchmark log: emit one `Created B{round}({author}) -> {digest}`
             // line per batch digest carried by this block, exactly the
@@ -771,7 +820,7 @@ impl Node {
         // broadcasts Done with only `quorum_num = 2f+1` Readies, which
         // matches the even-round PB threshold and is what every other
         // DAG-BFT protocol in this workspace uses for liveness.
-        if count == self.node_num && !self.done_send.contains(&round) {
+        if !DISABLE_FAST_PATH && count == self.node_num && !self.done_send.contains(&round) {
             self.done_send.insert(round);
             // Done.Done is left empty — see file-level note explaining the
             // commented-out partial-sig assembly in the Go reference.
@@ -832,10 +881,28 @@ impl Node {
             self.next_round_signaled.insert(round);
             self.round += 1;
             let next = self.round;
-            self.broadcast_block(next).await;
-            // Recursive call mirroring Go's `tryToNextRound(round+1)`
-            // tail call.
-            self.try_to_next_round_boxed(next).await;
+            // Enforce header_delay floor between consecutive block
+            // broadcasts. If we just broadcast a block <200 ms ago,
+            // schedule the next broadcast for the remainder of the
+            // window so worker digests have a chance to accumulate
+            // (matching Proposer's `max_header_delay` behaviour).
+            let elapsed = self
+                .last_block_broadcast_at
+                .map(|t| t.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(3600));
+            let header_delay = Duration::from_millis(WAHOO_HEADER_DELAY_MS);
+            if elapsed >= header_delay || self.header_delay_pending.contains(&next) {
+                self.broadcast_block(next).await;
+                self.try_to_next_round_boxed(next).await;
+            } else {
+                let wait = header_delay - elapsed;
+                self.header_delay_pending.insert(next);
+                let tx = self.tx_header_delay.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    let _ = tx.send(next).await;
+                });
+            }
         }
     }
 
