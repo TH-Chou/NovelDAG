@@ -17,10 +17,28 @@ import json
 import statistics
 import csv
 import time
+import builtins
 from datetime import datetime
 from pathlib import Path
 
 BENCH_DIR = Path("/Users/apple/Documents/NovelDAG/benchmark")
+LOG_PATH = BENCH_DIR / "sweep_wahoo.log"
+
+# Tee every print to LOG_PATH so the user can `tail -f` from another
+# terminal while the sweep runs unattended.
+_LOG_FILE = open(LOG_PATH, "a", buffering=1)
+_orig_print = builtins.print
+
+def print(*args, **kwargs):  # noqa: A001 - intentional shadow
+    kwargs.setdefault("flush", True)
+    _orig_print(*args, **kwargs)
+    try:
+        msg = kwargs.get("sep", " ").join(str(a) for a in args)
+        end = kwargs.get("end", "\n")
+        _LOG_FILE.write(msg + end)
+        _LOG_FILE.flush()
+    except Exception:
+        pass
 
 DELAYS = [0, 50, 100]
 FAULTS = [0, 1, 3]
@@ -101,27 +119,56 @@ try:
 except Exception as e:
     print(f"FAILED: {{e}}")
 """
-    try:
-        result = subprocess.run(
-            ["python3", "-c", code],
-            capture_output=True, text=True, timeout=180,
-            cwd=str(BENCH_DIR),
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith("METRICS_JSON:"):
-                return json.loads(line[len("METRICS_JSON:"):])
-        if "FAILED" in result.stdout:
-            print(f"    FAILED: {result.stdout.strip()[:200]}")
+    # Use Popen so we can heartbeat while waiting and dump output on
+    # failure. We collect stdout/stderr ourselves to keep the parent's
+    # screen tidy in the happy case.
+    proc = subprocess.Popen(
+        ["python3", "-c", code],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=str(BENCH_DIR),
+    )
+    start = time.time()
+    timeout = 180
+    last_beat = start
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            break
+        now = time.time()
+        if now - start > timeout:
+            proc.kill()
+            print(f"    TIMEOUT after {timeout}s")
+            kill_all()
             return None
-        print(f"    Unexpected: {result.stdout[:200]}")
-        return None
-    except subprocess.TimeoutExpired:
-        print("    TIMEOUT")
-        kill_all()
-        return None
-    except Exception as e:
-        print(f"    ERROR: {e}")
-        return None
+        if now - last_beat >= 5:
+            elapsed = int(now - start)
+            _orig_print(f".[{elapsed}s]", end="", flush=True)
+            _LOG_FILE.write(f".[{elapsed}s]")
+            _LOG_FILE.flush()
+            last_beat = now
+        time.sleep(0.25)
+    out, err = proc.communicate(timeout=5)
+    # Wipe the heartbeat dots so the next print starts clean.
+    if time.time() - start >= 5:
+        _orig_print("", flush=True)
+        _LOG_FILE.write("\n")
+
+    for line in out.splitlines():
+        if line.startswith("METRICS_JSON:"):
+            return json.loads(line[len("METRICS_JSON:"):])
+
+    # Failure path — dump tail of subprocess output for debugging.
+    print(f"    FAILED rc={proc.returncode}")
+    tail_out = "\n".join(out.splitlines()[-30:]) if out else "(empty stdout)"
+    tail_err = "\n".join(err.splitlines()[-15:]) if err else ""
+    print("    --- subprocess stdout (last 30 lines) ---")
+    for line in tail_out.splitlines():
+        print(f"    | {line}")
+    if tail_err.strip():
+        print("    --- subprocess stderr (last 15 lines) ---")
+        for line in tail_err.splitlines():
+            print(f"    | {line}")
+    return None
 
 
 def stable_mean(values):
