@@ -186,6 +186,8 @@ impl Connection {
         // This buffer keeps all messages and handlers that we have successfully transmitted but for
         // which we are still waiting to receive an ACK.
         let mut pending_replies = VecDeque::new();
+        let buf_len = self.buffer.len();
+        info!("Connection to {}: keep_alive starting with {} buffered messages", self.address, buf_len);
 
         let (mut writer, mut reader) = Framed::new(stream, LengthDelimitedCodec::new()).split();
         let error = 'connection: loop {
@@ -197,10 +199,12 @@ impl Connection {
                 }
 
                 // Try to send the message.
+                let data_len = data.len();
                 match writer.send(data.clone()).await {
                     Ok(()) => {
                         // The message has been sent, we remove it from the buffer and add it to
                         // `pending_replies` while we wait for an ACK.
+                        info!("Connection to {}: sent {} bytes", self.address, data_len);
                         pending_replies.push_back((data, handler));
                     }
                     Err(e) => {
