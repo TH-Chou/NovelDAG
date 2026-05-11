@@ -49,7 +49,9 @@ for key, vals in raw.items():
             "all_lat": [v[1] for v in vals],
         }
 
-PROTOS = ["narwhal", "noveldag"]
+PROTOS = ["narwhal", "noveldag", "wahoo"]
+BASELINE = "narwhal"  # protocol used as the reference in pairwise advantage charts
+COMPARED = ["noveldag", "wahoo"]  # protocols compared against BASELINE
 FAULTS = [0, 1, 3]
 DELAYS = [0, 50, 100]
 RATES = list(range(60000, 331000, 30000))
@@ -62,9 +64,12 @@ PROTO_COLORS = {
     ("noveldag", 0): "#2196F3",
     ("noveldag", 1): "#1976D2",
     ("noveldag", 3): "#0D47A1",
+    ("wahoo", 0): "#9C27B0",
+    ("wahoo", 1): "#7B1FA2",
+    ("wahoo", 3): "#4A148C",
 }
 DELAY_COLORS = {0: "#4CAF50", 50: "#FF9800", 100: "#F44336"}
-MARKERS = {"narwhal": "s", "noveldag": "o"}
+MARKERS = {"narwhal": "s", "noveldag": "o", "wahoo": "^"}
 FAULT_MARKERS = {0: "o", 1: "s", 3: "D"}
 
 # ── Helper ─────────────────────────────────────────────────────
@@ -102,7 +107,7 @@ for col, faults in enumerate(FAULTS):
     ax.set_title(f"f = {faults}", fontsize=12, fontweight="bold")
     ax.legend(fontsize=6.5, ncol=2, loc="upper left", framealpha=0.8)
     ax.grid(True, alpha=0.2)
-fig.suptitle("NovelDAG vs Narwhal: TPS–Latency by Fault Tolerance (n=10)",
+fig.suptitle("Three protocols: TPS–Latency by Fault Tolerance (n=10)",
              fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "01_tps_vs_latency.png", dpi=150, bbox_inches="tight")
@@ -111,52 +116,53 @@ print("1/15: tps_vs_latency")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 2: Fixed Heatmap (black text, legend below)
+# CHART 2: TPS Advantage Heatmap vs BASELINE — one row per compared proto
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(20, 5.5), sharey=True)
+fig, axes = plt.subplots(len(COMPARED), 3, figsize=(20, 5.5 * len(COMPARED)),
+                          sharey=True)
+if len(COMPARED) == 1:
+    axes = np.array([axes])
 vmax = 80
 cmap_white_green = LinearSegmentedColormap.from_list("WhiteGreen",
     [(0, "white"), (0.3, "#c8e6c9"), (0.6, "#66bb6a"), (1, "#1b5e20")], N=256)
 
-for col, delay in enumerate(DELAYS):
-    ax = axes[col]
-    data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
-    annot_matrix = [["" for _ in RATES] for _ in FAULTS]
+for row, proto_b in enumerate(COMPARED):
+    for col, delay in enumerate(DELAYS):
+        ax = axes[row][col]
+        data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
+        annot_matrix = [["" for _ in RATES] for _ in FAULTS]
 
-    for i, faults in enumerate(FAULTS):
-        for j, rate in enumerate(RATES):
-            n_tps = get_val("narwhal", faults, delay, rate, "tps")
-            nd_tps = get_val("noveldag", faults, delay, rate, "tps")
-            if n_tps and nd_tps and n_tps > 0:
-                pct = (nd_tps - n_tps) / n_tps * 100
-                data_matrix[i, j] = pct
-                annot_matrix[i][j] = "0%" if abs(pct) < 0.5 else f"{pct:+.0f}%"
+        for i, faults in enumerate(FAULTS):
+            for j, rate in enumerate(RATES):
+                a_tps = get_val(BASELINE, faults, delay, rate, "tps")
+                b_tps = get_val(proto_b, faults, delay, rate, "tps")
+                if a_tps and b_tps and a_tps > 0:
+                    pct = (b_tps - a_tps) / a_tps * 100
+                    data_matrix[i, j] = pct
+                    annot_matrix[i][j] = "0%" if abs(pct) < 0.5 else f"{pct:+.0f}%"
 
-    masked = np.ma.masked_invalid(data_matrix)
-    im = ax.imshow(masked, cmap=cmap_white_green, aspect="auto", vmin=0, vmax=vmax)
+        masked = np.ma.masked_invalid(data_matrix)
+        im = ax.imshow(masked, cmap=cmap_white_green, aspect="auto", vmin=0, vmax=vmax)
+        for i in range(len(FAULTS)):
+            for j in range(len(RATES)):
+                if annot_matrix[i][j]:
+                    ax.text(j, i, annot_matrix[i][j], ha="center", va="center",
+                            fontsize=9, fontweight="bold", color="black")
+        ax.set_xticks(range(len(RATES)))
+        ax.set_xticklabels([f"{r//1000}" for r in RATES], fontsize=8, rotation=45)
+        ax.set_yticks(range(len(FAULTS)))
+        ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
+        if row == len(COMPARED) - 1:
+            ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
+        title = f"{proto_b} vs {BASELINE}, d={delay}ms ({delay*2}ms RTT)"
+        ax.set_title(title, fontsize=11, fontweight="bold")
 
-    for i in range(len(FAULTS)):
-        for j in range(len(RATES)):
-            if annot_matrix[i][j]:
-                ax.text(j, i, annot_matrix[i][j], ha="center", va="center",
-                        fontsize=9, fontweight="bold", color="black")
-
-    ax.set_xticks(range(len(RATES)))
-    ax.set_xticklabels([f"{r//1000}" for r in RATES], fontsize=8, rotation=45)
-    ax.set_yticks(range(len(FAULTS)))
-    ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
-    ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-    title = f"delay = {delay}ms ({delay*2}ms RTT)"
-    if delay == 0:
-        title += "\n(ideal, zero network delay)"
-    ax.set_title(title, fontsize=12, fontweight="bold")
-
-fig.subplots_adjust(bottom=0.18, top=0.88)
-cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.025])
+fig.subplots_adjust(bottom=0.10, top=0.92)
+cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.018])
 cbar = fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
-cbar.set_label("NovelDAG TPS Advantage (%)  →  Green = NovelDAG Wins, White = Narwhal Wins",
+cbar.set_label(f"TPS Advantage over {BASELINE} (%)  →  Green = wins, White = loses",
                fontsize=9)
-fig.suptitle("NovelDAG vs Narwhal: TPS Advantage Heatmap (n=10)",
+fig.suptitle(f"TPS Advantage Heatmap vs {BASELINE} (n=10)",
              fontsize=14, fontweight="bold", y=0.97)
 fig.savefig(OUT_DIR / "02_heatmap_advantage.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -379,50 +385,41 @@ categories = ["TPS\n(higher=better)", "Efficiency\n(higher=better)", "Latency\n(
 
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
-    narwhal_scores = []
-    noveldag_scores = []
-    for faults in FAULTS:
-        n_tps = get_val("narwhal", faults, delay, RATE_FOCUS, "tps") or 0
-        nd_tps = get_val("noveldag", faults, delay, RATE_FOCUS, "tps") or 0
-        n_lat = get_val("narwhal", faults, delay, RATE_FOCUS, "lat") or 10000
-        nd_lat = get_val("noveldag", faults, delay, RATE_FOCUS, "lat") or 10000
-
-        max_tps = max(n_tps, nd_tps, 1)
-        min_lat = min(n_lat, nd_lat, 1)
-
-        narwhal_scores.append([
-            n_tps / max_tps * 100,
-            (n_tps / RATE_FOCUS) * 100,
-            min_lat / max(n_lat, 1) * 100,
-            100 - (abs(get_val("narwhal", faults, delay, RATE_FOCUS, "tps_std") or 0) / max(n_tps, 1) * 100),
-            n_tps / max(max(n_tps, nd_tps), 1) * 100,
-        ])
-        noveldag_scores.append([
-            nd_tps / max_tps * 100,
-            (nd_tps / RATE_FOCUS) * 100,
-            min_lat / max(nd_lat, 1) * 100,
-            100 - (abs(get_val("noveldag", faults, delay, RATE_FOCUS, "tps_std") or 0) / max(nd_tps, 1) * 100),
-            nd_tps / max(max(n_tps, nd_tps), 1) * 100,
-        ])
-
     angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
     angles += angles[:1]
 
     for i, faults in enumerate(FAULTS):
-        n_vals = narwhal_scores[i] + narwhal_scores[i][:1]
-        nd_vals = noveldag_scores[i] + noveldag_scores[i][:1]
-        ax.fill(angles, n_vals, alpha=0.1, color=PROTO_COLORS[("narwhal", faults)])
-        ax.plot(angles, n_vals, "o-", linewidth=1.5, markersize=4,
-                color=PROTO_COLORS[("narwhal", faults)], label=f"narwhal f={faults}")
-        ax.fill(angles, nd_vals, alpha=0.15, color=PROTO_COLORS[("noveldag", faults)])
-        ax.plot(angles, nd_vals, "s--", linewidth=1.5, markersize=4,
-                color=PROTO_COLORS[("noveldag", faults)], label=f"noveldag f={faults}")
+        per_proto_tps = {p: (get_val(p, faults, delay, RATE_FOCUS, "tps") or 0)
+                         for p in PROTOS}
+        per_proto_lat = {p: (get_val(p, faults, delay, RATE_FOCUS, "lat") or 10000)
+                         for p in PROTOS}
+        max_tps = max(max(per_proto_tps.values()), 1)
+        min_lat = max(min(per_proto_lat.values()), 1)
+
+        for p in PROTOS:
+            tps = per_proto_tps[p]
+            lat = per_proto_lat[p]
+            std = get_val(p, faults, delay, RATE_FOCUS, "tps_std") or 0
+            scores = [
+                tps / max_tps * 100,
+                tps / RATE_FOCUS * 100,
+                min_lat / max(lat, 1) * 100,
+                100 - (abs(std) / max(tps, 1) * 100),
+                tps / max_tps * 100,
+            ]
+            vals = scores + scores[:1]
+            color = PROTO_COLORS[(p, faults)]
+            ls = {"narwhal": "-", "noveldag": "--", "wahoo": ":"}.get(p, "-")
+            mk = MARKERS[p]
+            ax.fill(angles, vals, alpha=0.08, color=color)
+            ax.plot(angles, vals, marker=mk, linestyle=ls, linewidth=1.4,
+                    markersize=3.5, color=color, label=f"{p} f={faults}")
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(categories, fontsize=7)
     ax.set_title(f"delay={delay}ms", fontsize=11, fontweight="bold", pad=20)
     if col == 0:
-        ax.legend(fontsize=5.5, loc="upper right", bbox_to_anchor=(1.35, 1.1))
+        ax.legend(fontsize=5.0, loc="upper right", bbox_to_anchor=(1.45, 1.15))
 
 fig.suptitle(f"Multi-Dimensional Comparison @ {RATE_FOCUS//1000}K Injection Rate",
              fontsize=14, fontweight="bold")
@@ -433,47 +430,53 @@ print("9/15: radar_comparison")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 10: Latency advantage heatmap (mirror of TPS advantage)
+# CHART 10: Latency advantage heatmap — one row per compared proto
+# Allow negative values (red) so wahoo's slow-path penalty under f>=1
+# is visible alongside the f=0 advantage.
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(20, 5.5), sharey=True)
-cmap_wg = LinearSegmentedColormap.from_list("WG2",
-    [(0, "white"), (0.3, "#c8e6c9"), (0.6, "#66bb6a"), (1, "#1b5e20")], N=256)
-for col, delay in enumerate(DELAYS):
-    ax = axes[col]
-    data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
-    for i, faults in enumerate(FAULTS):
-        for j, rate in enumerate(RATES):
-            n_lat = get_val("narwhal", faults, delay, rate, "lat")
-            nd_lat = get_val("noveldag", faults, delay, rate, "lat")
-            if n_lat and nd_lat and n_lat > 0:
-                pct = (n_lat - nd_lat) / n_lat * 100  # positive = noveldag has lower latency
-                data_matrix[i, j] = pct
+fig, axes = plt.subplots(len(COMPARED), 3, figsize=(20, 5.5 * len(COMPARED)),
+                          sharey=True)
+if len(COMPARED) == 1:
+    axes = np.array([axes])
+cmap_diverging = LinearSegmentedColormap.from_list("RedWhiteGreen",
+    [(0, "#b71c1c"), (0.4, "#ffcdd2"), (0.5, "white"),
+     (0.6, "#c8e6c9"), (1, "#1b5e20")], N=256)
+for row, proto_b in enumerate(COMPARED):
+    for col, delay in enumerate(DELAYS):
+        ax = axes[row][col]
+        data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
+        for i, faults in enumerate(FAULTS):
+            for j, rate in enumerate(RATES):
+                a_lat = get_val(BASELINE, faults, delay, rate, "lat")
+                b_lat = get_val(proto_b, faults, delay, rate, "lat")
+                if a_lat and b_lat and a_lat > 0:
+                    # positive = compared proto has LOWER latency (wins)
+                    data_matrix[i, j] = (a_lat - b_lat) / a_lat * 100
 
-    masked = np.ma.masked_invalid(data_matrix)
-    im = ax.imshow(masked, cmap=cmap_wg, aspect="auto", vmin=0, vmax=50)
-    for i in range(len(FAULTS)):
-        for j in range(len(RATES)):
-            if not np.isnan(data_matrix[i, j]):
-                val = data_matrix[i, j]
-                label = "0%" if abs(val) < 0.5 else f"{val:+.0f}%"
-                ax.text(j, i, label, ha="center", va="center",
-                        fontsize=9, fontweight="bold", color="black")
-    ax.set_xticks(range(len(RATES)))
-    ax.set_xticklabels([f"{r//1000}" for r in RATES], fontsize=8, rotation=45)
-    ax.set_yticks(range(len(FAULTS)))
-    ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
-    ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-    title = f"delay = {delay}ms ({delay*2}ms RTT)"
-    if delay == 0:
-        title += "\n(ideal, zero network delay)"
-    ax.set_title(title, fontsize=12, fontweight="bold")
+        masked = np.ma.masked_invalid(data_matrix)
+        im = ax.imshow(masked, cmap=cmap_diverging, aspect="auto", vmin=-100, vmax=100)
+        for i in range(len(FAULTS)):
+            for j in range(len(RATES)):
+                if not np.isnan(data_matrix[i, j]):
+                    val = data_matrix[i, j]
+                    label = "0%" if abs(val) < 0.5 else f"{val:+.0f}%"
+                    ax.text(j, i, label, ha="center", va="center",
+                            fontsize=9, fontweight="bold", color="black")
+        ax.set_xticks(range(len(RATES)))
+        ax.set_xticklabels([f"{r//1000}" for r in RATES], fontsize=8, rotation=45)
+        ax.set_yticks(range(len(FAULTS)))
+        ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
+        if row == len(COMPARED) - 1:
+            ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
+        ax.set_title(f"{proto_b} vs {BASELINE}, d={delay}ms ({delay*2}ms RTT)",
+                     fontsize=11, fontweight="bold")
 
-fig.subplots_adjust(bottom=0.18, top=0.88)
-cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.025])
+fig.subplots_adjust(bottom=0.10, top=0.92)
+cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.018])
 cbar2 = fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
-cbar2.set_label("NovelDAG Latency Advantage (%)  →  Green = Lower Latency, White = Higher",
+cbar2.set_label(f"Latency Advantage over {BASELINE} (%)  →  Green = lower, Red = higher",
                fontsize=9)
-fig.suptitle("NovelDAG vs Narwhal: Latency Advantage Heatmap (n=10)",
+fig.suptitle(f"Latency Advantage Heatmap vs {BASELINE} (n=10)",
              fontsize=14, fontweight="bold", y=0.97)
 fig.savefig(OUT_DIR / "10_heatmap_latency_advantage.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -481,32 +484,41 @@ print("10/15: heatmap_latency_advantage")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 11: Peak TPS comparison bar chart
+# CHART 11: Peak TPS comparison bar chart (3 protocols)
 # ═══════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
-bar_width = 0.3
+bar_width = 0.25
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
     for f_idx, faults in enumerate(FAULTS):
-        n_peak = max((get_val("narwhal", faults, delay, r, "tps") or 0) for r in RATES)
-        nd_peak = max((get_val("noveldag", faults, delay, r, "tps") or 0) for r in RATES)
-        x_base = f_idx * 2
-        ax.bar(x_base - bar_width/2, n_peak, bar_width, color=PROTO_COLORS[("narwhal", faults)],
-               edgecolor="white", label="narwhal" if f_idx == 0 else "")
-        ax.bar(x_base + bar_width/2, nd_peak, bar_width, color=PROTO_COLORS[("noveldag", faults)],
-               edgecolor="white", label="noveldag" if f_idx == 0 else "")
-        if n_peak > 0:
-            pct = (nd_peak - n_peak) / n_peak * 100
-            ax.text(x_base, max(n_peak, nd_peak) + 2000, f"+{pct:.0f}%", ha="center",
-                    fontsize=9, fontweight="bold", color="#D32F2F" if pct > 0 else "#388E3C")
+        peaks = {p: max((get_val(p, faults, delay, r, "tps") or 0) for r in RATES)
+                 for p in PROTOS}
+        x_base = f_idx * 3
+        offsets = {p: (i - (len(PROTOS) - 1) / 2) * bar_width
+                   for i, p in enumerate(PROTOS)}
+        for p in PROTOS:
+            ax.bar(x_base + offsets[p], peaks[p], bar_width,
+                   color=PROTO_COLORS[(p, faults)], edgecolor="white",
+                   label=p if f_idx == 0 else "")
+        # Annotate non-baseline protos with % vs BASELINE
+        base = peaks.get(BASELINE, 0)
+        if base > 0:
+            top = max(peaks.values())
+            for i, p in enumerate(COMPARED):
+                pct = (peaks[p] - base) / base * 100
+                color = "#388E3C" if pct >= 0 else "#D32F2F"
+                ax.text(x_base + offsets[p], peaks[p] + top * 0.02,
+                        f"{pct:+.0f}%", ha="center",
+                        fontsize=8, fontweight="bold", color=color)
 
-    ax.set_xticks([0, 2, 4])
+    ax.set_xticks([f_idx * 3 for f_idx in range(len(FAULTS))])
     ax.set_xticklabels([f"f={f}" for f in FAULTS], fontsize=10)
     ax.set_ylabel("Peak TPS (tx/s)", fontsize=10)
     ax.set_title(f"delay = {delay}ms", fontsize=12, fontweight="bold")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.2, axis="y")
-fig.suptitle("Peak Consensus TPS: NovelDAG vs Narwhal", fontsize=14, fontweight="bold")
+fig.suptitle(f"Peak Consensus TPS by Protocol (% vs {BASELINE})",
+             fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "11_peak_tps_bars.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -514,30 +526,35 @@ print("11/15: peak_tps_bars")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 12: TPS advantage vs Rate (line chart per fault×delay)
+# CHART 12: TPS advantage vs Rate — solid lines per compared proto,
+# linestyle per fault. Each delay gets its own panel.
 # ═══════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+FAULT_LS = {0: "-", 1: "--", 3: ":"}
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
-    for faults in FAULTS:
-        x_vals, y_vals = [], []
-        for rate in RATES:
-            n_tps = get_val("narwhal", faults, delay, rate, "tps")
-            nd_tps = get_val("noveldag", faults, delay, rate, "tps")
-            if n_tps and nd_tps and n_tps > 0:
-                x_vals.append(rate // 1000)
-                y_vals.append((nd_tps - n_tps) / n_tps * 100)
-        if x_vals:
-            ax.plot(x_vals, y_vals, marker=FAULT_MARKERS[faults], linestyle="-",
-                    color=PROTO_COLORS[("noveldag", faults)], linewidth=2, markersize=7,
-                    label=f"f={faults}")
+    for proto_b in COMPARED:
+        for faults in FAULTS:
+            x_vals, y_vals = [], []
+            for rate in RATES:
+                a_tps = get_val(BASELINE, faults, delay, rate, "tps")
+                b_tps = get_val(proto_b, faults, delay, rate, "tps")
+                if a_tps and b_tps and a_tps > 0:
+                    x_vals.append(rate // 1000)
+                    y_vals.append((b_tps - a_tps) / a_tps * 100)
+            if x_vals:
+                ax.plot(x_vals, y_vals,
+                        marker=MARKERS[proto_b], linestyle=FAULT_LS[faults],
+                        color=PROTO_COLORS[(proto_b, faults)],
+                        linewidth=1.8, markersize=6,
+                        label=f"{proto_b} f={faults}")
     ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
     ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-    ax.set_ylabel("NovelDAG TPS Advantage (%)", fontsize=10)
+    ax.set_ylabel(f"TPS Advantage over {BASELINE} (%)", fontsize=10)
     ax.set_title(f"delay = {delay}ms ({delay*2}ms RTT)", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=7, ncol=2)
     ax.grid(True, alpha=0.2)
-fig.suptitle("NovelDAG TPS Advantage Over Narwhal by Rate and Fault Count",
+fig.suptitle(f"TPS Advantage over {BASELINE} by Rate, Protocol, and Fault Count",
              fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "12_tps_advantage_curves.png", dpi=150, bbox_inches="tight")
@@ -546,42 +563,43 @@ print("12/15: tps_advantage_curves")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 13: 3D-like contour — TPS as function of rate × delay
+# CHART 13: TPS contour map (rate × delay), one panel per protocol
+# for each shown fault count.
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
-for col, faults in enumerate([0, 3]):
-    ax = axes[col]
-    for proto in PROTOS:
-        X, Y, Z = [], [], []
-        for delay in DELAYS:
-            for rate in RATES:
-                v = get_val(proto, faults, delay, rate, "tps")
+proto_cmaps = {"narwhal": "Oranges", "noveldag": "Blues", "wahoo": "Purples"}
+focus_faults = [0, 3]
+fig, axes = plt.subplots(len(focus_faults), len(PROTOS),
+                          figsize=(5 * len(PROTOS), 4.5 * len(focus_faults)),
+                          sharey=True)
+if len(focus_faults) == 1:
+    axes = np.array([axes])
+if len(PROTOS) == 1:
+    axes = axes.reshape(-1, 1)
+for row, faults in enumerate(focus_faults):
+    for col, proto in enumerate(PROTOS):
+        ax = axes[row][col]
+        delays_u = sorted(DELAYS)
+        rates_u = sorted([r // 1000 for r in RATES])
+        z_grid = np.full((len(rates_u), len(delays_u)), np.nan)
+        for i, d in enumerate(delays_u):
+            for j, r in enumerate(rates_u):
+                v = get_val(proto, faults, d, r * 1000, "tps")
                 if v:
-                    X.append(delay)
-                    Y.append(rate // 1000)
-                    Z.append(v)
-        if X:
-            # Create grid for contour
-            xi = np.array(X)
-            yi = np.array(Y)
-            zi = np.array(Z)
-            # Sort into grid
-            delays_u = sorted(set(xi))
-            rates_u = sorted(set(yi))
-            z_grid = np.zeros((len(rates_u), len(delays_u)))
-            for i, d in enumerate(delays_u):
-                for j, r in enumerate(rates_u):
-                    mask = (xi == d) & (yi == r)
-                    if mask.any():
-                        z_grid[j, i] = zi[mask][0]
-
-            cs = ax.contourf(delays_u, rates_u, z_grid, levels=15, alpha=0.6, cmap="Blues" if proto == "noveldag" else "Oranges")
-            ax.contour(delays_u, rates_u, z_grid, levels=8, colors="black", linewidths=0.5, alpha=0.4)
-
-    ax.set_xlabel("One-way Delay (ms)", fontsize=10)
-    ax.set_ylabel("Injection Rate (K tx/s)", fontsize=10) if col == 0 else None
-    ax.set_title(f"f = {faults}", fontsize=12, fontweight="bold")
-fig.suptitle("TPS Contours: Rate × Delay (narwhal=orange, noveldag=blue)",
+                    z_grid[j, i] = v
+        if not np.all(np.isnan(z_grid)):
+            masked = np.ma.masked_invalid(z_grid)
+            cs = ax.contourf(delays_u, rates_u, masked, levels=15, alpha=0.85,
+                             cmap=proto_cmaps.get(proto, "viridis"))
+            ax.contour(delays_u, rates_u, masked, levels=8, colors="black",
+                       linewidths=0.5, alpha=0.4)
+            fig.colorbar(cs, ax=ax, fraction=0.04, pad=0.02).set_label(
+                "TPS", fontsize=8)
+        if row == len(focus_faults) - 1:
+            ax.set_xlabel("One-way Delay (ms)", fontsize=9)
+        if col == 0:
+            ax.set_ylabel("Injection Rate (K tx/s)", fontsize=9)
+        ax.set_title(f"{proto}, f={faults}", fontsize=11, fontweight="bold")
+fig.suptitle("TPS Contours: Rate × Delay per Protocol",
              fontsize=13, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "13_tps_contours.png", dpi=150, bbox_inches="tight")
@@ -624,47 +642,51 @@ print("14/15: latency_vs_delay")
 
 # ═══════════════════════════════════════════════════════════════
 # CHART 15: Box plot — TPS distribution across runs (all rates)
+# Three boxes per fault group, one per protocol.
 # ═══════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+group_width = 0.7
+box_w = group_width / max(len(PROTOS), 1)
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
-    all_data = {"narwhal": [], "noveldag": []}
-    positions = {"narwhal": [], "noveldag": []}
+    all_data = {p: [] for p in PROTOS}
+    positions = {p: [] for p in PROTOS}
     for f_idx, faults in enumerate(FAULTS):
-        n_vals = []
-        nd_vals = []
-        for rate in RATES:
-            k = ("narwhal", faults, delay, rate)
-            if k in data:
-                n_vals.extend(data[k]["all_tps"])
-            k = ("noveldag", faults, delay, rate)
-            if k in data:
-                nd_vals.extend(data[k]["all_tps"])
-        if n_vals:
-            all_data["narwhal"].append(n_vals)
-            positions["narwhal"].append(f_idx * 2.5 + 0)
-        if nd_vals:
-            all_data["noveldag"].append(nd_vals)
-            positions["noveldag"].append(f_idx * 2.5 + 0.8)
+        center = f_idx * 2.5
+        for i, p in enumerate(PROTOS):
+            vals = []
+            for rate in RATES:
+                k = (p, faults, delay, rate)
+                if k in data:
+                    vals.extend(data[k]["all_tps"])
+            if vals:
+                all_data[p].append(vals)
+                positions[p].append(
+                    center + (i - (len(PROTOS) - 1) / 2) * box_w)
 
-    for proto in PROTOS:
-        bp = ax.boxplot(all_data[proto], positions=positions[proto], widths=0.6,
-                        patch_artist=True,
-                        boxprops=dict(facecolor=PROTO_COLORS[(proto, 0)], alpha=0.3),
-                        medianprops=dict(color="black", linewidth=1.5),
-                        flierprops=dict(marker="o", markersize=3, alpha=0.4))
+    for p in PROTOS:
+        if all_data[p]:
+            ax.boxplot(
+                all_data[p], positions=positions[p], widths=box_w * 0.85,
+                patch_artist=True,
+                boxprops=dict(facecolor=PROTO_COLORS[(p, 0)], alpha=0.35),
+                medianprops=dict(color="black", linewidth=1.5),
+                flierprops=dict(marker="o", markersize=3, alpha=0.4),
+            )
 
-    ax.set_xticks([0.4, 2.9, 5.4])
+    ax.set_xticks([f_idx * 2.5 for f_idx in range(len(FAULTS))])
     ax.set_xticklabels([f"f={f}" for f in FAULTS], fontsize=10)
     ax.set_ylabel("TPS (tx/s)", fontsize=10)
     ax.set_title(f"delay = {delay}ms", fontsize=12, fontweight="bold")
-    # Legend
     from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=PROTO_COLORS[("narwhal", 0)], alpha=0.3, label="narwhal"),
-                       Patch(facecolor=PROTO_COLORS[("noveldag", 0)], alpha=0.3, label="noveldag")]
+    legend_elements = [
+        Patch(facecolor=PROTO_COLORS[(p, 0)], alpha=0.35, label=p)
+        for p in PROTOS
+    ]
     ax.legend(handles=legend_elements, fontsize=8)
     ax.grid(True, alpha=0.2, axis="y")
-fig.suptitle("TPS Distribution Across All Runs (n=5 per config)", fontsize=14, fontweight="bold")
+fig.suptitle("TPS Distribution Across All Runs (n=5 per config)",
+             fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "15_boxplot_tps_distribution.png", dpi=150, bbox_inches="tight")
 plt.close()
