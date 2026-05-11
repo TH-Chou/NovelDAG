@@ -220,6 +220,7 @@ impl Pb {
             round,
             previous_hash: Default::default(),
             txs: Vec::new(),
+            payload_digests: Default::default(),
             timestamp: 0,
             tag: WahooBlockTag::EmptyVoteCertificate,
         }
@@ -253,6 +254,7 @@ mod tests {
             round,
             previous_hash: BTreeMap::new(),
             txs: vec![vec![1, 2, 3]],
+            payload_digests: BTreeMap::new(),
             timestamp: 1,
             tag,
         }

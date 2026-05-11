@@ -24,6 +24,7 @@
 // 2f+1 votes. We model it as `WahooBlockTag` to lock the invariant.
 
 use crate::primary::Round;
+use config::WorkerId;
 use crypto::{Digest, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -57,10 +58,18 @@ pub struct WahooBlock {
     /// `PreviousHash map[string][]byte` — at least 2f+1 blocks in the
     /// previous round, mapping their sender to their hash.
     pub previous_hash: BTreeMap<PublicKey, Digest>,
-    /// `Txs [][]byte` — opaque batched transactions. In NovelDAG mode we
-    /// will populate this from worker batch digests in a later phase; the
-    /// wire format itself is unchanged.
+    /// `Txs [][]byte` — opaque batched transactions. The Wahoo state
+    /// machine never inspects this field. In NovelDAG-pipeline mode it
+    /// is left empty: real payload is carried by `payload_digests`
+    /// below so that all four DAG protocols share the same accounting.
     pub txs: Vec<Vec<u8>>,
+    /// References to worker batches included in this block. Mirrors
+    /// `primary::messages::Header.payload`. Populated by `Node::new_block`
+    /// from digests forwarded by the worker network handler. The block
+    /// hash includes this field, so all peers see the same content for
+    /// a given (sender, round) tuple. Empty for Tag=EmptyVoteCertificate
+    /// blocks.
+    pub payload_digests: BTreeMap<Digest, WorkerId>,
     /// `TimeStamp int64` — nanoseconds since the Unix epoch, as in
     /// `time.Now().UnixNano()`.
     pub timestamp: i64,

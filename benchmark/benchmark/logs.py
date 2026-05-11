@@ -134,7 +134,7 @@ class LogParser:
         }
 
         ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
-        
+
         return proposals, commits, configs, ip
 
     def _parse_workers(self, log):

@@ -254,6 +254,15 @@ impl Primary {
         let (tx_wahoo_messages, rx_wahoo_messages) = channel::<WahooMessage>(CHANNEL_CAPACITY);
         let (tx_committed, mut rx_committed) =
             channel::<crate::wahoo::CommittedBlock>(CHANNEL_CAPACITY);
+        // Same shape as the channels created in `Primary::spawn` for the
+        // other three protocols. Wahoo only consumes our own batches
+        // (others' batches are still drained so workers don't deadlock
+        // their reliable senders, but we discard them).
+        let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
+        let (tx_others_digests, mut rx_others_digests) = channel(CHANNEL_CAPACITY);
+        tokio::spawn(async move {
+            while rx_others_digests.recv().await.is_some() {}
+        });
 
         // Network listener for primary-to-primary traffic.
         let mut primary_addr = committee
@@ -273,19 +282,34 @@ impl Primary {
             name, primary_addr
         );
 
-        // Network listener for worker-to-primary traffic. Wahoo doesn't
-        // consume worker batches, but we still bind so workers can post
-        // without TCP errors. Their messages are dropped.
+        // Network listener for worker-to-primary traffic. We reuse the
+        // generic `WorkerReceiverHandler` from the non-Wahoo path so the
+        // same `WorkerPrimaryMessage::OurBatch(digest, wid)` envelopes
+        // workers send for Narwhal/Bullshark/NovelDAG flow into Wahoo's
+        // `Node` unchanged.
         let mut worker_addr = committee
             .primary(&name)
             .expect("Our public key is not in the committee")
             .worker_to_primary;
         worker_addr.set_ip("0.0.0.0".parse().unwrap());
-        NetworkReceiver::spawn(worker_addr, WahooWorkerSinkHandler);
+        NetworkReceiver::spawn(
+            worker_addr,
+            WorkerReceiverHandler {
+                tx_our_digests,
+                tx_others_digests,
+            },
+        );
         info!(
             "Wahoo primary {} listening to worker messages on {}",
             name, worker_addr
         );
+
+        // Snapshot the IP before `committee` moves into WahooNode.
+        let wahoo_boot_ip = committee
+            .primary(&name)
+            .expect("Our public key is not in the committee")
+            .primary_to_primary
+            .ip();
 
         // Spawn the Wahoo state machine.
         let node = WahooNode::new(
@@ -294,6 +318,7 @@ impl Primary {
             signature_service,
             parameters.batch_size,
             rx_wahoo_messages,
+            rx_our_digests,
             tx_committed,
         );
         tokio::spawn(async move {
@@ -319,7 +344,10 @@ impl Primary {
             while rx_consensus.recv().await.is_some() {}
         });
 
-        info!("Wahoo primary {} successfully booted", name);
+        info!(
+            "Wahoo primary {} successfully booted on {}",
+            name, wahoo_boot_ip
+        );
     }
 }
 
@@ -329,13 +357,13 @@ impl Primary {
 ///   * `header.author` / `header.round` — feed `Header::Display` which
 ///     produces `B<round>(<author>)`, the prefix
 ///     `benchmark/benchmark/logs.py` expects on every `Committed` line.
-///   * `header.payload` — populated with a single entry whose key is
-///     the Wahoo block's digest. `consensus::wahoo::run` iterates
-///     `header.payload.keys()` to emit benchmark `Committed` lines
-///     (mirroring Narwhal/Bullshark/NovelDAG behaviour). Using the
-///     Wahoo block digest here makes the `Committed B{r}({a}) -> {d}`
-///     line pair with the matching `Created B{r}({a}) -> {d}` emitted
-///     in `Node::broadcast_block`.
+///   * `header.payload` — copied verbatim from the Wahoo block's
+///     `payload_digests`. `consensus::wahoo::run` iterates
+///     `header.payload.keys()` to emit one `Committed B{r}({a}) -> {d}`
+///     per worker-batch digest, exactly mirroring how
+///     Narwhal/Bullshark/NovelDAG report committed payload. Each digest
+///     pairs with the worker's `Batch <d> contains <n> B` log line and
+///     the matching `Created` line emitted in `Node::broadcast_block`.
 ///   * `header.id` — refreshed via `Header::digest()` so the synthetic
 ///     certificate is internally consistent.
 fn wahoo_block_to_certificate(block: &crate::wahoo::messages::WahooBlock) -> Certificate {
@@ -343,7 +371,7 @@ fn wahoo_block_to_certificate(block: &crate::wahoo::messages::WahooBlock) -> Cer
     let mut header = Header::default();
     header.author = block.sender;
     header.round = block.round;
-    header.payload.insert(block.digest(), 0u32);
+    header.payload = block.payload_digests.clone();
     header.id = header.digest();
     Certificate {
         header,
@@ -365,9 +393,8 @@ struct WahooReceiverHandler {
 impl MessageHandler for WahooReceiverHandler {
     async fn dispatch(&self, writer: &mut Writer, serialized: Bytes) -> Result<(), Box<dyn Error>> {
         let _ = writer.send(Bytes::from("Ack")).await;
-        match bincode::deserialize::<PrimaryMessage>(&serialized)
-            .map_err(DagError::SerializationError)?
-        {
+        match bincode::deserialize::<PrimaryMessage>(&serialized) {
+            Ok(msg) => match msg {
             PrimaryMessage::Wahoo(signed) => {
                 let sender = signed.msg.sender();
                 if self.committee.stake(&sender) == 0 {
@@ -396,6 +423,8 @@ impl MessageHandler for WahooReceiverHandler {
                 "Wahoo node received non-Wahoo PrimaryMessage; dropping: {:?}",
                 other
             ),
+            },
+            Err(e) => log::warn!("Wahoo dispatch: bincode deserialize failed: {}", e),
         }
         Ok(())
     }
@@ -411,20 +440,6 @@ pub(crate) fn wahoo_digest(payload: &[u8]) -> Digest {
     hasher.update(payload);
     let out = hasher.finalize();
     Digest(out[..32].try_into().expect("sha512 truncation"))
-}
-
-#[derive(Clone)]
-struct WahooWorkerSinkHandler;
-
-#[async_trait]
-impl MessageHandler for WahooWorkerSinkHandler {
-    async fn dispatch(
-        &self,
-        _writer: &mut Writer,
-        _serialized: Bytes,
-    ) -> Result<(), Box<dyn Error>> {
-        Ok(())
-    }
 }
 
 /// Defines how the network receiver handles incoming primary messages.

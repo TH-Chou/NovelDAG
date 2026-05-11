@@ -46,21 +46,16 @@ use crate::wahoo::messages::{
 };
 use crate::wahoo::msg_send;
 use crate::wahoo::pb::{Pb, PbAction};
-use crate::wahoo::tools::{generate_tx, unix_nano_now};
+use crate::wahoo::tools::unix_nano_now;
 use bytes::Bytes;
-use config::{Committee, Stake};
+use config::{Committee, Stake, WorkerId};
 use crypto::{Digest, Hash as _, PublicKey, SignatureService};
 use log::{debug, info, warn};
-use network::ReliableSender;
+use network::{CancelHandler, ReliableSender};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use tokio::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-/// Wahoo `Block.Tag = Proposal` is the only kind that ever carries
-/// transactions; we factor the configurable batch generator here.
-fn make_proposal_payload(batch_size: usize) -> Vec<Vec<u8>> {
-    let tx = generate_tx(20);
-    (0..batch_size).map(|_| tx.clone()).collect()
-}
 
 /// `wahoo/node.go::Chain` (lines 13-16). The Go version stores committed
 /// blocks keyed by hash-string; we keep the same shape for exact fidelity
@@ -102,6 +97,14 @@ pub struct Node {
 
     // ---- network ----
     sender: ReliableSender,
+    /// Keep the `CancelHandler`s returned by `ReliableSender::send`/
+    /// `broadcast` alive until acked. Dropping them immediately makes
+    /// the inner connection task treat the message as cancelled and
+    /// silently discard it (see `network::reliable_sender::Connection`,
+    /// where `handler.is_closed()` is checked before flushing the
+    /// buffer). Mirrors the pattern used by `Core::cancel_handlers` /
+    /// `Proposer::cancel_handlers` in the rest of NovelDAG.
+    cancel_handlers: Vec<CancelHandler>,
 
     // ---- DAG state ----
     /// `dag map[round][sender]*Block` — accepted blocks.
@@ -154,7 +157,32 @@ pub struct Node {
     /// Inbound message stream from the network handler. `None` means we
     /// own the receiver after construction; populated only via `spawn`.
     rx_messages: Option<Receiver<WahooMessage>>,
+    /// Stream of worker-batch digests produced by our local workers. We
+    /// drain whatever has accumulated each time we mint a block, mirror-
+    /// ing how `Proposer` populates `Header.payload` for the other three
+    /// DAG protocols. Empty until `spawn_wahoo` wires it up.
+    rx_workers: Option<Receiver<(Digest, WorkerId)>>,
+    /// Buffer of digests received from workers but not yet packed into a
+    /// block. Drained by `new_block`.
+    pending_digests: Vec<(Digest, WorkerId)>,
+    /// Sender side of the slow-path timeout channel. A copy is handed
+    /// to a fire-and-forget timer task each time we broadcast our own
+    /// odd-round block; the task sleeps `SLOW_PATH_TIMEOUT_MS` and then
+    /// posts the round number back so `run`'s `select!` can call
+    /// `handle_slow_path_timeout` on the main task (no `Send`-bounded
+    /// state moves between tasks).
+    tx_slow_path: Sender<Round>,
+    /// Receiver side of the same channel. Moved out by `run`.
+    rx_slow_path: Option<Receiver<Round>>,
 }
+
+/// Delay before the slow-path Done is broadcast for an odd-round block
+/// when full-membership Ready hasn't materialised. Picked to be in the
+/// same order of magnitude as `max_header_delay` (200 ms in the default
+/// benchmark config) so the fault-free fast path comfortably wins; the
+/// constant is independent of `max_header_delay` because Wahoo's `Node`
+/// doesn't currently take a `Parameters` reference.
+const SLOW_PATH_TIMEOUT_MS: u64 = 500;
 
 impl Node {
     /// Construct a new Wahoo node (`node.go::NewNode`).
@@ -164,6 +192,7 @@ impl Node {
         signature_service: SignatureService,
         batch_size: usize,
         rx_messages: Receiver<WahooMessage>,
+        rx_workers: Receiver<(Digest, WorkerId)>,
         tx_committed: Sender<CommittedBlock>,
     ) -> Self {
         let mut authorities_sorted: Vec<PublicKey> =
@@ -178,6 +207,7 @@ impl Node {
         let elect_threshold = 2 * f;
 
         let pb = Pb::new(name, quorum_num);
+        let (tx_slow_path, rx_slow_path) = channel(1024);
 
         Self {
             name,
@@ -189,6 +219,7 @@ impl Node {
             batch_size,
             signature_service,
             sender: ReliableSender::new(),
+            cancel_handlers: Vec::new(),
             dag: HashMap::new(),
             pending_blocks: HashMap::new(),
             chain: Chain {
@@ -211,6 +242,10 @@ impl Node {
             block_query: 0,
             tx_committed,
             rx_messages: Some(rx_messages),
+            rx_workers: Some(rx_workers),
+            pending_digests: Vec::new(),
+            tx_slow_path,
+            rx_slow_path: Some(rx_slow_path),
         }
     }
 
@@ -222,15 +257,77 @@ impl Node {
         self.broadcast_block(1).await;
 
         // Main message dispatch. Combines msg_handle.go::HandleMsgLoop
-        // and the protocol-driving timers.
+        // and the protocol-driving timers, plus a worker-digest fan-in
+        // so worker-emitted batches are buffered for the next block.
         let mut rx = self.rx_messages.take().expect("messages already taken");
+        let mut rx_workers = self
+            .rx_workers
+            .take()
+            .expect("workers receiver already taken");
+        let mut rx_slow_path = self
+            .rx_slow_path
+            .take()
+            .expect("slow-path receiver already taken");
         loop {
-            let msg = match rx.recv().await {
-                Some(m) => m,
-                None => break,
-            };
-            self.handle_message(msg).await;
+            tokio::select! {
+                Some(msg) = rx.recv() => {
+                    self.handle_message(msg).await;
+                }
+                Some((digest, wid)) = rx_workers.recv() => {
+                    self.pending_digests.push((digest, wid));
+                }
+                Some(round) = rx_slow_path.recv() => {
+                    self.handle_slow_path_timeout(round).await;
+                }
+                else => break,
+            }
         }
+    }
+
+    /// Slow-path Done fallback. Triggered `SLOW_PATH_TIMEOUT_MS` after we
+    /// broadcast our own odd-round block. If we still haven't broadcast
+    /// a Done for that round (fast path didn't fire because some peer
+    /// is missing), and we have at least `quorum_num = 2f+1` Readies
+    /// for our block, send Done now. Subsequent peers' slow-path Dones
+    /// will follow on their own timers, eventually reaching the 2f+1
+    /// Dones `try_to_next_round` needs to advance the round.
+    async fn handle_slow_path_timeout(&mut self, round: Round) {
+        if self.done_send.contains(&round) {
+            // Fast path already won this round; nothing to do.
+            return;
+        }
+        let block_sender = self.name; // We only broadcast Done for our own block.
+        let count = self
+            .ready
+            .get(&round)
+            .and_then(|m| m.get(&block_sender))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if count < self.quorum_num {
+            // Not even 2f+1 Readies — the network is partitioned or > f
+            // peers are down. We cannot safely commit; just give up on
+            // this round's leader-Done and let the next round’s machin-
+            // ery (or another node’s slow path) drive progress.
+            warn!(
+                "Wahoo slow-path Done skipped: round={} count={} < quorum_num={}",
+                round, count, self.quorum_num
+            );
+            return;
+        }
+        info!(
+            "Wahoo slow-path Done: round={} count={}/{} (fast path stalled)",
+            round, count, self.node_num
+        );
+        self.done_send.insert(round);
+        let done = WahooDone {
+            done_sender: self.name,
+            block_sender,
+            done: Vec::new(),
+            hash: Digest::default(),
+            round,
+        };
+        self.broadcast_done(done.clone()).await;
+        self.handle_done(done).await;
     }
 
     // ============================================================
@@ -240,6 +337,10 @@ impl Node {
     async fn handle_message(&mut self, msg: WahooMessage) {
         match msg {
             WahooMessage::Block(b) => {
+                info!(
+                    "Wahoo recv Block round={} sender={} tag={:?}",
+                    b.round, b.sender, b.tag
+                );
                 if b.round % 2 == 0 {
                     let actions = self.pb.handle_block(b);
                     self.dispatch_pb_actions(actions).await;
@@ -284,12 +385,16 @@ impl Node {
             match action {
                 PbAction::SendVote { target, vote } => {
                     let signed = self.sign_wahoo(WahooMessage::Vote(vote)).await;
-                    msg_send::send(&mut self.sender, &self.committee, &target, signed).await;
+                    let h =
+                        msg_send::send(&mut self.sender, &self.committee, &target, signed).await;
+                    self.cancel_handlers.push(h);
                 }
                 PbAction::BroadcastBlock2(block) => {
                     let signed = self.sign_wahoo(WahooMessage::Block(block)).await;
-                    msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
-                        .await;
+                    let hs =
+                        msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
+                            .await;
+                    self.cancel_handlers.extend(hs);
                 }
                 PbAction::OutputBlock(block) => {
                     self.handle_pb_output(block).await;
@@ -313,12 +418,15 @@ impl Node {
         let hash = block.digest();
         let round = block.round;
         let sender = block.sender;
+        info!("Wahoo fast_block round={} sender={}", round, sender);
         // Fast-path blocks are inserted into DAG immediately.
         self.try_to_update_dag(block).await;
         // Send Ready unless we have already advanced past this odd round.
         // (Mirrors `n.blockSend[block.Round+1]` check in Go.)
         if !self.block_send.contains(&(round + 1)) {
             self.send_ready(round, hash, sender).await;
+        } else {
+            info!("Wahoo fast_block: skip Ready for round={} (already sent r+1)", round);
         }
     }
 
@@ -361,27 +469,29 @@ impl Node {
             let block = self.new_block(round, previous_hash);
             self.block_send.insert(round);
 
-            // Benchmark log: emit `Created B{round}({author}) -> {digest}`
-            // so `benchmark/benchmark/logs.py` can pair this entry with
-            // the matching `Committed ...` line that
-            // `consensus::wahoo::run` emits when the block lands in the
-            // chain. The digest is the Wahoo block's hash (not the
-            // synthetic Header::id used downstream); we reuse the same
-            // digest in `wahoo_block_to_certificate` so pairing works.
+            // Benchmark log: emit one `Created B{round}({author}) -> {digest}`
+            // line per batch digest carried by this block, exactly the
+            // way `proposer.rs::make_header` does for
+            // Narwhal/Bullshark/NovelDAG. `consensus::wahoo::run` emits
+            // a matching `Committed ...` line for each digest when the
+            // block lands in the chain (its loop already iterates
+            // `header.payload.keys()`), and the worker-side
+            // `Batch <d> contains <n> B` log feeds `LogParser.sizes`.
+            // This puts all four protocols on the exact same accounting
+            // pipeline — TPS and latency become directly comparable.
             #[cfg(feature = "benchmark")]
-            {
-                let digest = block.digest();
-                info!(
-                    "Created B{}({}) -> {:?}",
-                    round, self.name, digest
-                );
+            for digest in block.payload_digests.keys() {
+                info!("Created B{}({}) -> {:?}", round, self.name, digest);
             }
 
             if round % 2 == 0 {
                 // Even round: PB phase 1 broadcast.
                 self.pb.broadcast_block(&block);
                 let signed = self.sign_wahoo(WahooMessage::Block(block.clone())).await;
-                msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+                let hs =
+                    msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
+                        .await;
+                self.cancel_handlers.extend(hs);
                 // Self-deliver the proposal to PB so handle_block_msg
                 // paths are exercised symmetrically with peers.
                 let actions = self.pb.handle_block(block);
@@ -391,9 +501,21 @@ impl Node {
             } else {
                 // Odd round: fast path, direct broadcast.
                 let signed = self.sign_wahoo(WahooMessage::Block(block.clone())).await;
-                msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+                let hs =
+                    msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
+                        .await;
+                self.cancel_handlers.extend(hs);
                 // Self-deliver to keep our own DAG and Ready logic in sync.
                 self.handle_fast_block(block).await;
+                // Schedule the slow-path Done fallback for this odd
+                // round. If full-membership Ready arrives within the
+                // timeout we'll hit `done_send.contains(round)` and
+                // skip; otherwise we'll Done with 2f+1 Readies.
+                let tx = self.tx_slow_path.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(SLOW_PATH_TIMEOUT_MS)).await;
+                    let _ = tx.send(round).await;
+                });
             }
         })
     }
@@ -411,7 +533,8 @@ impl Node {
         // Self-deliver as well to keep counts symmetric across peers.
         self.handle_ready(ready.clone()).await;
         let signed = self.sign_wahoo(WahooMessage::Ready(ready)).await;
-        msg_send::send(&mut self.sender, &self.committee, &block_sender, signed).await;
+        let h = msg_send::send(&mut self.sender, &self.committee, &block_sender, signed).await;
+        self.cancel_handlers.push(h);
     }
 
     /// `msg_send.go::broadcastElect`.
@@ -431,13 +554,17 @@ impl Node {
         // Self-deliver.
         self.handle_elect(elect.clone()).await;
         let signed = self.sign_wahoo(WahooMessage::Elect(elect)).await;
-        msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        let hs =
+            msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        self.cancel_handlers.extend(hs);
     }
 
     /// `msg_send.go::broadcastDone`.
     async fn broadcast_done(&mut self, done: WahooDone) {
         let signed = self.sign_wahoo(WahooMessage::Done(done)).await;
-        msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        let hs =
+            msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        self.cancel_handlers.extend(hs);
     }
 
     // ============================================================
@@ -621,8 +748,20 @@ impl Node {
             .and_then(|m| m.get(&block_sender))
             .map(|m| m.len())
             .unwrap_or(0);
-        // Note: Go uses `len(readies) == n.nodeNum`, i.e. *full membership*,
-        // not 2f+1.
+        info!(
+            "Wahoo Ready count: round={} block_sender={} count={}/{}",
+            round, block_sender, count, self.node_num
+        );
+        // Fast path — Go reference (`wahoo/msg_handle.go::handleReadyMsg`)
+        // requires *full membership*, i.e. all n peers' Readies. With
+        // every honest peer alive this fires almost immediately and the
+        // protocol enjoys its low-latency happy case. When even one
+        // peer is missing, this branch never fires; the slow-path
+        // fallback in `handle_slow_path_timeout` (triggered by a per-
+        // odd-round timer set up in `broadcast_block`) takes over and
+        // broadcasts Done with only `quorum_num = 2f+1` Readies, which
+        // matches the even-round PB threshold and is what every other
+        // DAG-BFT protocol in this workspace uses for liveness.
         if count == self.node_num && !self.done_send.contains(&round) {
             self.done_send.insert(round);
             // Done.Done is left empty — see file-level note explaining the
@@ -645,6 +784,13 @@ impl Node {
             return;
         }
         let count = *self.move_round.get(&round).unwrap_or(&0);
+        info!(
+            "Wahoo try_to_next_round: round={} move_count={}/{} next_signaled={}",
+            round,
+            count,
+            self.quorum_num,
+            self.next_round_signaled.contains(&round)
+        );
         if count >= self.quorum_num && !self.next_round_signaled.contains(&round) {
             self.next_round_signaled.insert(round);
             self.round += 1;
@@ -889,15 +1035,28 @@ impl Node {
     // ============================================================
 
     fn new_block(
-        &self,
+        &mut self,
         round: Round,
         previous_hash: BTreeMap<PublicKey, Digest>,
     ) -> WahooBlock {
+        // Pack as many pending worker-batch digests as we have. We do
+        // not gate round advancement on payload size — Wahoo rounds are
+        // driven by Done/Ready quorums, not by `header_size` like
+        // `Proposer`. Empty blocks are legal and just have no Created/
+        // Committed lines, which is fine for the benchmark.
+        let payload_digests: BTreeMap<Digest, WorkerId> =
+            self.pending_digests.drain(..).collect();
+        // `txs` is left empty: the protocol never inspects it, and the
+        // benchmark accounting now flows through `payload_digests` ->
+        // worker-emitted `Batch ... contains ... B` lines, identical to
+        // the other three protocols.
+        let _ = self.batch_size;
         WahooBlock {
             sender: self.name,
             round,
             previous_hash,
-            txs: make_proposal_payload(self.batch_size),
+            txs: Vec::new(),
+            payload_digests,
             timestamp: unix_nano_now(),
             tag: WahooBlockTag::Proposal,
         }
@@ -988,9 +1147,10 @@ mod tests {
         let sig_service = SignatureService::new(secret);
 
         let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
         let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
 
-        let node = Node::new(me, committee, sig_service, 4, rx_msg, tx_committed);
+        let node = Node::new(me, committee, sig_service, 4, rx_msg, rx_workers, tx_committed);
         assert_eq!(node.round, 1);
         assert_eq!(node.node_num, 4);
         // ceil(2*4/3) = 3
@@ -1015,8 +1175,17 @@ mod tests {
         let secret = secrets.remove(0);
         let sig_service = SignatureService::new(secret);
         let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
         let (tx_committed, mut rx_committed) = tokio::sync::mpsc::channel(64);
-        let mut node = Node::new(me, committee, sig_service, 1, rx_msg, tx_committed);
+        let mut node = Node::new(
+            me,
+            committee,
+            sig_service,
+            1,
+            rx_msg,
+            rx_workers,
+            tx_committed,
+        );
 
         // Insert a leader block at round 1 (odd).
         let leader_block = WahooBlock {
@@ -1024,6 +1193,7 @@ mod tests {
             round: 1,
             previous_hash: BTreeMap::new(),
             txs: vec![vec![1, 2, 3]],
+            payload_digests: BTreeMap::new(),
             timestamp: unix_nano_now() - 1_000_000,
             tag: WahooBlockTag::Proposal,
         };

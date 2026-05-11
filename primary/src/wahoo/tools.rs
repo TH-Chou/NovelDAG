@@ -27,11 +27,11 @@ pub fn decode<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> T {
 }
 
 /// `tools.go::generateTX(s int)` — Go produces `size` random bytes mod 200.
-/// Tx content is never inspected by the protocol (only byte length feeds
-/// throughput statistics), so the Rust port substitutes a deterministic
-/// fill of `0x42` to avoid pulling in `rand` as a primary main-dep. This
-/// is functionally indistinguishable for the Wahoo state machine and
-/// benchmark accounting.
+/// In the unified-pipeline port we no longer mint synthetic txs from the
+/// primary side (Wahoo blocks now carry worker-batch digests like the
+/// other three protocols), but the helper is kept for parity with the
+/// Go reference and as a building block for future stress tests.
+#[allow(dead_code)]
 pub fn generate_tx(size: usize) -> Vec<u8> {
     vec![0x42; size]
 }

@@ -189,7 +189,7 @@ class NodeParameters:
 
         if 'dag_protocol' in json:
             dag_protocol = json['dag_protocol']
-            if dag_protocol not in ('narwhal', 'bullshark', 'noveldag'):
+            if dag_protocol not in ('narwhal', 'bullshark', 'noveldag', 'wahoo'):
                 raise ConfigError(
                     'Invalid parameters: dag_protocol must be narwhal, bullshark, or noveldag'
                 )
