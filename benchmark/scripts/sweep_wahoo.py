@@ -266,6 +266,23 @@ def main():
                             tps_vals.append(tps)
                             lat_vals.append(lat)
                             print(f"TPS={tps:.0f} Lat={lat:.1f}ms")
+                            # Snapshot logs on zero-TPS: subprocess succeeded
+                            # but consensus didn't progress. LocalBench's next
+                            # run will clean_logs at its start, so we copy
+                            # now while files are still intact. Only snapshot
+                            # run==1 of each config to avoid disk bloat.
+                            if tps == 0 and run == 1:
+                                dbg = Path(f"/tmp/wahoo_debug_{key}_run{run}")
+                                src = BENCH_DIR / "logs"
+                                if src.exists():
+                                    try:
+                                        import shutil
+                                        if dbg.exists():
+                                            shutil.rmtree(dbg)
+                                        shutil.copytree(src, dbg)
+                                        print(f"    [snapshot] logs -> {dbg}")
+                                    except Exception as e:
+                                        print(f"    [snapshot ERR] {e}")
                         else:
                             tps_vals.append(0)
                             lat_vals.append(0)

@@ -174,12 +174,22 @@ pub struct Node {
     tx_slow_path: Sender<Round>,
     /// Receiver side of the same channel. Moved out by `run`.
     rx_slow_path: Option<Receiver<Round>>,
+    /// Rounds whose `SLOW_PATH_TIMEOUT_MS` timer has fired. Once a round
+    /// is in here, `check_if_enough_ready` will broadcast Done as soon
+    /// as `count >= quorum_num` for our own block, instead of waiting
+    /// for the impossible `count == node_num`. This is the liveness
+    /// fallback for any f >= 1 scenario where one peer's Ready will
+    /// never arrive.
+    slow_path_armed: HashSet<Round>,
 }
 
-/// Delay before the slow-path Done is broadcast for an odd-round block
-/// when full-membership Ready hasn't materialised. Picked to be in the
-/// same order of magnitude as `max_header_delay` (200 ms in the default
-/// benchmark config) so the fault-free fast path comfortably wins; the
+/// Delay before we *arm* the slow-path Done for an odd-round block when
+/// full-membership Ready hasn't materialised. After arming, the actual
+/// Done is broadcast in `check_if_enough_ready` as soon as `count >=
+/// quorum_num` Readies for our block have arrived, which may be before
+/// or after the timer fires. Picked to be in the same order of magni-
+/// tude as `max_header_delay` (200 ms in the default benchmark config)
+/// so the fault-free fast path (count == n) comfortably wins; the
 /// constant is independent of `max_header_delay` because Wahoo's `Node`
 /// doesn't currently take a `Parameters` reference.
 const SLOW_PATH_TIMEOUT_MS: u64 = 500;
@@ -246,6 +256,7 @@ impl Node {
             pending_digests: Vec::new(),
             tx_slow_path,
             rx_slow_path: Some(rx_slow_path),
+            slow_path_armed: HashSet::new(),
         }
     }
 
@@ -284,18 +295,20 @@ impl Node {
         }
     }
 
-    /// Slow-path Done fallback. Triggered `SLOW_PATH_TIMEOUT_MS` after we
-    /// broadcast our own odd-round block. If we still haven't broadcast
-    /// a Done for that round (fast path didn't fire because some peer
-    /// is missing), and we have at least `quorum_num = 2f+1` Readies
-    /// for our block, send Done now. Subsequent peers' slow-path Dones
-    /// will follow on their own timers, eventually reaching the 2f+1
-    /// Dones `try_to_next_round` needs to advance the round.
+    /// Slow-path arming. Triggered `SLOW_PATH_TIMEOUT_MS` after we
+    /// broadcast our own odd-round block. Marks the round as eligible
+    /// for quorum-based Done; either we already have `quorum_num`
+    /// Readies (broadcast now) or we don't yet (broadcast later from
+    /// `check_if_enough_ready` when the count catches up). This avoids
+    /// the previous "fire-and-forget" race where a single timer firing
+    /// before any Ready had time to traverse a delayed dummynet pipe
+    /// would permanently deadlock the round.
     async fn handle_slow_path_timeout(&mut self, round: Round) {
         if self.done_send.contains(&round) {
             // Fast path already won this round; nothing to do.
             return;
         }
+        self.slow_path_armed.insert(round);
         let block_sender = self.name; // We only broadcast Done for our own block.
         let count = self
             .ready
@@ -304,12 +317,8 @@ impl Node {
             .map(|m| m.len())
             .unwrap_or(0);
         if count < self.quorum_num {
-            // Not even 2f+1 Readies — the network is partitioned or > f
-            // peers are down. We cannot safely commit; just give up on
-            // this round's leader-Done and let the next round’s machin-
-            // ery (or another node’s slow path) drive progress.
-            warn!(
-                "Wahoo slow-path Done skipped: round={} count={} < quorum_num={}",
+            info!(
+                "Wahoo slow-path armed: round={} count={}/{} (will fire on next Ready)",
                 round, count, self.quorum_num
             );
             return;
@@ -774,6 +783,34 @@ impl Node {
                 round,
             };
             // Self-deliver.
+            self.handle_done(done.clone()).await;
+            self.broadcast_done(done).await;
+            return;
+        }
+        // Slow-path catch-up: the SLOW_PATH_TIMEOUT_MS timer for this
+        // round has already fired (round is `armed`), but at the time
+        // the timer ran we hadn't yet collected `quorum_num` Readies
+        // for our own block (typical under dummynet delay where the
+        // first Ready can arrive ~100–500 ms after broadcast). Now
+        // that another Ready has pushed us across the 2f+1 threshold,
+        // broadcast the slow-path Done immediately.
+        if block_sender == self.name
+            && self.slow_path_armed.contains(&round)
+            && count >= self.quorum_num
+            && !self.done_send.contains(&round)
+        {
+            info!(
+                "Wahoo slow-path Done (catch-up): round={} count={}/{}",
+                round, count, self.node_num
+            );
+            self.done_send.insert(round);
+            let done = WahooDone {
+                done_sender: self.name,
+                block_sender,
+                done: Vec::new(),
+                hash: Digest::default(),
+                round,
+            };
             self.handle_done(done.clone()).await;
             self.broadcast_done(done).await;
         }
