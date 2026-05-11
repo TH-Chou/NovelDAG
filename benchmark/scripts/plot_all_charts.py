@@ -50,8 +50,8 @@ for key, vals in raw.items():
         }
 
 PROTOS = ["narwhal", "noveldag", "wahoo"]
-BASELINE = "narwhal"  # protocol used as the reference in pairwise advantage charts
-COMPARED = ["noveldag", "wahoo"]  # protocols compared against BASELINE
+HIGHLIGHTED = "noveldag"  # the protocol we showcase; pairwise charts compute its advantage over each entry in COMPARED
+COMPARED = ["narwhal", "wahoo"]  # opponents (one panel row each)
 FAULTS = [0, 1, 3]
 DELAYS = [0, 50, 100]
 RATES = list(range(60000, 331000, 30000))
@@ -116,7 +116,7 @@ print("1/15: tps_vs_latency")
 
 
 # ═══════════════════════════════════════════════════════════════
-# CHART 2: TPS Advantage Heatmap vs BASELINE — one row per compared proto
+# CHART 2: TPS Advantage Heatmap — NovelDAG vs each opponent, one row per opponent
 # ═══════════════════════════════════════════════════════════════
 fig, axes = plt.subplots(len(COMPARED), 3, figsize=(20, 5.5 * len(COMPARED)),
                           sharey=True)
@@ -126,7 +126,7 @@ vmax = 80
 cmap_white_green = LinearSegmentedColormap.from_list("WhiteGreen",
     [(0, "white"), (0.3, "#c8e6c9"), (0.6, "#66bb6a"), (1, "#1b5e20")], N=256)
 
-for row, proto_b in enumerate(COMPARED):
+for row, opp in enumerate(COMPARED):
     for col, delay in enumerate(DELAYS):
         ax = axes[row][col]
         data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
@@ -134,10 +134,10 @@ for row, proto_b in enumerate(COMPARED):
 
         for i, faults in enumerate(FAULTS):
             for j, rate in enumerate(RATES):
-                a_tps = get_val(BASELINE, faults, delay, rate, "tps")
-                b_tps = get_val(proto_b, faults, delay, rate, "tps")
-                if a_tps and b_tps and a_tps > 0:
-                    pct = (b_tps - a_tps) / a_tps * 100
+                h_tps = get_val(HIGHLIGHTED, faults, delay, rate, "tps")
+                o_tps = get_val(opp, faults, delay, rate, "tps")
+                if h_tps and o_tps and o_tps > 0:
+                    pct = (h_tps - o_tps) / o_tps * 100
                     data_matrix[i, j] = pct
                     annot_matrix[i][j] = "0%" if abs(pct) < 0.5 else f"{pct:+.0f}%"
 
@@ -154,15 +154,15 @@ for row, proto_b in enumerate(COMPARED):
         ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
         if row == len(COMPARED) - 1:
             ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-        title = f"{proto_b} vs {BASELINE}, d={delay}ms ({delay*2}ms RTT)"
+        title = f"{HIGHLIGHTED} vs {opp}, d={delay}ms ({delay*2}ms RTT)"
         ax.set_title(title, fontsize=11, fontweight="bold")
 
 fig.subplots_adjust(bottom=0.10, top=0.92)
 cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.018])
 cbar = fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
-cbar.set_label(f"TPS Advantage over {BASELINE} (%)  →  Green = wins, White = loses",
+cbar.set_label(f"{HIGHLIGHTED} TPS Advantage over opponent (%)  →  Green = {HIGHLIGHTED} wins",
                fontsize=9)
-fig.suptitle(f"TPS Advantage Heatmap vs {BASELINE} (n=10)",
+fig.suptitle(f"{HIGHLIGHTED} TPS Advantage over narwhal / wahoo (n=10)",
              fontsize=14, fontweight="bold", y=0.97)
 fig.savefig(OUT_DIR / "02_heatmap_advantage.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -441,17 +441,17 @@ if len(COMPARED) == 1:
 cmap_diverging = LinearSegmentedColormap.from_list("RedWhiteGreen",
     [(0, "#b71c1c"), (0.4, "#ffcdd2"), (0.5, "white"),
      (0.6, "#c8e6c9"), (1, "#1b5e20")], N=256)
-for row, proto_b in enumerate(COMPARED):
+for row, opp in enumerate(COMPARED):
     for col, delay in enumerate(DELAYS):
         ax = axes[row][col]
         data_matrix = np.full((len(FAULTS), len(RATES)), np.nan)
         for i, faults in enumerate(FAULTS):
             for j, rate in enumerate(RATES):
-                a_lat = get_val(BASELINE, faults, delay, rate, "lat")
-                b_lat = get_val(proto_b, faults, delay, rate, "lat")
-                if a_lat and b_lat and a_lat > 0:
-                    # positive = compared proto has LOWER latency (wins)
-                    data_matrix[i, j] = (a_lat - b_lat) / a_lat * 100
+                h_lat = get_val(HIGHLIGHTED, faults, delay, rate, "lat")
+                o_lat = get_val(opp, faults, delay, rate, "lat")
+                if h_lat and o_lat and o_lat > 0:
+                    # positive = HIGHLIGHTED has LOWER latency (wins)
+                    data_matrix[i, j] = (o_lat - h_lat) / o_lat * 100
 
         masked = np.ma.masked_invalid(data_matrix)
         im = ax.imshow(masked, cmap=cmap_diverging, aspect="auto", vmin=-100, vmax=100)
@@ -468,15 +468,15 @@ for row, proto_b in enumerate(COMPARED):
         ax.set_yticklabels([f"f={f}" for f in FAULTS], fontsize=10)
         if row == len(COMPARED) - 1:
             ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-        ax.set_title(f"{proto_b} vs {BASELINE}, d={delay}ms ({delay*2}ms RTT)",
+        ax.set_title(f"{HIGHLIGHTED} vs {opp}, d={delay}ms ({delay*2}ms RTT)",
                      fontsize=11, fontweight="bold")
 
 fig.subplots_adjust(bottom=0.10, top=0.92)
 cbar_ax = fig.add_axes([0.25, 0.03, 0.5, 0.018])
 cbar2 = fig.colorbar(im, cax=cbar_ax, orientation="horizontal")
-cbar2.set_label(f"Latency Advantage over {BASELINE} (%)  →  Green = lower, Red = higher",
+cbar2.set_label(f"{HIGHLIGHTED} Latency Advantage over opponent (%)  →  Green = lower (wins), Red = higher",
                fontsize=9)
-fig.suptitle(f"Latency Advantage Heatmap vs {BASELINE} (n=10)",
+fig.suptitle(f"{HIGHLIGHTED} Latency Advantage over narwhal / wahoo (n=10)",
              fontsize=14, fontweight="bold", y=0.97)
 fig.savefig(OUT_DIR / "10_heatmap_latency_advantage.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -500,16 +500,18 @@ for col, delay in enumerate(DELAYS):
             ax.bar(x_base + offsets[p], peaks[p], bar_width,
                    color=PROTO_COLORS[(p, faults)], edgecolor="white",
                    label=p if f_idx == 0 else "")
-        # Annotate non-baseline protos with % vs BASELINE
-        base = peaks.get(BASELINE, 0)
-        if base > 0:
-            top = max(peaks.values())
-            for i, p in enumerate(COMPARED):
-                pct = (peaks[p] - base) / base * 100
-                color = "#388E3C" if pct >= 0 else "#D32F2F"
-                ax.text(x_base + offsets[p], peaks[p] + top * 0.02,
-                        f"{pct:+.0f}%", ha="center",
-                        fontsize=8, fontweight="bold", color=color)
+        # Annotate opponents with % showing how much HIGHLIGHTED beats them
+        h_peak = peaks.get(HIGHLIGHTED, 0)
+        top = max(peaks.values()) if peaks else 0
+        for p in COMPARED:
+            o_peak = peaks.get(p, 0)
+            if o_peak <= 0:
+                continue
+            pct = (h_peak - o_peak) / o_peak * 100
+            color = "#388E3C" if pct >= 0 else "#D32F2F"
+            ax.text(x_base + offsets[p], o_peak + top * 0.02,
+                    f"{HIGHLIGHTED[:2]}{pct:+.0f}%", ha="center",
+                    fontsize=7, fontweight="bold", color=color)
 
     ax.set_xticks([f_idx * 3 for f_idx in range(len(FAULTS))])
     ax.set_xticklabels([f"f={f}" for f in FAULTS], fontsize=10)
@@ -517,7 +519,7 @@ for col, delay in enumerate(DELAYS):
     ax.set_title(f"delay = {delay}ms", fontsize=12, fontweight="bold")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.2, axis="y")
-fig.suptitle(f"Peak Consensus TPS by Protocol (% vs {BASELINE})",
+fig.suptitle(f"Peak Consensus TPS by Protocol ({HIGHLIGHTED}’s % advantage over each opponent)",
              fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "11_peak_tps_bars.png", dpi=150, bbox_inches="tight")
@@ -533,28 +535,28 @@ fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
 FAULT_LS = {0: "-", 1: "--", 3: ":"}
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
-    for proto_b in COMPARED:
+    for opp in COMPARED:
         for faults in FAULTS:
             x_vals, y_vals = [], []
             for rate in RATES:
-                a_tps = get_val(BASELINE, faults, delay, rate, "tps")
-                b_tps = get_val(proto_b, faults, delay, rate, "tps")
-                if a_tps and b_tps and a_tps > 0:
+                h_tps = get_val(HIGHLIGHTED, faults, delay, rate, "tps")
+                o_tps = get_val(opp, faults, delay, rate, "tps")
+                if h_tps and o_tps and o_tps > 0:
                     x_vals.append(rate // 1000)
-                    y_vals.append((b_tps - a_tps) / a_tps * 100)
+                    y_vals.append((h_tps - o_tps) / o_tps * 100)
             if x_vals:
                 ax.plot(x_vals, y_vals,
-                        marker=MARKERS[proto_b], linestyle=FAULT_LS[faults],
-                        color=PROTO_COLORS[(proto_b, faults)],
+                        marker=MARKERS[opp], linestyle=FAULT_LS[faults],
+                        color=PROTO_COLORS[(opp, faults)],
                         linewidth=1.8, markersize=6,
-                        label=f"{proto_b} f={faults}")
+                        label=f"vs {opp} f={faults}")
     ax.axhline(y=0, color="gray", linestyle=":", alpha=0.5)
     ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
-    ax.set_ylabel(f"TPS Advantage over {BASELINE} (%)", fontsize=10)
+    ax.set_ylabel(f"{HIGHLIGHTED} TPS Advantage (%)", fontsize=10)
     ax.set_title(f"delay = {delay}ms ({delay*2}ms RTT)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, ncol=2)
     ax.grid(True, alpha=0.2)
-fig.suptitle(f"TPS Advantage over {BASELINE} by Rate, Protocol, and Fault Count",
+fig.suptitle(f"{HIGHLIGHTED} TPS Advantage over narwhal / wahoo by Rate and Fault Count",
              fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "12_tps_advantage_curves.png", dpi=150, bbox_inches="tight")
