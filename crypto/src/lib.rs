@@ -354,3 +354,155 @@ pub fn recover_coin(
     let digest = hasher.finalize();
     Some(u64::from_le_bytes(digest[..8].try_into().ok()?))
 }
+
+// ---------------------------------------------------------------------------
+// Wahoo RECP threshold-BLS pipeline (paper Section IV-B, Step 4d).
+//
+// Mirrors the common-coin pipeline above with two key differences:
+//  * Domain-separated seed and message labels so a coin share can never
+//    be replayed as a RECP share and vice-versa.
+//  * RECP shares sign over (round, block_hash), not just round — so the
+//    block being attested to is bound into the signature.
+//
+// Key material is regenerated deterministically on every node from the
+// committee's authority set, identical to the coin path. This is a
+// research benchmark concession: in a real deployment, the RECP key
+// set would be produced by a DKG once at committee installation.
+// ---------------------------------------------------------------------------
+
+fn deterministic_recp_key_set(authorities: &[PublicKey], threshold: usize) -> SecretKeySet {
+    let mut sorted_authorities = authorities.to_vec();
+    sorted_authorities.sort();
+    let mut hasher = Sha512::new();
+    hasher.update(b"wahoo-threshold-recp-seed-v1");
+    for authority in sorted_authorities {
+        hasher.update(&authority);
+    }
+    let digest = hasher.finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&digest[..32]);
+    let mut rng = rand::rngs::StdRng::from_seed(seed);
+    SecretKeySet::random(threshold, &mut rng)
+}
+
+fn recp_message(round: u64, block_hash: &Digest) -> Vec<u8> {
+    let mut message = b"wahoo-recp-v1".to_vec();
+    message.extend_from_slice(&round.to_le_bytes());
+    message.extend_from_slice(&block_hash.0);
+    message
+}
+
+/// Recommended BLS threshold for RECP: t = f = (n-1)/3, so (f+1) shares
+/// recover the aggregate signature.
+pub fn recp_threshold(committee_size: usize) -> usize {
+    committee_size.saturating_sub(1) / 3
+}
+
+/// Produce this authority's BLS partial signature on (round, block_hash).
+/// Returns `None` if the authority isn't in the committee.
+pub fn make_recp_share(
+    authorities: &[PublicKey],
+    threshold: usize,
+    authority: &PublicKey,
+    round: u64,
+    block_hash: &Digest,
+) -> Option<Vec<u8>> {
+    let index = authority_index(authorities, authority)?;
+    let key_set = deterministic_recp_key_set(authorities, threshold);
+    let share = key_set
+        .secret_key_share(index)
+        .sign(recp_message(round, block_hash));
+    bincode::serialize(&share).ok()
+}
+
+/// Verify a single BLS partial RECP signature against the authority's
+/// public-key share. Used for `LeaderProof::NoCommit` (paper line 17-19),
+/// where the verifier checks each share individually.
+pub fn verify_recp_share(
+    authorities: &[PublicKey],
+    threshold: usize,
+    authority: &PublicKey,
+    round: u64,
+    block_hash: &Digest,
+    share_bytes: &[u8],
+) -> bool {
+    let index = match authority_index(authorities, authority) {
+        Some(i) => i,
+        None => return false,
+    };
+    let key_set = deterministic_recp_key_set(authorities, threshold);
+    let pks: PublicKeySet = key_set.public_keys();
+    let share: SignatureShare = match bincode::deserialize(share_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    pks.public_key_share(index)
+        .verify(&share, recp_message(round, block_hash))
+}
+
+/// Combine `(f+1)` partial signatures into a single aggregate BLS
+/// signature for paper-Section-IV-B `LeaderProof::ExclusiveCommit`.
+/// `shares` is the same `(author, partial_bytes)` shape as the coin
+/// path. Returns `None` if fewer than `threshold + 1` verifying shares
+/// are supplied or if the aggregate fails self-verification.
+pub fn combine_recp_shares(
+    authorities: &[PublicKey],
+    threshold: usize,
+    round: u64,
+    block_hash: &Digest,
+    shares: &[(PublicKey, Vec<u8>)],
+) -> Option<Vec<u8>> {
+    let key_set = deterministic_recp_key_set(authorities, threshold);
+    let pks: PublicKeySet = key_set.public_keys();
+    let message = recp_message(round, block_hash);
+
+    let mut unique_shares = BTreeMap::new();
+    for (authority, bytes) in shares {
+        let index = match authority_index(authorities, authority) {
+            Some(i) => i,
+            None => continue,
+        };
+        let share: SignatureShare = match bincode::deserialize(bytes) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if !pks.public_key_share(index).verify(&share, &message) {
+            continue;
+        }
+        unique_shares.entry(index).or_insert(share);
+    }
+
+    if unique_shares.len() < threshold + 1 {
+        return None;
+    }
+
+    let signature = pks.combine_signatures(&unique_shares).ok()?;
+    if !pks.public_key().verify(&signature, &message) {
+        return None;
+    }
+    Some(signature.to_bytes().to_vec())
+}
+
+/// Verify an aggregate BLS signature against the master public key.
+/// Counterpart to `combine_recp_shares`. Used by `LeaderLink::verify`
+/// to validate `LeaderProof::ExclusiveCommit` proofs.
+pub fn verify_recp_aggregate(
+    authorities: &[PublicKey],
+    threshold: usize,
+    round: u64,
+    block_hash: &Digest,
+    aggregate_bytes: &[u8],
+) -> bool {
+    let key_set = deterministic_recp_key_set(authorities, threshold);
+    let pks: PublicKeySet = key_set.public_keys();
+    // `threshold_crypto::Signature::from_bytes` requires a fixed 96-byte input.
+    let bytes: [u8; 96] = match aggregate_bytes.try_into() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let signature = match threshold_crypto::Signature::from_bytes(bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    pks.public_key().verify(&signature, recp_message(round, block_hash))
+}
