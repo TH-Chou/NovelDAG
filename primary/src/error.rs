@@ -56,4 +56,7 @@ pub enum DagError {
 
     #[error("Message {0} (round {1}) too old")]
     TooOld(Digest, Round),
+
+    #[error("Invalid leader-link BLS proof")]
+    InvalidLeaderLink,
 }
