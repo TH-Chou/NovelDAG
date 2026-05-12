@@ -341,6 +341,7 @@ async fn reject_commit_when_qc_vote_round_not_less_than_commit_round() {
                 voter_round: 4,
                 origin: leader,
                 author: keys[1],
+                wahoo_phase: None,
                 signature: Default::default(),
             }],
         });
