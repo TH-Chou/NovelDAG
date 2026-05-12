@@ -3,16 +3,19 @@
 // The Go reference encodes messages with `encoding/json`. NovelDAG uses
 // `bincode` everywhere for efficiency; we keep `encode`/`decode` as the
 // idiomatic primitives so call sites read the same way as the Go source.
-// `getHash` becomes a Hash trait impl on `WahooBlock` further below.
+//
+// Phase B Step 3b: `WahooBlock` is now a type alias for `messages::Header`,
+// so the standalone `impl Hash for WahooBlock` (which hashed the bincode
+// encoding of the whole struct) has been removed; callers use
+// `Header::digest()` directly, which mixes specific fields into Sha512 in
+// a defined order. This changes the on-wire digest values relative to the
+// Go reference, but all Wahoo nodes compute digests identically so the
+// protocol remains consistent.
 
-use crate::wahoo::messages::WahooBlock;
-use crypto::{Digest, Hash};
-use ed25519_dalek::Digest as _;
-use ed25519_dalek::Sha512;
-use std::convert::TryInto;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `tools.go::encode`. Returns the bincode wire form of any `Serialize`.
+#[allow(dead_code)]
 pub fn encode<T: serde::Serialize>(v: &T) -> Vec<u8> {
     bincode::serialize(v).expect("Wahoo encode failed")
 }
@@ -44,14 +47,6 @@ pub fn unix_nano_now() -> i64 {
         .unwrap_or(0)
 }
 
-/// `tools.go::Block.getHash()` and `getHashAsString()` — folded into the
-/// shared `crypto::Hash` trait so callers can use `block.digest()`.
-impl Hash for WahooBlock {
-    fn digest(&self) -> Digest {
-        let bytes = encode(self);
-        let mut hasher = Sha512::new();
-        hasher.update(&bytes);
-        let out = hasher.finalize();
-        Digest(out[..32].try_into().expect("sha512 truncation"))
-    }
-}
+// `tools.go::Block.getHash()` is now provided directly by
+// `messages::Header`'s `Hash` impl (Phase B Step 3b made WahooBlock a
+// type alias for Header).

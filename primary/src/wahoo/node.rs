@@ -1,48 +1,8 @@
-// Port of `Wahoo-main/wahoo/node.go` + `wahoo/msg_handle.go`.
-//
-// Behavioural goals (1:1 with Go reference):
-//
-//   * Round 1 starts the protocol; round numbering matches Go (`n.round = 1`).
-//   * Even rounds run PB (Provable Broadcast) — see `pb.rs`.
-//   * Odd rounds run the fast path: every receiver sends Ready immediately
-//     after receiving and validating an odd-round block; the proposer waits
-//     for `n` Readys (full membership, NOT 2f+1 — `node.go::checkIfEnoughReady`
-//     uses `len(readies) == n.nodeNum`) before broadcasting Done.
-//   * `moveRound[r] >= quorumNum` advances the local round counter; the
-//     trigger differs by parity:
-//       - even rounds: each block successfully added to the DAG bumps the
-//         counter (`tryToUpdateDAG`).
-//       - odd rounds: each Done received bumps the counter (`storeDone`).
-//   * Even-round Elect partial signatures, once 2f+1 are collected, recover
-//     a common coin that picks the leader of the *previous* (odd) round.
-//   * Commit triggers when (leader_known ∧ done_seen ∧ block_in_dag) for an
-//     odd-round leader. Commit walks the parents transitively and emits all
-//     uncommitted ancestor blocks (`tryToCommitAncestorLeader` +
-//     `commitAncestorBlocks`).
-//
-// One deviation that is structurally required by Rust ownership:
-//   * `pb.go` runs as its own goroutine with shared mutable state. We model
-//     PB as a synchronous helper (`pb::Pb`) whose mutating methods return
-//     `PbAction`s; the `Node` task executes them. The set of state
-//     transitions is identical.
-//
-// Threshold-signature substrate:
-//   * Elect uses `crypto::make_coin_share` / `crypto::recover_coin` (BLS
-//     over BN, already in the workspace) — this is a *real* threshold
-//     signature, not the placeholder we considered earlier. Threshold is
-//     `2f`, so 2f+1 distinct partials recover. Leader index = recovered
-//     coin u64 mod committee_size, matching `node.go::tryToElectLeader`
-//     (`leaderId := int(qcAsInt) % n.nodeNum`).
-//   * Ready partial sigs are populated with an ed25519 signature over the
-//     block hash. The Go reference signs but never combines them (the
-//     `AssembleIntactTSPartial` call site in `checkIfEnoughReady` is
-//     commented out and `Done.Done` is set to nil — see lines 287-298 of
-//     node.go). We mirror that: Done.done is empty, Ready.partial_sig is
-//     a non-empty signature placeholder for byte-level fidelity.
 
 use crate::primary::Round;
+use crate::messages::{LeaderLink, LeaderProof, RecpMessage, WahooTag};
 use crate::wahoo::messages::{
-    SignedWahoo, WahooBlock, WahooBlockTag, WahooDone, WahooElect, WahooMessage, WahooReady,
+    SignedWahoo, WahooBlock, WahooDone, WahooElect, WahooMessage, WahooReady,
 };
 use crate::wahoo::msg_send;
 use crate::wahoo::pb::{Pb, PbAction};
@@ -52,9 +12,8 @@ use config::{Committee, Stake, WorkerId};
 use crypto::{Digest, Hash as _, PublicKey, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 
 /// `wahoo/node.go::Chain` (lines 13-16). The Go version stores committed
@@ -90,6 +49,10 @@ pub struct Node {
     /// Threshold parameter for the Elect coin. Equals 2f so that 2f+1
     /// distinct partials recover the combined signature.
     elect_threshold: usize,
+    /// Threshold parameter for the RECP BLS pipeline (paper Section IV-B
+    /// Step 4d). Equals f so that f+1 distinct partials recover the
+    /// aggregate signature used by `LeaderProof::ExclusiveCommit`.
+    recp_threshold: usize,
     batch_size: usize,
 
     // ---- crypto ----
@@ -112,6 +75,12 @@ pub struct Node {
     /// `pendingBlocks map[round][sender]*Block` — blocks whose parents
     /// haven't been observed yet.
     pending_blocks: HashMap<Round, HashMap<PublicKey, WahooBlock>>,
+    /// Step 3a-ii: per-digest index over all blocks that have ever
+    /// entered `dag`. Replaces the Go reference's `previous_hash[sender]`
+    /// pattern: instead of remembering each parent's author on the wire,
+    /// every parent reference is a raw digest and we recover the author
+    /// (and the parent's full block) via this index.
+    blocks_by_digest: HashMap<Digest, WahooBlock>,
     /// Committed blocks.
     chain: Chain,
 
@@ -124,6 +93,21 @@ pub struct Node {
     elect: HashMap<Round, HashMap<PublicKey, Vec<u8>>>,
     /// `ready map[round][block_sender][ready_sender][]byte`.
     ready: HashMap<Round, HashMap<PublicKey, HashMap<PublicKey, Vec<u8>>>>,
+    /// Phase C Step 4a: reception-assertion pool.
+    ///
+    /// Paper Section IV-B Algorithm 2 line 5: every time a node delivers
+    /// an EPBC block it broadcasts `⟨RECP, h, ρ⟩` — a (f+1)-threshold
+    /// signature share over the block hash `h`. Honest nodes use the
+    /// pooled shares, signed by peers at the same wave, to construct the
+    /// next EPBC header's `leader_link`:
+    ///   * n-f distinct shares on the SAME block -> exclusive-commit proof
+    ///   * n-f distinct shares on DIFFERENT blocks -> no-commit proof
+    /// Keyed by `round -> block_hash -> author -> RecpMessage` so the
+    /// leader-link builder can both (a) count distinct authors per block
+    /// for the `ExclusiveCommit` path and (b) emit the original RECP
+    /// messages required by the `NoCommit` proof variant in
+    /// `messages::LeaderProof`.
+    recp_pool: HashMap<Round, HashMap<Digest, HashMap<PublicKey, RecpMessage>>>,
 
     // ---- round counters & flags ----
     /// `n.round` — current local round.
@@ -165,71 +149,15 @@ pub struct Node {
     /// Buffer of digests received from workers but not yet packed into a
     /// block. Drained by `new_block`.
     pending_digests: Vec<(Digest, WorkerId)>,
-    /// Sender side of the slow-path timeout channel. A copy is handed
-    /// to a fire-and-forget timer task each time we broadcast our own
-    /// odd-round block; the task sleeps `SLOW_PATH_TIMEOUT_MS` and then
-    /// posts the round number back so `run`'s `select!` can call
-    /// `handle_slow_path_timeout` on the main task (no `Send`-bounded
-    /// state moves between tasks).
-    tx_slow_path: Sender<Round>,
-    /// Receiver side of the same channel. Moved out by `run`.
-    rx_slow_path: Option<Receiver<Round>>,
-    /// Rounds whose `SLOW_PATH_TIMEOUT_MS` timer has fired. Once a round
-    /// is in here, `check_if_enough_ready` will broadcast Done as soon
-    /// as `count >= quorum_num` for our own block, instead of waiting
-    /// for the impossible `count == node_num`. This is the liveness
-    /// fallback for any f >= 1 scenario where one peer's Ready will
-    /// never arrive.
-    slow_path_armed: HashSet<Round>,
-    /// Wall-clock time we last broadcast a block of our own. Used to
-    /// enforce the `WAHOO_HEADER_DELAY_MS` floor between consecutive
-    /// block broadcasts, mirroring `Proposer`'s `max_header_delay`.
-    last_block_broadcast_at: Option<Instant>,
-    /// Sender side of the header-delay channel. When `try_to_next_round`
-    /// would advance but the throttle hasn't elapsed, it spawns a sleep
-    /// task that posts the deferred round number back here.
-    tx_header_delay: Sender<Round>,
-    /// Receiver side, moved out by `run`.
-    rx_header_delay: Option<Receiver<Round>>,
-    /// Rounds for which we've already scheduled a header-delay wake-up.
-    /// Prevents `try_to_next_round` from spawning duplicate timers if
-    /// it's called repeatedly before the wake-up fires.
-    header_delay_pending: HashSet<Round>,
+    /// Phase C Step 4a: receiver for RECP shares broadcast by peers at
+    /// the start of each EPBC phase (paper Algorithm 2 line 5). Moved
+    /// out by `run` into the `tokio::select!` loop.
+    rx_recp: Option<Receiver<RecpMessage>>,
 }
-
-/// Delay before we *arm* the slow-path Done for an odd-round block when
-/// full-membership Ready hasn't materialised. After arming, the actual
-/// Done is broadcast in `check_if_enough_ready` as soon as `count >=
-/// quorum_num` Readies for our block have arrived, which may be before
-/// or after the timer fires. Picked to be in the same order of magni-
-/// tude as `max_header_delay` (200 ms in the default benchmark config)
-/// so the fault-free fast path (count == n) comfortably wins; the
-/// constant is independent of `max_header_delay` because Wahoo's `Node`
-/// doesn't currently take a `Parameters` reference.
-const SLOW_PATH_TIMEOUT_MS: u64 = 500;
-
-/// Diagnostic switch. When `true`, the odd-round fast path
-/// (`count == node_num` → broadcast Done immediately) is disabled, so
-/// every odd round MUST wait for the `SLOW_PATH_TIMEOUT_MS` timer and
-/// then collect ≥ quorum_num Readies before emitting Done. Used to
-/// answer "is Wahoo's low-latency dominance over NovelDAG real, or is
-/// it just the fast-path skipping a quorum collection that the other
-/// protocols can't skip?".
-const DISABLE_FAST_PATH: bool = true;
-
-/// Apples-to-apples throttle for `try_to_next_round`. Mirrors
-/// `Proposer::max_header_delay` (200 ms in the default benchmark
-/// config): the local node will not broadcast block R+1 sooner than
-/// `WAHOO_HEADER_DELAY_MS` after it broadcast block R, so each block
-/// gets a chance to accumulate worker digests for the same window
-/// NovelDAG/Narwhal/Bullshark proposers use. Without this, Wahoo runs
-/// rounds at network speed (~10 ms each under loopback) and trivially
-/// out-throughputs the other three protocols even though the protocol
-/// itself is not faster — it just has no batching window.
-const WAHOO_HEADER_DELAY_MS: u64 = 200;
 
 impl Node {
     /// Construct a new Wahoo node (`node.go::NewNode`).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: PublicKey,
         committee: Committee,
@@ -237,6 +165,7 @@ impl Node {
         batch_size: usize,
         rx_messages: Receiver<WahooMessage>,
         rx_workers: Receiver<(Digest, WorkerId)>,
+        rx_recp: Receiver<RecpMessage>,
         tx_committed: Sender<CommittedBlock>,
     ) -> Self {
         let mut authorities_sorted: Vec<PublicKey> =
@@ -249,10 +178,9 @@ impl Node {
         // partials suffice to combine the Elect QC.
         let f = (node_num.saturating_sub(1)) / 3;
         let elect_threshold = 2 * f;
+        let recp_threshold = crypto::recp_threshold(node_num);
 
-        let pb = Pb::new(name, quorum_num);
-        let (tx_slow_path, rx_slow_path) = channel(1024);
-        let (tx_header_delay, rx_header_delay) = channel(1024);
+        let pb = Pb::new(name, committee.clone());
 
         Self {
             name,
@@ -261,12 +189,14 @@ impl Node {
             node_num,
             quorum_num,
             elect_threshold,
+            recp_threshold,
             batch_size,
             signature_service,
             sender: ReliableSender::new(),
             cancel_handlers: Vec::new(),
             dag: HashMap::new(),
             pending_blocks: HashMap::new(),
+            blocks_by_digest: HashMap::new(),
             chain: Chain {
                 round: 0,
                 blocks: HashMap::new(),
@@ -275,6 +205,8 @@ impl Node {
             done: HashMap::new(),
             elect: HashMap::new(),
             ready: HashMap::new(),
+            recp_pool: HashMap::new(),
+            rx_recp: Some(rx_recp),
             round: 1,
             move_round: HashMap::new(),
             next_round_signaled: HashSet::new(),
@@ -289,13 +221,6 @@ impl Node {
             rx_messages: Some(rx_messages),
             rx_workers: Some(rx_workers),
             pending_digests: Vec::new(),
-            tx_slow_path,
-            rx_slow_path: Some(rx_slow_path),
-            slow_path_armed: HashSet::new(),
-            last_block_broadcast_at: None,
-            tx_header_delay,
-            rx_header_delay: Some(rx_header_delay),
-            header_delay_pending: HashSet::new(),
         }
     }
 
@@ -314,14 +239,10 @@ impl Node {
             .rx_workers
             .take()
             .expect("workers receiver already taken");
-        let mut rx_slow_path = self
-            .rx_slow_path
+        let mut rx_recp = self
+            .rx_recp
             .take()
-            .expect("slow-path receiver already taken");
-        let mut rx_header_delay = self
-            .rx_header_delay
-            .take()
-            .expect("header-delay receiver already taken");
+            .expect("recp receiver already taken");
         loop {
             tokio::select! {
                 Some(msg) = rx.recv() => {
@@ -330,61 +251,228 @@ impl Node {
                 Some((digest, wid)) = rx_workers.recv() => {
                     self.pending_digests.push((digest, wid));
                 }
-                Some(round) = rx_slow_path.recv() => {
-                    self.handle_slow_path_timeout(round).await;
-                }
-                Some(round) = rx_header_delay.recv() => {
-                    self.header_delay_pending.remove(&round);
-                    self.broadcast_block(round).await;
-                    self.try_to_next_round_boxed(round).await;
+                Some(recp) = rx_recp.recv() => {
+                    self.handle_recp(recp);
                 }
                 else => break,
             }
         }
     }
 
-    /// Slow-path arming. Triggered `SLOW_PATH_TIMEOUT_MS` after we
-    /// broadcast our own odd-round block. Marks the round as eligible
-    /// for quorum-based Done; either we already have `quorum_num`
-    /// Readies (broadcast now) or we don't yet (broadcast later from
-    /// `check_if_enough_ready` when the count catches up). This avoids
-    /// the previous "fire-and-forget" race where a single timer firing
-    /// before any Ready had time to traverse a delayed dummynet pipe
-    /// would permanently deadlock the round.
-    async fn handle_slow_path_timeout(&mut self, round: Round) {
-        if self.done_send.contains(&round) {
-            // Fast path already won this round; nothing to do.
-            return;
-        }
-        self.slow_path_armed.insert(round);
-        let block_sender = self.name; // We only broadcast Done for our own block.
-        let count = self
-            .ready
-            .get(&round)
-            .and_then(|m| m.get(&block_sender))
-            .map(|m| m.len())
-            .unwrap_or(0);
-        if count < self.quorum_num {
-            info!(
-                "Wahoo slow-path armed: round={} count={}/{} (will fire on next Ready)",
-                round, count, self.quorum_num
+    /// Phase C Step 4a: absorb an incoming RECP share.
+    ///
+    /// Validation:
+    ///   * author must be a committee member (stake > 0)
+    ///   * (round, block_hash, author) must not already be in the pool
+    ///     (silent dedup, not an error — RECPs may be broadcast multiple
+    ///     times by peers)
+    ///
+    /// Cryptographic verification of the threshold share is deferred to
+    /// Phase C Step 4b, which will run it through the BLS verifier when
+    /// the leader-link builder consumes the pool.
+    fn handle_recp(&mut self, recp: RecpMessage) {
+        if self.committee.stake(&recp.author) == 0 {
+            warn!(
+                "Wahoo RECP: dropped share from unknown authority {}",
+                recp.author
             );
             return;
         }
-        info!(
-            "Wahoo slow-path Done: round={} count={}/{} (fast path stalled)",
-            round, count, self.node_num
-        );
-        self.done_send.insert(round);
-        let done = WahooDone {
-            done_sender: self.name,
-            block_sender,
-            done: Vec::new(),
-            hash: Digest::default(),
+        let entry = self
+            .recp_pool
+            .entry(recp.round)
+            .or_insert_with(HashMap::new)
+            .entry(recp.block_hash.clone())
+            .or_insert_with(HashMap::new);
+        if entry.contains_key(&recp.author) {
+            debug!(
+                "Wahoo RECP: duplicate share from {} at round {} for block {}",
+                recp.author, recp.round, recp.block_hash
+            );
+            return;
+        }
+        let (round, author, block_hash) = (recp.round, recp.author, recp.block_hash.clone());
+        entry.insert(author, recp);
+        debug!(
+            "Wahoo RECP: pool[r={}][h={}] now has {} share(s)",
             round,
-        };
-        self.broadcast_done(done.clone()).await;
-        self.handle_done(done).await;
+            block_hash,
+            entry.len()
+        );
+    }
+
+    /// Phase C Step 4a: expose pool contents for the leader-link builder
+    /// and for unit tests. Returns the (author -> share) map for a given
+    /// (round, block_hash), or an empty view if none are known.
+    #[allow(dead_code)]
+    pub(crate) fn recp_shares_for(
+        &self,
+        round: Round,
+        block_hash: &Digest,
+    ) -> Option<&HashMap<PublicKey, RecpMessage>> {
+        self.recp_pool.get(&round).and_then(|m| m.get(block_hash))
+    }
+
+    /// Phase C Step 4b: build the `leader_link` for an EPBC header at
+    /// `round` (odd, >= 3). Consults `recp_pool[round - 2]` — the RECP
+    /// shares peers broadcast over blocks delivered at the previous
+    /// wave's EPBC phase.
+    ///
+    /// Returns:
+    ///   * `Some(ExclusiveCommit)` if some block hash collected f+1
+    ///     shares (paper Section IV-B: "the previous leader's block was
+    ///     committed at tier >= TS2 — commit it"). The proof bytes are a
+    ///     simple concatenation of the share bytes; full BLS aggregate
+    ///     verification lands when threshold crypto is wired in.
+    ///   * `Some(NoCommit)` if at least n-f distinct authors broadcast
+    ///     RECPs (regardless of which block) but no single block
+    ///     reached f+1 (paper: "no possible commit — safe to skip").
+    ///   * `None` for round < 3 (no previous EPBC) or if neither
+    ///     threshold is met yet.
+    ///
+    /// When both conditions hold (f+1 same-block AND n-f distinct
+    /// authors total), `ExclusiveCommit` takes precedence because it
+    /// conveys strictly more information.
+    #[allow(dead_code)]
+    pub(crate) fn build_leader_link(&self, round: Round) -> Option<LeaderLink> {
+        if round < 3 || round % 2 == 0 {
+            return None;
+        }
+        let prev = round - 2;
+        let buckets = self.recp_pool.get(&prev)?;
+        let f_plus_1: Stake = self.committee.validity_threshold();
+        let total_stake: Stake = self
+            .committee
+            .authorities
+            .keys()
+            .map(|name| self.committee.stake(name))
+            .sum();
+        let n_minus_f = total_stake - f_plus_1 + 1;
+
+        // Pass 1: ExclusiveCommit — any single block with >= f+1 stake?
+        // Iterate in a deterministic order so all honest nodes pick the
+        // same proof if multiple blocks happen to be eligible (only
+        // possible under equivocation, where any choice is safe).
+        let mut sorted_blocks: Vec<&Digest> = buckets.keys().collect();
+        sorted_blocks.sort();
+        for h in &sorted_blocks {
+            let entries = &buckets[*h];
+            let weight: Stake = entries.keys().map(|a| self.committee.stake(a)).sum();
+            if weight >= f_plus_1 {
+                // Phase C Step 4d: combine the per-author BLS partial
+                // signatures over `(prev_round, block_hash)` into a
+                // single aggregate signature via threshold_crypto's
+                // Lagrange interpolation. `proof_bytes` is now a real
+                // 96-byte BLS signature that any verifier can check
+                // against the master public key derived from the
+                // committee — see `LeaderLink::verify_with_crypto`.
+                let shares: Vec<(PublicKey, Vec<u8>)> = entries
+                    .iter()
+                    .map(|(a, recp)| (*a, recp.share.clone()))
+                    .collect();
+                let proof_bytes = match crypto::combine_recp_shares(
+                    &self.authorities_sorted,
+                    self.recp_threshold,
+                    prev,
+                    *h,
+                    &shares,
+                ) {
+                    Some(p) => p,
+                    None => {
+                        // Combine failed (shares didn't verify
+                        // individually, or insufficient distinct
+                        // indices). Fall through to NoCommit pass.
+                        log::warn!(
+                            "Wahoo build_leader_link: combine_recp_shares failed for round {} hash {:?}; falling back to NoCommit",
+                            prev, h
+                        );
+                        continue;
+                    }
+                };
+                return Some(LeaderLink {
+                    hash: Some((*h).clone()),
+                    proof: LeaderProof::ExclusiveCommit(proof_bytes),
+                });
+            }
+        }
+
+        // Pass 2: NoCommit — do we have n-f distinct authors total?
+        // For each author seen anywhere in `prev`, keep ONE RecpMessage
+        // (deterministically the lexicographically-smallest block_hash
+        // they signed on, so honest nodes converge on the same proof).
+        let mut per_author: HashMap<PublicKey, RecpMessage> = HashMap::new();
+        for h in &sorted_blocks {
+            for (author, recp) in &buckets[*h] {
+                per_author.entry(*author).or_insert_with(|| recp.clone());
+            }
+        }
+        let weight: Stake = per_author.keys().map(|a| self.committee.stake(a)).sum();
+        if weight >= n_minus_f {
+            let mut recps: Vec<RecpMessage> = per_author.into_values().collect();
+            // Deterministic ordering for byte-identical serialisation
+            // across honest nodes (their RecpMessage sets are equal
+            // post-dedup; sorting kills HashMap iteration nondeterminism).
+            recps.sort_by_key(|r| r.author);
+            return Some(LeaderLink {
+                hash: None,
+                proof: LeaderProof::NoCommit(recps),
+            });
+        }
+        None
+    }
+
+    /// Phase C Step 4c+4d: self-broadcast RECP shares for blocks we've
+    /// delivered at `prev_round` (paper Algorithm 2 line 5).
+    ///
+    /// Iterates every block in `self.dag[prev_round]`, computes a real
+    /// `(f+1)`-threshold BLS partial signature over `(prev_round,
+    /// block_hash)` via `crypto::make_recp_share`, and broadcasts a
+    /// `PrimaryMessage::Recp(_)`. Threshold parameter `f` is derived
+    /// from `node_num` via `crypto::recp_threshold` so all nodes agree
+    /// on the same key set.
+    ///
+    /// Self-delivers each emitted RECP into our own pool so the local
+    /// `build_leader_link(prev_round + 2)` sees our share without a
+    /// network round trip.
+    async fn broadcast_self_recps(&mut self, prev_round: Round) {
+        let blocks: Vec<WahooBlock> = self
+            .dag
+            .get(&prev_round)
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default();
+        for block in blocks {
+            let block_hash = crypto::Hash::digest(&block);
+            let share = match crypto::make_recp_share(
+                &self.authorities_sorted,
+                self.recp_threshold,
+                &self.name,
+                prev_round,
+                &block_hash,
+            ) {
+                Some(s) => s,
+                None => {
+                    log::warn!(
+                        "Wahoo RECP: failed to produce BLS share (round={}, author={}); skipping",
+                        prev_round,
+                        self.name
+                    );
+                    continue;
+                }
+            };
+            let recp = RecpMessage {
+                block_hash: block_hash.clone(),
+                round: prev_round,
+                author: self.name,
+                share,
+            };
+            // Self-deliver to our own pool.
+            self.handle_recp(recp.clone());
+            // Broadcast to peers.
+            let hs =
+                msg_send::broadcast_recp(&mut self.sender, &self.committee, &self.name, recp)
+                    .await;
+            self.cancel_handlers.extend(hs);
+        }
     }
 
     // ============================================================
@@ -396,7 +484,7 @@ impl Node {
             WahooMessage::Block(b) => {
                 info!(
                     "Wahoo recv Block round={} sender={} tag={:?}",
-                    b.round, b.sender, b.tag
+                    b.round, b.author, b.wahoo_tag
                 );
                 if b.round % 2 == 0 {
                     let actions = self.pb.handle_block(b);
@@ -440,17 +528,42 @@ impl Node {
     async fn dispatch_pb_actions(&mut self, actions: Vec<PbAction>) {
         for action in actions {
             match action {
-                PbAction::SendVote { target, vote } => {
-                    let signed = self.sign_wahoo(WahooMessage::Vote(vote)).await;
-                    let h =
-                        msg_send::send(&mut self.sender, &self.committee, &target, signed).await;
+                PbAction::SendVote { target, mut vote } => {
+                    // Phase B Step 3d: sign the vote inline and send as
+                    // `PrimaryMessage::Vote`, not `SignedWahoo`.
+                    vote.signature = self
+                        .signature_service
+                        .request_signature(vote.digest())
+                        .await;
+                    let h = msg_send::send_vote(
+                        &mut self.sender,
+                        &self.committee,
+                        &target,
+                        vote,
+                    )
+                    .await;
                     self.cancel_handlers.push(h);
                 }
-                PbAction::BroadcastBlock2(block) => {
-                    let signed = self.sign_wahoo(WahooMessage::Block(block)).await;
-                    let hs =
-                        msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
-                            .await;
+                PbAction::BroadcastBlock2(block, _pbc_cert) => {
+                    // `_pbc_cert` carries the 2f+1 PBC quorum evidence
+                    // assembled by `WahooVotesAggregator`. Phase D will
+                    // route it onto the wire as `Certificate` directly;
+                    // for now we keep emitting Block2 (a synthesised
+                    // empty header carrying `wahoo_tag = PbcVoteComplete`)
+                    // but it now travels as `PrimaryMessage::Header`,
+                    // signed inline.
+                    let mut block = block;
+                    block.signature = self
+                        .signature_service
+                        .request_signature(block.id.clone())
+                        .await;
+                    let hs = msg_send::broadcast_header(
+                        &mut self.sender,
+                        &self.committee,
+                        &self.name,
+                        block,
+                    )
+                    .await;
                     self.cancel_handlers.extend(hs);
                 }
                 PbAction::OutputBlock(block) => {
@@ -465,7 +578,7 @@ impl Node {
     async fn handle_pb_output(&mut self, block: WahooBlock) {
         debug!(
             "PB delivered block round={} sender={}",
-            block.round, block.sender
+            block.round, block.author
         );
         self.try_to_update_dag(block).await;
     }
@@ -474,7 +587,7 @@ impl Node {
     async fn handle_fast_block(&mut self, block: WahooBlock) {
         let hash = block.digest();
         let round = block.round;
-        let sender = block.sender;
+        let sender = block.author;
         info!("Wahoo fast_block round={} sender={}", round, sender);
         // Fast-path blocks are inserted into DAG immediately.
         self.try_to_update_dag(block).await;
@@ -525,7 +638,6 @@ impl Node {
             let previous_hash = self.select_previous_blocks(round.saturating_sub(1));
             let block = self.new_block(round, previous_hash);
             self.block_send.insert(round);
-            self.last_block_broadcast_at = Some(Instant::now());
 
             // Benchmark log: emit one `Created B{round}({author}) -> {digest}`
             // line per batch digest carried by this block, exactly the
@@ -538,17 +650,31 @@ impl Node {
             // This puts all four protocols on the exact same accounting
             // pipeline — TPS and latency become directly comparable.
             #[cfg(feature = "benchmark")]
-            for digest in block.payload_digests.keys() {
+            for digest in block.payload.keys() {
                 info!("Created B{}({}) -> {:?}", round, self.name, digest);
             }
 
+            // Phase B Step 3d: sign the header inline so it travels as
+            // a first-class `PrimaryMessage::Header` instead of being
+            // wrapped in `SignedWahoo`. The `signature` field is set
+            // here (after `new_block` locked in the `id`); peers verify
+            // via `block.signature.verify(&block.id, &block.author)` in
+            // `WahooReceiverHandler`.
+            let mut block = block;
+            block.signature = self
+                .signature_service
+                .request_signature(block.id.clone())
+                .await;
             if round % 2 == 0 {
                 // Even round: PB phase 1 broadcast.
                 self.pb.broadcast_block(&block);
-                let signed = self.sign_wahoo(WahooMessage::Block(block.clone())).await;
-                let hs =
-                    msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
-                        .await;
+                let hs = msg_send::broadcast_header(
+                    &mut self.sender,
+                    &self.committee,
+                    &self.name,
+                    block.clone(),
+                )
+                .await;
                 self.cancel_handlers.extend(hs);
                 // Self-deliver the proposal to PB so handle_block_msg
                 // paths are exercised symmetrically with peers.
@@ -558,22 +684,26 @@ impl Node {
                 self.broadcast_elect(round).await;
             } else {
                 // Odd round: fast path, direct broadcast.
-                let signed = self.sign_wahoo(WahooMessage::Block(block.clone())).await;
-                let hs =
-                    msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed)
-                        .await;
+                // Phase C Step 4c: at the START of each EPBC phase, paper
+                // Section IV-B Algorithm 2 line 5 says every node broadcasts
+                // a RECP share for the block it delivered at the previous
+                // EPBC wave (round - 2). This lets the NEXT wave's proposer
+                // build a leader_link out of `recp_pool[round]` two rounds
+                // later. Broadcast for every delivered round-(round-2)
+                // block in our DAG so peers see the full reception fan-in.
+                if round >= 3 {
+                    self.broadcast_self_recps(round - 2).await;
+                }
+                let hs = msg_send::broadcast_header(
+                    &mut self.sender,
+                    &self.committee,
+                    &self.name,
+                    block.clone(),
+                )
+                .await;
                 self.cancel_handlers.extend(hs);
                 // Self-deliver to keep our own DAG and Ready logic in sync.
                 self.handle_fast_block(block).await;
-                // Schedule the slow-path Done fallback for this odd
-                // round. If full-membership Ready arrives within the
-                // timeout we'll hit `done_send.contains(round)` and
-                // skip; otherwise we'll Done with 2f+1 Readies.
-                let tx = self.tx_slow_path.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(SLOW_PATH_TIMEOUT_MS)).await;
-                    let _ = tx.send(round).await;
-                });
             }
         })
     }
@@ -660,22 +790,25 @@ impl Node {
         self.pending_blocks
             .entry(block.round)
             .or_insert_with(HashMap::new)
-            .insert(block.sender, block);
+            .insert(block.author, block);
     }
 
     // ============================================================
     //  DAG maintenance — `node.go::tryToUpdateDAG*`
     // ============================================================
 
-    /// `node.go::selectPreviousBlocks`.
-    fn select_previous_blocks(&self, round: Round) -> BTreeMap<PublicKey, Digest> {
+    /// `node.go::selectPreviousBlocks` — returns the digests of every
+    /// block we've accepted at the requested round. Step 3a-ii dropped the
+    /// per-author keying since the unified `Header.parents` is a plain
+    /// set; the on-the-wire shape is now identical to NovelDAG's.
+    fn select_previous_blocks(&self, round: Round) -> BTreeSet<Digest> {
         if round == 0 {
-            return BTreeMap::new();
+            return BTreeSet::new();
         }
-        let mut out = BTreeMap::new();
+        let mut out = BTreeSet::new();
         if let Some(level) = self.dag.get(&round) {
-            for (sender, block) in level {
-                out.insert(*sender, block.digest());
+            for block in level.values() {
+                out.insert(block.digest());
             }
         }
         out
@@ -685,7 +818,11 @@ impl Node {
         Box::pin(async move {
             if self.check_whether_can_add_to_dag(&block) {
                 let round = block.round;
-                let sender = block.sender;
+                let sender = block.author;
+                // Maintain the digest index BEFORE moving the block into
+                // `dag` so that subsequent parent lookups by other blocks
+                // in the same round can resolve to this one.
+                self.blocks_by_digest.insert(block.digest(), block.clone());
                 self.dag
                     .entry(round)
                     .or_insert_with(HashMap::new)
@@ -719,19 +856,24 @@ impl Node {
         })
     }
 
-    /// `node.go::checkWhetherCanAddToDAG`.
+    /// `node.go::checkWhetherCanAddToDAG` — every parent digest must be a
+    /// block we have already accepted into the dag, and its round must be
+    /// exactly `block.round - 1`.
     fn check_whether_can_add_to_dag(&self, block: &WahooBlock) -> bool {
         if block.round == 0 {
             return true;
         }
-        let parent_round = block.round - 1;
-        let level = match self.dag.get(&parent_round) {
-            Some(level) => level,
-            None => return block.previous_hash.is_empty(),
-        };
-        for sender in block.previous_hash.keys() {
-            if !level.contains_key(sender) {
-                return false;
+        let expected_parent_round = block.round - 1;
+        if block.parents.is_empty() {
+            // Empty parent set is only legal pre-genesis; matches the Go
+            // reference's behaviour of returning early when `dag[r-1]` is
+            // missing AND `previous_hash` is empty.
+            return !self.dag.contains_key(&expected_parent_round);
+        }
+        for digest in &block.parents {
+            match self.blocks_by_digest.get(digest) {
+                Some(parent) if parent.round == expected_parent_round => {}
+                _ => return false,
             }
         }
         true
@@ -810,48 +952,15 @@ impl Node {
             "Wahoo Ready count: round={} block_sender={} count={}/{}",
             round, block_sender, count, self.node_num
         );
-        // Fast path — Go reference (`wahoo/msg_handle.go::handleReadyMsg`)
-        // requires *full membership*, i.e. all n peers' Readies. With
-        // every honest peer alive this fires almost immediately and the
-        // protocol enjoys its low-latency happy case. When even one
-        // peer is missing, this branch never fires; the slow-path
-        // fallback in `handle_slow_path_timeout` (triggered by a per-
-        // odd-round timer set up in `broadcast_block`) takes over and
-        // broadcasts Done with only `quorum_num = 2f+1` Readies, which
-        // matches the even-round PB threshold and is what every other
-        // DAG-BFT protocol in this workspace uses for liveness.
-        if !DISABLE_FAST_PATH && count == self.node_num && !self.done_send.contains(&round) {
-            self.done_send.insert(round);
-            // Done.Done is left empty — see file-level note explaining the
-            // commented-out partial-sig assembly in the Go reference.
-            let done = WahooDone {
-                done_sender: self.name,
-                block_sender,
-                done: Vec::new(),
-                hash: Digest::default(),
-                round,
-            };
-            // Self-deliver.
-            self.handle_done(done.clone()).await;
-            self.broadcast_done(done).await;
-            return;
-        }
-        // Slow-path catch-up: the SLOW_PATH_TIMEOUT_MS timer for this
-        // round has already fired (round is `armed`), but at the time
-        // the timer ran we hadn't yet collected `quorum_num` Readies
-        // for our own block (typical under dummynet delay where the
-        // first Ready can arrive ~100–500 ms after broadcast). Now
-        // that another Ready has pushed us across the 2f+1 threshold,
-        // broadcast the slow-path Done immediately.
-        if block_sender == self.name
-            && self.slow_path_armed.contains(&round)
+        // Paper ALGepbc dual-path (Section IV-B):
+        //   Fast path (TF):  broadcaster receives n    Readies → Done immediately.
+        //   Slow path (TS1): broadcaster receives n-f  Readies → Done as well.
+        // n-f == quorum_num in this codebase (ceil(2n/3) >= n-f for all n,f).
+        // We only broadcast Done for our own block (block_sender == self.name).
+        let threshold_met = block_sender == self.name
             && count >= self.quorum_num
-            && !self.done_send.contains(&round)
-        {
-            info!(
-                "Wahoo slow-path Done (catch-up): round={} count={}/{}",
-                round, count, self.node_num
-            );
+            && !self.done_send.contains(&round);
+        if threshold_met {
             self.done_send.insert(round);
             let done = WahooDone {
                 done_sender: self.name,
@@ -881,28 +990,8 @@ impl Node {
             self.next_round_signaled.insert(round);
             self.round += 1;
             let next = self.round;
-            // Enforce header_delay floor between consecutive block
-            // broadcasts. If we just broadcast a block <200 ms ago,
-            // schedule the next broadcast for the remainder of the
-            // window so worker digests have a chance to accumulate
-            // (matching Proposer's `max_header_delay` behaviour).
-            let elapsed = self
-                .last_block_broadcast_at
-                .map(|t| t.elapsed())
-                .unwrap_or_else(|| Duration::from_secs(3600));
-            let header_delay = Duration::from_millis(WAHOO_HEADER_DELAY_MS);
-            if elapsed >= header_delay || self.header_delay_pending.contains(&next) {
-                self.broadcast_block(next).await;
-                self.try_to_next_round_boxed(next).await;
-            } else {
-                let wait = header_delay - elapsed;
-                self.header_delay_pending.insert(next);
-                let tx = self.tx_header_delay.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(wait).await;
-                    let _ = tx.send(next).await;
-                });
-            }
+            self.broadcast_block(next).await;
+            self.try_to_next_round_boxed(next).await;
         }
     }
 
@@ -944,10 +1033,12 @@ impl Node {
         self.chain.blocks.insert(hash, block.clone());
         info!(
             "Wahoo commit leader: round={} proposer={}",
-            round, block.sender
+            round, block.author
         );
-        let now = unix_nano_now();
-        let latency = now - block.timestamp;
+        // Step 3a-iii: `WahooBlock.timestamp` was dropped to align with
+        // `Header`. We no longer report per-block latency here; the
+        // benchmark uses the unified `Created`/`Committed` log timestamps.
+        let latency = 0i64;
         self.evaluation.push(latency);
         // Walk parents transitively.
         self.commit_ancestor_blocks(round).await;
@@ -992,9 +1083,9 @@ impl Node {
                 self.chain.blocks.insert(hash, block.clone());
                 info!(
                     "Wahoo commit ancestor leader: round={} proposer={}",
-                    r, block.sender
+                    r, block.author
                 );
-                let latency = unix_nano_now() - block.timestamp;
+                let latency = 0i64;
                 self.evaluation.push(latency);
                 let _ = self
                     .tx_committed
@@ -1032,8 +1123,8 @@ impl Node {
                 for b in level.values() {
                     if b.round % 2 == 1 {
                         if let Some(l) = self.leader.get(&b.round) {
-                            if *l == b.sender {
-                                valid.insert(b.round, b.sender);
+                            if *l == b.author {
+                                valid.insert(b.round, b.author);
                             }
                         }
                     }
@@ -1041,12 +1132,10 @@ impl Node {
                         continue;
                     }
                     let parent_round = r - 1;
-                    if let Some(parent_level) = self.dag.get(&parent_round) {
-                        for sender in b.previous_hash.keys() {
-                            if let Some(pb) = parent_level.get(sender) {
-                                let h = pb.digest();
-                                next_level.insert(h, pb.clone());
-                            }
+                    let _ = parent_round; // round is implied by the parent block; kept for parity with Go.
+                    for digest in &b.parents {
+                        if let Some(pb) = self.blocks_by_digest.get(digest) {
+                            next_level.insert(digest.clone(), pb.clone());
                         }
                     }
                 }
@@ -1098,11 +1187,11 @@ impl Node {
             for (h, b) in level.iter() {
                 if !self.chain.blocks.contains_key(h) {
                     self.chain.blocks.insert(h.clone(), b.clone());
-                    let latency = unix_nano_now() - b.timestamp;
+                    let latency = 0i64;
                     self.evaluation.push(latency);
                     // Don't re-emit the leader (already sent in
                     // try_to_commit_leader); emit other ancestors.
-                    if !(b.round == round && b.sender == leader) {
+                    if !(b.round == round && b.author == leader) {
                         let _ = self
                             .tx_committed
                             .send(CommittedBlock {
@@ -1113,14 +1202,10 @@ impl Node {
                     }
                 }
                 if r > 0 {
-                    let parent_round = r - 1;
-                    if let Some(parent_level) = self.dag.get(&parent_round) {
-                        for sender in b.previous_hash.keys() {
-                            if let Some(pb) = parent_level.get(sender) {
-                                let h = pb.digest();
-                                if !self.chain.blocks.contains_key(&h) {
-                                    next_level.insert(h, pb.clone());
-                                }
+                    for digest in &b.parents {
+                        if let Some(pb) = self.blocks_by_digest.get(digest) {
+                            if !self.chain.blocks.contains_key(digest) {
+                                next_level.insert(digest.clone(), pb.clone());
                             }
                         }
                     }
@@ -1141,7 +1226,7 @@ impl Node {
     fn new_block(
         &mut self,
         round: Round,
-        previous_hash: BTreeMap<PublicKey, Digest>,
+        parents: BTreeSet<Digest>,
     ) -> WahooBlock {
         // Pack as many pending worker-batch digests as we have. We do
         // not gate round advancement on payload size — Wahoo rounds are
@@ -1155,15 +1240,44 @@ impl Node {
         // worker-emitted `Batch ... contains ... B` lines, identical to
         // the other three protocols.
         let _ = self.batch_size;
-        WahooBlock {
-            sender: self.name,
+        // Phase B Step 3b: `WahooBlock` is now `messages::Header`. The Go
+        // `Tag = Proposal` maps to `wahoo_tag = Some(Pbc)` at even rounds
+        // (PB phase 1) and to `Some(EpbcTf)` at odd rounds (fast path).
+        let tag = if round % 2 == 0 {
+            WahooTag::Pbc
+        } else {
+            WahooTag::EpbcTf
+        };
+        // Phase C Step 4b: for odd-round EPBC headers, consult the RECP
+        // pool from the previous wave (round - 2) and build the
+        // leader-link proof per paper Section IV-B Algorithm 2 lines 6-20.
+        // `build_leader_link` returns `None` for round < 3 (no previous
+        // EPBC) or if neither the ExclusiveCommit nor NoCommit threshold
+        // is met; in those cases we emit a header without `leader_link`,
+        // which `Header::verify_wahoo_structure` accepts for EpbcTf.
+        let leader_link = if round % 2 == 1 {
+            self.build_leader_link(round)
+        } else {
+            None
+        };
+        let mut header = WahooBlock {
+            author: self.name,
             round,
-            previous_hash,
-            txs: Vec::new(),
-            payload_digests,
-            timestamp: unix_nano_now(),
-            tag: WahooBlockTag::Proposal,
-        }
+            parents,
+            payload: payload_digests,
+            wahoo_tag: Some(tag),
+            leader_link,
+            ..WahooBlock::default()
+        };
+        // Lock in the canonical digest. Phase B Step 3d (post-cutover):
+        // the Wahoo Node now sends headers as `PrimaryMessage::Header`
+        // with an inline `signature` field set in `broadcast_block` /
+        // `dispatch_pb_actions` immediately after `new_block` returns.
+        // We leave `header.signature` default here so the digest stays
+        // independent of the signature (callers fill it via
+        // `signature_service.request_signature(header.id)` next).
+        header.id = crypto::Hash::digest(&header);
+        header
     }
 }
 
@@ -1252,9 +1366,12 @@ mod tests {
 
         let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
         let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
         let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
 
-        let node = Node::new(me, committee, sig_service, 4, rx_msg, rx_workers, tx_committed);
+        let node = Node::new(
+            me, committee, sig_service, 4, rx_msg, rx_workers, rx_recp, tx_committed,
+        );
         assert_eq!(node.round, 1);
         assert_eq!(node.node_num, 4);
         // ceil(2*4/3) = 3
@@ -1280,6 +1397,7 @@ mod tests {
         let sig_service = SignatureService::new(secret);
         let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
         let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
         let (tx_committed, mut rx_committed) = tokio::sync::mpsc::channel(64);
         let mut node = Node::new(
             me,
@@ -1288,19 +1406,24 @@ mod tests {
             1,
             rx_msg,
             rx_workers,
+            rx_recp,
             tx_committed,
         );
 
         // Insert a leader block at round 1 (odd).
-        let leader_block = WahooBlock {
-            sender: leader,
-            round: 1,
-            previous_hash: BTreeMap::new(),
-            txs: vec![vec![1, 2, 3]],
-            payload_digests: BTreeMap::new(),
-            timestamp: unix_nano_now() - 1_000_000,
-            tag: WahooBlockTag::Proposal,
+        let leader_block = {
+            let mut b = WahooBlock {
+                author: leader,
+                round: 1,
+                parents: BTreeSet::new(),
+                payload: BTreeMap::new(),
+                wahoo_tag: Some(WahooTag::EpbcTf),
+                ..WahooBlock::default()
+            };
+            b.id = crypto::Hash::digest(&b);
+            b
         };
+        node.blocks_by_digest.insert(leader_block.digest(), leader_block.clone());
         node.dag
             .entry(1)
             .or_insert_with(HashMap::new)
@@ -1325,8 +1448,210 @@ mod tests {
         // Expect at least one committed block (the leader's).
         let committed = rx_committed.recv().await.expect("commit should fire");
         assert_eq!(committed.block.round, 1);
-        assert_eq!(committed.block.sender, leader);
+        assert_eq!(committed.block.author, leader);
         // Chain advanced.
         assert_eq!(node.chain.round, 1);
+    }
+
+    /// Phase C Step 4a: `handle_recp` buffers shares per (round,
+    /// block_hash, author), silently dedupes duplicates, and drops
+    /// shares from non-committee authors. `recp_shares_for` returns the
+    /// accumulated view for downstream leader-link construction.
+    #[tokio::test]
+    async fn recp_pool_accumulates_and_dedups() {
+        let (publics, secrets, committee) = make_test_committee(4);
+        let me = publics[0];
+        let mut secrets = secrets;
+        let secret = secrets.remove(0);
+        let sig_service = SignatureService::new(secret);
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            me,
+            committee,
+            sig_service,
+            1,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+
+        let block_hash = Digest([7u8; 32]);
+        let round: Round = 3;
+
+        // Three distinct committee authors submit shares for the same block.
+        for author in &publics[1..4] {
+            node.handle_recp(RecpMessage {
+                block_hash: block_hash.clone(),
+                round,
+                author: *author,
+                share: vec![1, 2, 3],
+            });
+        }
+        let shares = node
+            .recp_shares_for(round, &block_hash)
+            .expect("pool populated");
+        assert_eq!(shares.len(), 3);
+
+        // Duplicate (same author, same block, same round) is silently ignored.
+        node.handle_recp(RecpMessage {
+            block_hash: block_hash.clone(),
+            round,
+            author: publics[1],
+            share: vec![9, 9],
+        });
+        assert_eq!(
+            node.recp_shares_for(round, &block_hash).unwrap().len(),
+            3,
+            "dedup must leave count unchanged"
+        );
+
+        // Unknown authority (not in committee) is rejected.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let (unknown_pk, _) = crypto::generate_keypair(&mut rng);
+        node.handle_recp(RecpMessage {
+            block_hash: block_hash.clone(),
+            round,
+            author: unknown_pk,
+            share: vec![0],
+        });
+        assert_eq!(
+            node.recp_shares_for(round, &block_hash).unwrap().len(),
+            3,
+            "unknown-authority RECP must not enter the pool"
+        );
+
+        // Different block hash at same round lives in its own bucket.
+        let other_hash = Digest([8u8; 32]);
+        node.handle_recp(RecpMessage {
+            block_hash: other_hash.clone(),
+            round,
+            author: publics[1],
+            share: vec![4],
+        });
+        assert_eq!(
+            node.recp_shares_for(round, &other_hash).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            node.recp_shares_for(round, &block_hash).unwrap().len(),
+            3,
+            "per-block-hash isolation"
+        );
+    }
+
+    /// Phase C Step 4b: `build_leader_link` covers the three paper cases.
+    /// Test fixture is n=4, f=1, so f+1=2 and n-f=3.
+    #[tokio::test]
+    async fn build_leader_link_paper_cases() {
+        let (publics, secrets, committee) = make_test_committee(4);
+        let me = publics[0];
+        let mut secrets = secrets;
+        let secret = secrets.remove(0);
+        let sig_service = SignatureService::new(secret);
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            me,
+            committee,
+            sig_service,
+            1,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+
+        // Case A: round < 3 -> always None (first EPBC has no predecessor).
+        assert!(node.build_leader_link(1).is_none());
+        assert!(node.build_leader_link(2).is_none(), "even round -> None");
+
+        // Case B: empty pool at prev round -> None.
+        assert!(node.build_leader_link(3).is_none());
+
+        // Case C: ExclusiveCommit. Put f+1 = 2 RECPs on the same block
+        // at round 1, building a leader_link for round 3. Step 4d:
+        // shares are real BLS partial sigs over (round=1, leader_hash)
+        // so `combine_recp_shares` accepts them and produces a valid
+        // aggregate (96-byte BLS signature) inside `ExclusiveCommit`.
+        let leader_hash = Digest([0xAAu8; 32]);
+        for author in &node.authorities_sorted.clone()[0..2] {
+            let share = crypto::make_recp_share(
+                &node.authorities_sorted,
+                node.recp_threshold,
+                author,
+                1,
+                &leader_hash,
+            )
+            .expect("test authority is in committee");
+            node.handle_recp(RecpMessage {
+                block_hash: leader_hash.clone(),
+                round: 1,
+                author: *author,
+                share,
+            });
+        }
+        let link = node
+            .build_leader_link(3)
+            .expect("ExclusiveCommit threshold met");
+        assert_eq!(link.hash, Some(leader_hash.clone()));
+        assert!(matches!(link.proof, LeaderProof::ExclusiveCommit(ref b) if !b.is_empty()));
+        // Structural verification must accept this proof.
+        link.verify_structure(&node.committee)
+            .expect("ExclusiveCommit verifies");
+
+        // Case D: NoCommit. Wipe round 1 and re-populate with 3 RECPs on
+        // 3 DIFFERENT blocks (no single block has f+1). This crosses the
+        // n-f = 3 distinct-author threshold but not the f+1 same-block one.
+        node.recp_pool.remove(&1);
+        let other_hashes = [Digest([1u8; 32]), Digest([2u8; 32]), Digest([3u8; 32])];
+        for i in 0..3 {
+            node.handle_recp(RecpMessage {
+                block_hash: other_hashes[i].clone(),
+                round: 1,
+                author: publics[i],
+                share: vec![i as u8],
+            });
+        }
+        let link = node.build_leader_link(3).expect("NoCommit threshold met");
+        assert_eq!(link.hash, None);
+        match &link.proof {
+            LeaderProof::NoCommit(recps) => {
+                assert_eq!(recps.len(), 3, "one RECP per distinct author");
+                // Authors should be sorted for deterministic encoding.
+                let authors: Vec<PublicKey> = recps.iter().map(|r| r.author).collect();
+                let mut sorted = authors.clone();
+                sorted.sort();
+                assert_eq!(authors, sorted);
+            }
+            _ => panic!("expected NoCommit proof"),
+        }
+        link.verify_structure(&node.committee)
+            .expect("NoCommit verifies");
+
+        // Case E: insufficient evidence. Only 2 distinct authors total,
+        // and no block has f+1 -> None.
+        node.recp_pool.remove(&1);
+        node.handle_recp(RecpMessage {
+            block_hash: other_hashes[0].clone(),
+            round: 1,
+            author: publics[0],
+            share: vec![0],
+        });
+        node.handle_recp(RecpMessage {
+            block_hash: other_hashes[1].clone(),
+            round: 1,
+            author: publics[1],
+            share: vec![1],
+        });
+        assert!(
+            node.build_leader_link(3).is_none(),
+            "2 authors < n-f=3 and no block has f+1"
+        );
     }
 }

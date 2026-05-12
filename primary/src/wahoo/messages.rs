@@ -1,92 +1,62 @@
-// Wahoo wire-level messages, ported 1:1 from the Go reference.
+// Wahoo wire-level messages, ported from the Go reference.
 // Source of truth: `Wahoo-main/wahoo/data_struct.go` and `wahoo/msg_type.go`.
 //
-// Two notes on the port:
+// Phase B Step 3b — `WahooBlock` is now an alias for `messages::Header`.
+// All the per-field rename steps (3a-i sender→author, 3a-ii previous_hash
+// →parents, 3a-iii drop timestamp, 3a-iv drop tag) preceded this swap so
+// that the alias is a drop-in. The Go `Block.Tag ∈ {1, 2}` distinction is
+// preserved via `Header.wahoo_tag ∈ {Some(Pbc), Some(PbcVoteComplete)}`.
 //
-// * `Sender` / `*Sender` fields in the Go version are `string` node names
-//   (e.g. "node0"). NovelDAG identifies authorities by `crypto::PublicKey`,
-//   so every Go `string` sender field becomes a `PublicKey` here. This is
-//   the only mechanical deviation; semantically the field still designates
-//   "the authority that originated this message".
-//
-// * `PreviousHash map[string][]byte` (Go) → `BTreeMap<PublicKey, Digest>`
-//   (Rust). The map key is the parent block's *sender*, value is the parent
-//   block's hash, exactly as in Go (see `wahoo/node.go::selectPreviousBlocks`).
-//   We use `BTreeMap` (not `HashMap`) so serialisation and hashing are
-//   deterministic across nodes.
-//
-// * `[]byte` (Go) → `Vec<u8>` (Rust) for raw signature payloads (PartialSig,
-//   Hash, Done) — Wahoo treats these opaquely.
-//
-// The Go `Block.Tag int` is constrained to {1, 2}: Tag=1 is the real PB
-// proposal at even rounds (and the only tag for odd-round fast blocks);
-// Tag=2 is the empty "vote-completed" block PB broadcasts after collecting
-// 2f+1 votes. We model it as `WahooBlockTag` to lock the invariant.
+// `Sender` / `*Sender` fields in the Go version are `string` node names
+// (e.g. "node0"); NovelDAG identifies authorities by `crypto::PublicKey`,
+// so every Go `string` sender field becomes a `PublicKey` here.
+// `[]byte` (Go) → `Vec<u8>` (Rust) for raw signature payloads.
 
+use crate::messages::{Header, Vote, WahooTag};
 use crate::primary::Round;
-use config::WorkerId;
 use crypto::{Digest, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
-/// `Block.Tag` in `wahoo/data_struct.go`. Values mirror the Go constants
-/// implicitly assigned by `wahoo/pb.go::HandleBlockMsg` (Tag=1 / Tag=2).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[repr(u8)]
-pub enum WahooBlockTag {
-    /// Real proposal carrying transactions and parent links.
-    /// Used at even rounds (PB phase 1) and at every odd round (fast path).
-    Proposal = 1,
-    /// Empty "vote complete" block broadcast after collecting 2f+1 votes
-    /// for the matching `Proposal`. Even rounds only.
-    EmptyVoteCertificate = 2,
+/// `Block.Tag` in `wahoo/data_struct.go` collapsed onto `messages::WahooTag`:
+///
+/// * Go Tag=1 (Proposal)             → `Some(WahooTag::Pbc)` / `Some(WahooTag::EpbcTf)`
+/// * Go Tag=2 (EmptyVoteCertificate) → `Some(WahooTag::PbcVoteComplete)`
+///
+/// Helper constructors and predicates live here so PB/Node code keeps
+/// reading Go-style.
+#[allow(dead_code)]
+pub fn is_pbc_proposal(block: &WahooBlock) -> bool {
+    matches!(block.wahoo_tag, Some(WahooTag::Pbc))
 }
 
-impl Default for WahooBlockTag {
-    fn default() -> Self {
-        Self::Proposal
-    }
+pub fn is_pbc_vote_complete(block: &WahooBlock) -> bool {
+    matches!(block.wahoo_tag, Some(WahooTag::PbcVoteComplete))
 }
 
-/// `wahoo/data_struct.go::Block` (lines 3-10).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct WahooBlock {
-    /// `Sender string` → originating authority's public key.
-    pub sender: PublicKey,
-    /// `Round uint64`.
-    pub round: Round,
-    /// `PreviousHash map[string][]byte` — at least 2f+1 blocks in the
-    /// previous round, mapping their sender to their hash.
-    pub previous_hash: BTreeMap<PublicKey, Digest>,
-    /// `Txs [][]byte` — opaque batched transactions. The Wahoo state
-    /// machine never inspects this field. In NovelDAG-pipeline mode it
-    /// is left empty: real payload is carried by `payload_digests`
-    /// below so that all four DAG protocols share the same accounting.
-    pub txs: Vec<Vec<u8>>,
-    /// References to worker batches included in this block. Mirrors
-    /// `primary::messages::Header.payload`. Populated by `Node::new_block`
-    /// from digests forwarded by the worker network handler. The block
-    /// hash includes this field, so all peers see the same content for
-    /// a given (sender, round) tuple. Empty for Tag=EmptyVoteCertificate
-    /// blocks.
-    pub payload_digests: BTreeMap<Digest, WorkerId>,
-    /// `TimeStamp int64` — nanoseconds since the Unix epoch, as in
-    /// `time.Now().UnixNano()`.
-    pub timestamp: i64,
-    /// `Tag int` — see `WahooBlockTag`.
-    pub tag: WahooBlockTag,
-}
+/// Phase B Step 3b: `WahooBlock` is just `messages::Header`. The Go
+/// reference's per-field shape is preserved by the field renames in
+/// Steps 3a-i..3a-iv:
+///   author / round / parents / payload — same shape as Go.
+///   wahoo_tag — replaces Go `Tag int` (`Pbc` ≡ Tag=1, `PbcVoteComplete`
+///   ≡ Tag=2, `EpbcTf` for odd-round fast-path blocks).
+///   id / signature / parents_2 / qc / coin_share / leader_link — extra
+///   `Header` fields the Wahoo state machine simply does not populate yet
+///   (they default to None/empty and survive serialisation as zero-cost
+///   bytes). The Phase D unification activates them.
+pub type WahooBlock = Header;
 
-/// `wahoo/data_struct.go::Vote` (lines 19-23).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct WahooVote {
-    /// `VoteSender string`.
-    pub vote_sender: PublicKey,
-    /// `BlockSender string` — author of the block being voted for.
-    pub block_sender: PublicKey,
-    /// `Round uint64`.
-    pub round: Round,
-}
+/// Phase B Step 3c: `WahooVote` is now an alias for `messages::Vote`.
+/// Field mapping vs the Go reference:
+///   Go `VoteSender`  → `Vote.author`
+///   Go `BlockSender` → `Vote.origin`
+///   Go `Round`       → `Vote.round` (and `voter_round`)
+///   _extra:           `id` = digest of the voted block, used by Core in
+///                     non-Wahoo protocols and Phase D Wahoo as a strong
+///                     identifier (Go relies on (sender, round) uniqueness)
+///   _extra:           `wahoo_phase` = which of EPBC/PBC quorum bucket
+///                     this share contributes to; PB votes carry
+///                     `Some(WahooVotePhase::Pbc)`.
+pub type WahooVote = Vote;
 
 /// `wahoo/data_struct.go::Ready` (lines 26-32).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -168,13 +138,36 @@ impl WahooMessage {
     /// Vote, `msgAsserted.ReadySender` for Ready, etc.).
     pub fn sender(&self) -> PublicKey {
         match self {
-            Self::Block(b) => b.sender,
-            Self::Vote(v) => v.vote_sender,
+            Self::Block(b) => b.author,
+            Self::Vote(v) => v.author,
             Self::Elect(e) => e.sender,
             Self::Ready(r) => r.ready_sender,
             Self::Done(d) => d.done_sender,
             Self::ReVote(r) => r.revote_sender,
         }
+    }
+}
+
+/// Phase B Step 3d (DONE): `WahooBlock` / `WahooVote` now travel on the
+/// wire as first-class `PrimaryMessage::Header` / `PrimaryMessage::Vote`
+/// envelopes, signed via their inline `signature` field rather than the
+/// outer `SignedWahoo` wrapper. These `From` conversions stay as
+/// idiomatic call-site helpers — e.g. `let m: PrimaryMessage = block.into();`
+/// — even though `msg_send::broadcast_header` / `send_vote` no longer
+/// need them.
+///
+/// The reverse direction (PrimaryMessage -> WahooMessage) is trivially
+/// destructured in `WahooReceiverHandler::dispatch`; no `From` impl
+/// required.
+impl From<WahooBlock> for crate::primary::PrimaryMessage {
+    fn from(b: WahooBlock) -> Self {
+        crate::primary::PrimaryMessage::Header(b)
+    }
+}
+
+impl From<WahooVote> for crate::primary::PrimaryMessage {
+    fn from(v: WahooVote) -> Self {
+        crate::primary::PrimaryMessage::Vote(v)
     }
 }
 
@@ -214,12 +207,21 @@ mod tests {
         }
     }
 
-    /// `WahooBlockTag` discriminant values must stay locked at 1/2 to match
-    /// the Go reference (`Block.Tag = 1` / `Tag = 2`).
+    /// Phase B Step 3b retired `WahooBlockTag`. The Go Tag=1 / Tag=2
+    /// invariant is now expressed via `WahooTag::Pbc` vs
+    /// `WahooTag::PbcVoteComplete` on the unified `Header.wahoo_tag`.
     #[test]
-    fn wahoo_block_tag_discriminants() {
-        assert_eq!(WahooBlockTag::Proposal as u8, 1);
-        assert_eq!(WahooBlockTag::EmptyVoteCertificate as u8, 2);
+    fn wahoo_block_tag_round_trip() {
+        let b1 = WahooBlock {
+            wahoo_tag: Some(WahooTag::Pbc),
+            ..WahooBlock::default()
+        };
+        let b2 = WahooBlock {
+            wahoo_tag: Some(WahooTag::PbcVoteComplete),
+            ..WahooBlock::default()
+        };
+        assert!(super::is_pbc_proposal(&b1));
+        assert!(super::is_pbc_vote_complete(&b2));
     }
 
     /// Each variant's `sender()` returns the field the Go handler
@@ -229,11 +231,11 @@ mod tests {
         let pk = PublicKey::default();
         let cases: Vec<WahooMessage> = vec![
             WahooMessage::Block(WahooBlock {
-                sender: pk,
+                author: pk,
                 ..WahooBlock::default()
             }),
             WahooMessage::Vote(WahooVote {
-                vote_sender: pk,
+                author: pk,
                 ..WahooVote::default()
             }),
             WahooMessage::Elect(WahooElect {
