@@ -319,3 +319,55 @@ fn order_dag(leader: &Certificate, state: &State, gc_depth: Round) -> Vec<Certif
     ordered.sort_by_key(|x| x.round());
     ordered
 }
+
+/// Collect all uncommitted certificates with round < commit_round.
+///
+/// Once the leader's embedded-QC chain is verified, every block in rounds
+/// ≤ commit_round-2 is causally stable: the leader is unique (QC chain)
+/// and the 2f+1 quorum at commit_round anchors the round boundary.
+///
+/// For the topmost round (commit_round-1), only certificates whose digest
+/// appears in the parents of a commit_round block we already hold are
+/// committed.  Any certificate at round commit_round-1 must have received
+/// 2f+1 votes from round commit_round; by quorum intersection, at least
+/// f+1 of our commit_round blocks reference it, so this gate is always
+/// satisfied for a genuine certificate and acts as a safety net.
+/// Ordering by (round, digest) gives a deterministic total order that all
+/// honest nodes will reproduce.
+fn collect_wave_blocks(commit_round: Round, state: &State) -> Vec<Certificate> {
+    // Anchoring set: parent digests of all commit_round blocks we hold.
+    let anchored: HashSet<Digest> = state
+        .dag
+        .get(&commit_round)
+        .map(|by_auth| {
+            by_auth
+                .values()
+                .flat_map(|(_, cert)| cert.header.parents.iter().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut blocks: Vec<&Certificate> = state
+        .dag
+        .iter()
+        .filter(|(r, _)| **r < commit_round)
+        .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| cert))
+        .filter(|cert| {
+            state
+                .last_committed
+                .get(&cert.origin())
+                .map_or(true, |last_r| cert.round() > *last_r)
+        })
+        .filter(|cert| {
+            if cert.round() == commit_round - 1 {
+                anchored.contains(&cert.digest())
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Deterministic order: round first, then header digest.
+    blocks.sort_by_key(|c| (c.round(), c.header.id.clone()));
+    blocks.into_iter().cloned().collect()
+}
