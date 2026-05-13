@@ -177,8 +177,13 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             commit_round.saturating_sub(b3.round())
         );
 
-        // Recursively order the sub-DAG rooted at b3 (Section 6 last line).
-        let sequence = order_dag(&b3, &state, consensus.gc_depth);
+        let sequence = collect_wave_blocks(commit_round, &state);
+        #[cfg(feature = "benchmark")]
+        info!(
+            "DIAG_WAVE_BATCH commit_round={} wave_blocks={}",
+            commit_round,
+            sequence.len(),
+        );
 
         for x in &sequence {
             state.update(x, consensus.gc_depth);
@@ -202,6 +207,23 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         #[cfg(feature = "benchmark")]
         let leader_round_log = b3.round();
         for certificate in sequence {
+            #[cfg(feature = "benchmark")]
+            {
+                let cert_age_ms = diag_cert_received_at
+                    .get(&certificate.header.id)
+                    .map(|t| t.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
+                diag_cert_age_sum_ms += cert_age_ms;
+                diag_cert_age_samples += 1;
+                info!(
+                    "DIAG_COMMIT_LATENCY round={} author={} cert_age_ms={} commit_round={} leader_round={}",
+                    certificate.round(),
+                    certificate.origin(),
+                    cert_age_ms,
+                    commit_round,
+                    leader_round_log,
+                );
+            }
             #[cfg(feature = "benchmark")]
             if certificate.header.id == leader_id {
                 info!(
@@ -239,8 +261,13 @@ pub(crate) async fn run(consensus: &mut Consensus) {
 
         #[cfg(feature = "benchmark")]
         if commit_round % (WAVE * 5) == 0 {
+            let avg_cert_age_ms = if diag_cert_age_samples > 0 {
+                diag_cert_age_sum_ms / diag_cert_age_samples
+            } else {
+                0
+            };
             info!(
-                "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_round_no_quorum={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={}",
+                "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_round_no_quorum={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={} avg_cert_age_ms={} cert_age_samples={}",
                 commit_round,
                 diag_seen_certificates,
                 diag_commit_round_checks,
@@ -250,7 +277,12 @@ pub(crate) async fn run(consensus: &mut Consensus) {
                 diag_skip_missing_b2,
                 diag_skip_missing_b1,
                 diag_skip_qc_chain_invalid,
+                avg_cert_age_ms,
+                diag_cert_age_samples,
             );
+            // Prune old entries from the cert-age map.
+            let cutoff = commit_round.saturating_sub(consensus.gc_depth);
+            diag_cert_received_at.retain(|_k, _v| true);
         }
     }
 }
