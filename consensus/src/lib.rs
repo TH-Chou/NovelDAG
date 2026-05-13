@@ -189,7 +189,35 @@ impl Consensus {
         Some(seed)
     }
 
-    /// Returns the certificate (and digest) originated by the leader (NovelDAG version: full committee).
+    /// NovelDAG threshold coin: combines BLS coin_shares embedded in headers at
+    /// `round`. Requires f+1 valid shares, which is guaranteed by the 2f+1
+    /// quorum at `round`. Returns a deterministic u64 that all honest nodes
+    /// will reproduce, regardless of which specific 2f+1 certificates they hold.
+    pub(crate) fn threshold_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
+        let certificates = dag.get(&round)?;
+        let weight: Stake = certificates
+            .values()
+            .map(|(_, c)| self.committee.stake(&c.origin()))
+            .sum();
+        if weight < self.committee.quorum_threshold() {
+            return None;
+        }
+        let authorities: Vec<PublicKey> = self.committee.authorities.keys().cloned().collect();
+        let threshold = crypto::coin_threshold(self.committee.size());
+        let shares: Vec<(PublicKey, Vec<u8>)> = certificates
+            .values()
+            .filter_map(|(_, cert)| {
+                if cert.header.coin_share.is_empty() {
+                    None
+                } else {
+                    Some((cert.origin(), cert.header.coin_share.clone()))
+                }
+            })
+            .collect();
+        crypto::recover_coin(&authorities, threshold, round, &shares).map(|coin| coin as Round)
+    }
+
+    /// Returns the certificate (and digest) originated by the leader.
     pub(crate) fn leader<'a>(
         &self,
         round: Round,
@@ -206,9 +234,14 @@ impl Consensus {
                 keys[coin as usize % self.committee.size()]
             }
             ConsensusProtocol::CommonCoin => {
-                let coin = self
-                    .common_coin(coin_round, dag)
-                    .unwrap_or_else(|| self.round_robin_coin(round));
+                let coin = if self.dag_protocol == DagProtocol::NovelDAG {
+                    self.threshold_coin(coin_round, dag)
+                        .unwrap_or_else(|| self.round_robin_coin(round))
+                } else {
+                    self
+                        .common_coin(coin_round, dag)
+                        .unwrap_or_else(|| self.round_robin_coin(round))
+                };
                 let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                 keys.sort();
                 keys[coin as usize % self.committee.size()]
