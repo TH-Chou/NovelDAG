@@ -48,6 +48,9 @@ pub struct Proposer {
     coin_threshold: usize,
     /// Quorum threshold used by construction rules.
     quorum_threshold: usize,
+    /// Threshold for parents_2 (dual-hop) references — relaxed to f+1
+    /// because parents_2 provides causal redundancy, not commit evidence.
+    parents_2_threshold: usize,
 
     /// Receives construction signals from `Core`.
     rx_core: Receiver<ProposerSignal>,
@@ -96,6 +99,7 @@ impl Proposer {
         let coin_authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
         let coin_threshold = coin_threshold(committee.size());
         let quorum_threshold = committee.quorum_threshold() as usize;
+        let parents_2_threshold = committee.validity_threshold() as usize;
         let committee = committee.clone();
 
         tokio::spawn(async move {
@@ -123,6 +127,7 @@ impl Proposer {
                 coin_authorities,
                 coin_threshold,
                 quorum_threshold,
+                parents_2_threshold,
                 rx_core,
                 rx_workers,
                 tx_core,
@@ -325,6 +330,32 @@ impl Proposer {
         #[cfg(feature = "benchmark")]
         let mut diag_headers_created = 0u64;
 
+        // Per-round gate timing for critical-path analysis (NovelDAG).
+        // Reset whenever signal.round advances; captures the first moment
+        // each gate became satisfied within the current round.
+        #[cfg(feature = "benchmark")]
+        let mut diag_round_started_at: Option<Instant> = None;
+        #[cfg(feature = "benchmark")]
+        let mut diag_parents_1_ready_at: Option<Instant> = None;
+        #[cfg(feature = "benchmark")]
+        let mut diag_parents_2_ready_at: Option<Instant> = None;
+        #[cfg(feature = "benchmark")]
+        let mut diag_qc_ready_at: Option<Instant> = None;
+        #[cfg(feature = "benchmark")]
+        let mut diag_last_propose_at: Option<Instant> = None;
+        // Aggregate gate-wait sums over a window so we can spot the
+        // dominant critical-path gate without log-flooding.
+        #[cfg(feature = "benchmark")]
+        let mut diag_sum_parents_1_wait_ms: u64 = 0;
+        #[cfg(feature = "benchmark")]
+        let mut diag_sum_parents_2_wait_ms: u64 = 0;
+        #[cfg(feature = "benchmark")]
+        let mut diag_sum_qc_wait_ms: u64 = 0;
+        #[cfg(feature = "benchmark")]
+        let mut diag_sum_round_period_ms: u64 = 0;
+        #[cfg(feature = "benchmark")]
+        let mut diag_round_period_samples: u64 = 0;
+
         let timer = sleep(Duration::from_millis(self.max_header_delay));
         tokio::pin!(timer);
 
@@ -342,7 +373,7 @@ impl Proposer {
                     //    specified maximum inter-header delay has passed.
                     let enough_parents_1 = !self.parents_1.is_empty();
                     let enough_parents_2 =
-                        self.round < 2 || self.parents_2.len() >= self.quorum_threshold;
+                        self.round < 2 || self.parents_2.len() >= self.parents_2_threshold;
                     let enough_qc = self.round < 2 || self.last_qc.is_some();
                     let enough_digests = self.payload_size >= self.header_size;
                     let timer_expired = timer.is_elapsed();
@@ -372,6 +403,33 @@ impl Proposer {
                             diag_blocked_total_ms += started_at.elapsed().as_millis() as u64;
                         }
 
+                        // Critical-path measurement: how long each gate took
+                        // from this round's start until it became satisfied.
+                        #[cfg(feature = "benchmark")]
+                        {
+                            let now = Instant::now();
+                            if let Some(round_start) = diag_round_started_at {
+                                let p1_wait = diag_parents_1_ready_at
+                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .unwrap_or(0);
+                                let p2_wait = diag_parents_2_ready_at
+                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .unwrap_or(0);
+                                let qc_wait = diag_qc_ready_at
+                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .unwrap_or(0);
+                                diag_sum_parents_1_wait_ms += p1_wait;
+                                diag_sum_parents_2_wait_ms += p2_wait;
+                                diag_sum_qc_wait_ms += qc_wait;
+                                if let Some(last) = diag_last_propose_at {
+                                    diag_sum_round_period_ms +=
+                                        now.saturating_duration_since(last).as_millis() as u64;
+                                    diag_round_period_samples += 1;
+                                }
+                            }
+                            diag_last_propose_at = Some(now);
+                        }
+
                         // Make a new header.
                         self.make_header().await;
                         self.payload_size = 0;
@@ -379,9 +437,40 @@ impl Proposer {
                         #[cfg(feature = "benchmark")]
                         {
                             diag_headers_created += 1;
+                            // Per-round detailed timing.
+                            let round_start_ms = diag_round_started_at
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let p1_ready_ms = diag_parents_1_ready_at
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let p2_ready_ms = diag_parents_2_ready_at
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let qc_ready_ms = diag_qc_ready_at
+                                .map(|t| t.elapsed().as_millis() as u64)
+                                .unwrap_or(0);
+                            let blocked_window_ms = diag_blocked_total_ms;
+                            info!(
+                                "DIAG_PROPOSER_PER_ROUND round={} header={} round_age_ms={} p1_age_ms={} p2_age_ms={} qc_age_ms={} blocked_total_ms={} blocked_windows={} period_ms={}",
+                                self.round,
+                                diag_headers_created,
+                                round_start_ms,
+                                p1_ready_ms,
+                                p2_ready_ms,
+                                qc_ready_ms,
+                                blocked_window_ms,
+                                diag_blocked_windows,
+                                diag_last_propose_at
+                                    .map(|last| Instant::now().saturating_duration_since(last).as_millis() as u64)
+                                    .unwrap_or(0),
+                            );
+                            // Aggregate summary every 20 headers.
                             if diag_headers_created % 20 == 0 {
+                                let n = diag_headers_created.max(1);
+                                let periods = diag_round_period_samples.max(1);
                                 info!(
-                                    "DIAG_PROPOSER_GATE round={} headers={} blocked_attempts={} blocked_windows={} missing_parents_1={} missing_parents_2={} missing_qc={} blocked_total_ms={}",
+                                    "DIAG_PROPOSER_GATE round={} headers={} blocked_attempts={} blocked_windows={} missing_parents_1={} missing_parents_2={} missing_qc={} blocked_total_ms={} avg_p1_wait_ms={} avg_p2_wait_ms={} avg_qc_wait_ms={} avg_round_period_ms={}",
                                     self.round,
                                     diag_headers_created,
                                     diag_blocked_attempts,
@@ -390,6 +479,10 @@ impl Proposer {
                                     diag_missing_parents_2,
                                     diag_missing_qc,
                                     diag_blocked_total_ms,
+                                    diag_sum_parents_1_wait_ms / n,
+                                    diag_sum_parents_2_wait_ms / n,
+                                    diag_sum_qc_wait_ms / n,
+                                    diag_sum_round_period_ms / periods,
                                 );
                             }
                         }
@@ -453,17 +546,45 @@ impl Proposer {
                                 continue;
                             }
 
+                            // Round advanced: reset per-round timing.
+                            #[cfg(feature = "benchmark")]
+                            if signal.round > self.round {
+                                let now = Instant::now();
+                                diag_round_started_at = Some(now);
+                                diag_parents_1_ready_at = None;
+                                diag_parents_2_ready_at = None;
+                                diag_qc_ready_at = None;
+                            }
+
                             self.round = signal.round;
                             // Only overwrite parents if the signal carries them (non-empty).
                             // A QC-only follow-up has empty parents and only updates last_qc.
                             if !signal.parents_1.is_empty() {
                                 self.parents_1 = signal.parents_1;
+                                #[cfg(feature = "benchmark")]
+                                {
+                                    if diag_parents_1_ready_at.is_none() {
+                                        diag_parents_1_ready_at = Some(Instant::now());
+                                    }
+                                }
                             }
                             if !signal.parents_2.is_empty() {
                                 self.parents_2 = signal.parents_2;
+                                #[cfg(feature = "benchmark")]
+                                {
+                                    if diag_parents_2_ready_at.is_none() {
+                                        diag_parents_2_ready_at = Some(Instant::now());
+                                    }
+                                }
                             }
                             if signal.qc.is_some() {
                                 self.last_qc = signal.qc;
+                                #[cfg(feature = "benchmark")]
+                                {
+                                    if diag_qc_ready_at.is_none() {
+                                        diag_qc_ready_at = Some(Instant::now());
+                                    }
+                                }
                             }
                             debug!("Dag moved to round {}", self.round);
                         }
