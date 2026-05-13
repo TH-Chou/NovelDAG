@@ -3,10 +3,13 @@
 // Faithful implementation of Section 6 of the design doc.
 use crate::Consensus;
 use crate::State;
+use crypto::Digest;
 use crypto::Hash as _;
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
 use std::collections::{HashMap, HashSet};
+#[cfg(feature = "benchmark")]
+use std::time::Instant;
 
 /// Wave length (Section 6 of the design doc).
 const WAVE: Round = 4;
@@ -34,11 +37,20 @@ pub(crate) async fn run(consensus: &mut Consensus) {
     let mut diag_skip_qc_chain_invalid = 0u64;
     #[cfg(feature = "benchmark")]
     let mut diag_commits_emitted = 0u64;
+    #[cfg(feature = "benchmark")]
+    let mut diag_cert_received_at: HashMap<crypto::Digest, Instant> = HashMap::new();
+    #[cfg(feature = "benchmark")]
+    let mut diag_cert_age_sum_ms = 0u64;
+    #[cfg(feature = "benchmark")]
+    let mut diag_cert_age_samples = 0u64;
 
     while let Some(certificate) = consensus.rx_primary.recv().await {
         #[cfg(feature = "benchmark")]
         {
             diag_seen_certificates += 1;
+            diag_cert_received_at
+                .entry(certificate.header.id.clone())
+                .or_insert(std::time::Instant::now());
         }
 
         debug!("Processing {:?}", certificate);
