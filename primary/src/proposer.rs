@@ -46,8 +46,6 @@ pub struct Proposer {
     coin_authorities: Vec<PublicKey>,
     /// Threshold used for threshold-coin shares (NovelDAG only).
     coin_threshold: usize,
-    /// Quorum threshold used by construction rules.
-    quorum_threshold: usize,
     /// Threshold for parents_2 (dual-hop) references — relaxed to f+1
     /// because parents_2 provides causal redundancy, not commit evidence.
     parents_2_threshold: usize,
@@ -98,7 +96,6 @@ impl Proposer {
         let genesis_certs = Certificate::genesis(committee);
         let coin_authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
         let coin_threshold = coin_threshold(committee.size());
-        let quorum_threshold = committee.quorum_threshold() as usize;
         let parents_2_threshold = committee.validity_threshold() as usize;
         let committee = committee.clone();
 
@@ -126,7 +123,6 @@ impl Proposer {
                 max_header_delay,
                 coin_authorities,
                 coin_threshold,
-                quorum_threshold,
                 parents_2_threshold,
                 rx_core,
                 rx_workers,
