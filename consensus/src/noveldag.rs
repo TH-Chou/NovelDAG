@@ -1,6 +1,7 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-// NovelDAG consensus: 4-round wave, r-3 leader, b3→b2→b1 embedded QC chain.
-// Faithful implementation of Section 6 of the design doc.
+// NovelDAG 共识协议：4 轮一波，r-3 轮 Leader，b3→b2→b1 内嵌 QC 链。
+// 严格遵循设计文档 Section 5.1（轮结束条件）和 Section 6（提交规则）。
+
 use crate::Consensus;
 use crate::State;
 use crypto::Digest;
@@ -11,52 +12,93 @@ use std::collections::{HashMap, HashSet};
 #[cfg(feature = "benchmark")]
 use std::time::Instant;
 
-/// Wave length (Section 6 of the design doc).
+// ── 常量 ────────────────────────────────────────────────────
+
+/// Wave 长度（设计文档 Section 6）。
 const WAVE: Round = 4;
+
+// ── 诊断计数器 ──────────────────────────────────────────────
+//
+// benchmark feature 激活时记录完整诊断数据；否则为零开销占位结构，
+// 编译器会将所有 `diag.xxx` 访问优化为空操作。
+
+#[cfg(feature = "benchmark")]
+mod diag {
+    use super::*;
+    use std::time::Instant;
+
+    pub struct Diag {
+        pub seen_certificates: u64,
+        pub commit_round_checks: u64,
+        #[allow(dead_code)]
+        pub skip_round_no_quorum: u64,
+        #[allow(dead_code)]
+        pub skip_leader_unavailable: u64,
+        #[allow(dead_code)]
+        pub skip_missing_b2: u64,
+        #[allow(dead_code)]
+        pub skip_missing_b1: u64,
+        #[allow(dead_code)]
+        pub skip_qc_chain_invalid: u64,
+        #[allow(dead_code)]
+        pub commits_emitted: u64,
+        pub cert_received_at: HashMap<Digest, Instant>,
+        pub cert_age_sum_ms: u64,
+        pub cert_age_samples: u64,
+    }
+
+    impl Diag {
+        pub fn new() -> Self {
+            Self {
+                seen_certificates: 0,
+                commit_round_checks: 0,
+                skip_round_no_quorum: 0,
+                skip_leader_unavailable: 0,
+                skip_missing_b2: 0,
+                skip_missing_b1: 0,
+                skip_qc_chain_invalid: 0,
+                commits_emitted: 0,
+                cert_received_at: HashMap::new(),
+                cert_age_sum_ms: 0,
+                cert_age_samples: 0,
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+mod diag {
+    pub struct Diag;
+    impl Diag {
+        pub fn new() -> Self { Self }
+    }
+}
+
+use diag::Diag;
+
+// ── 主循环 ──────────────────────────────────────────────────
 
 pub(crate) async fn run(consensus: &mut Consensus) {
     let mut state = State::new(consensus.genesis.clone());
     let name = consensus.name;
 
-    // Track which rounds have already had their commit check run.
+    // 已触发过提交检查的轮次（防重入）。
     let mut completed_rounds: HashSet<Round> = HashSet::new();
-
-    #[cfg(feature = "benchmark")]
-    let mut diag_seen_certificates = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_commit_round_checks = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_skip_round_no_quorum = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_skip_leader_unavailable = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_skip_missing_b2 = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_skip_missing_b1 = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_skip_qc_chain_invalid = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_commits_emitted = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_cert_received_at: HashMap<crypto::Digest, Instant> = HashMap::new();
-    #[cfg(feature = "benchmark")]
-    let mut diag_cert_age_sum_ms = 0u64;
-    #[cfg(feature = "benchmark")]
-    let mut diag_cert_age_samples = 0u64;
+    let mut diag = Diag::new();
 
     while let Some(certificate) = consensus.rx_primary.recv().await {
         #[cfg(feature = "benchmark")]
         {
-            diag_seen_certificates += 1;
-            diag_cert_received_at
+            diag.seen_certificates += 1;
+            diag.cert_received_at
                 .entry(certificate.header.id.clone())
-                .or_insert(std::time::Instant::now());
+                .or_insert(Instant::now());
         }
 
-        debug!("Processing {:?}", certificate);
+        debug!("处理证书 {:?}", certificate);
         let round = certificate.round();
 
-        // Drop certificates whose origin's round is already committed.
+        // 丢弃已提交轮次的证书。
         if state
             .last_committed
             .get(&certificate.origin())
@@ -65,110 +107,47 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             continue;
         }
 
-        // Add the new certificate to the local storage.
+        // 存入本地 DAG。
         state
             .dag
             .entry(round)
             .or_insert_with(HashMap::new)
             .insert(certificate.origin(), (certificate.digest(), certificate));
 
-        // --- Wave boundary gate (Section 6) ---
-        // Only waves ending at r%4==0 can trigger a commit.
-        // The minimum viable wave ends at r=4 with leader at r-3=1.
+        // ── Wave 边界闸门 ──
         if round < WAVE || round % WAVE != 0 || completed_rounds.contains(&round) {
             continue;
         }
 
-        // --- Round-end condition (Section 5.1) ---
-        // Round r ends locally when:
-        //   (1) our own r-block exists in the dag (our QC was formed), AND
-        //   (2) we have received at least 2f+1 r-blocks.
-        let our_cert_exists = state
-            .dag
-            .get(&round)
-            .map(|by_auth| by_auth.contains_key(&name))
-            .unwrap_or(false);
-        if !our_cert_exists {
-            continue;
-        }
-        if !consensus.round_has_quorum(round, &state.dag) {
+        // ── Section 5.1 轮结束条件 ──
+        if !round_ended(round, name, consensus, &state) {
             #[cfg(feature = "benchmark")]
             {
-                diag_skip_round_no_quorum += 1;
+                diag.skip_round_no_quorum += 1;
             }
             continue;
         }
-
         completed_rounds.insert(round);
 
-        // Wave reached. Apply Section-6 commit rule.
+        // ── Wave 到达，尝试提交 ──
         let commit_round = round;
-        let leader_round = commit_round - 3;
 
         #[cfg(feature = "benchmark")]
         {
-            diag_commit_round_checks += 1;
+            diag.commit_round_checks += 1;
         }
 
-        // Nothing to do if the would-be leader was already committed in a previous wave.
-        if leader_round <= state.last_committed_round {
+        // Leader 已在前一波提交则跳过。
+        if commit_round.saturating_sub(3) <= state.last_committed_round {
             continue;
         }
 
-        let (_, leader) = match consensus.leader(leader_round, commit_round, &state.dag) {
-            Some(x) => x,
-            None => {
-                #[cfg(feature = "benchmark")]
-                {
-                    diag_skip_leader_unavailable += 1;
-                }
-                continue;
-            }
-        };
-
-        let b3 = leader.clone();
-        #[cfg(feature = "benchmark")]
-        info!(
-            "DIAG_COMMIT_CANDIDATE commit_round={} leader_round={} leader_author={}",
-            commit_round,
-            b3.round(),
-            b3.origin()
-        );
-
-        // b2 is the leader's block at r-2, b1 is the leader's block at r-1.
-        let Some(b2) =
-            consensus.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
+        // ── Section 6 提交规则：验证 Leader 的 b3→b2→b1 链 ──
+        let Some((b3, b2, b1)) = verify_leader_chain(consensus, commit_round, &state, &mut diag)
         else {
-            #[cfg(feature = "benchmark")]
-            {
-                diag_skip_missing_b2 += 1;
-            }
-            continue;
-        };
-        let Some(b1) =
-            consensus.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)
-        else {
-            #[cfg(feature = "benchmark")]
-            {
-                diag_skip_missing_b1 += 1;
-            }
             continue;
         };
 
-        // b2 must embed QC(b3), b1 must embed QC(b2); all votes in both QCs
-        // must have voter_round < commit_round.
-        if !consensus.embedded_qc_links(b2, &b3, commit_round)
-            || !consensus.embedded_qc_links(b1, b2, commit_round)
-        {
-            #[cfg(feature = "benchmark")]
-            {
-                diag_skip_qc_chain_invalid += 1;
-            }
-            debug!("Leader {:?} does not satisfy b3->b2->b1 QC chain", b3);
-            continue;
-        }
-
-        debug!("Leader {:?} satisfies Section-6 commit rule", b3);
         #[cfg(feature = "benchmark")]
         info!(
             "DIAG_COMMIT_CHAIN_OK commit_round={} leader_round={} commit_gap={}",
@@ -177,7 +156,14 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             commit_round.saturating_sub(b3.round())
         );
 
-        let sequence = collect_wave_blocks(commit_round, &state);
+        // ── 收集并提交 wave 内所有安全区块 ──
+        let sequence = collect_wave(
+            commit_round,
+            &state,
+            consensus.committee.validity_threshold() as usize,
+            &[&b3, &b2, &b1],
+        );
+
         #[cfg(feature = "benchmark")]
         info!(
             "DIAG_WAVE_BATCH commit_round={} wave_blocks={}",
@@ -185,36 +171,39 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             sequence.len(),
         );
 
-        for x in &sequence {
+        for x in sequence.iter() {
             state.update(x, consensus.gc_depth);
         }
 
-        // Conservative GC of completed_rounds: any round older than
-        // last_committed_round - gc_depth is beyond the garbage-collection
-        // horizon and can never be reached again.
-        let cutoff = state.last_committed_round.saturating_sub(consensus.gc_depth);
+        // GC completed_rounds：超出 GC 深度的轮次永不再达。
+        let cutoff = state
+            .last_committed_round
+            .saturating_sub(consensus.gc_depth);
         completed_rounds.retain(|r| *r >= cutoff);
 
-        // Log the latest committed round of every authority.
+        // 日志：每节点最新提交轮次。
         if log_enabled!(log::Level::Debug) {
             for (name, round) in &state.last_committed {
-                debug!("Latest commit of {}: Round {}", name, round);
+                debug!("最新提交 {}: Round {}", name, round);
             }
         }
 
+        // ── 输出提交序列 ──
         #[cfg(feature = "benchmark")]
         let leader_id = b3.header.id.clone();
         #[cfg(feature = "benchmark")]
         let leader_round_log = b3.round();
+
         for certificate in sequence {
             #[cfg(feature = "benchmark")]
             {
-                let cert_age_ms = diag_cert_received_at
+                let cert_age_ms = diag
+                    .cert_received_at
                     .get(&certificate.header.id)
                     .map(|t| t.elapsed().as_millis() as u64)
                     .unwrap_or(0);
-                diag_cert_age_sum_ms += cert_age_ms;
-                diag_cert_age_samples += 1;
+                diag.cert_age_sum_ms += cert_age_ms;
+                diag.cert_age_samples += 1;
                 info!(
                     "DIAG_COMMIT_LATENCY round={} author={} cert_age_ms={} commit_round={} leader_round={}",
                     certificate.round(),
@@ -247,138 +236,225 @@ pub(crate) async fn run(consensus: &mut Consensus) {
                 .tx_primary
                 .send(certificate.clone())
                 .await
-                .expect("Failed to send certificate to primary");
+                .expect("向 primary 发送证书失败");
 
             if let Err(e) = consensus.tx_output.send(certificate).await {
-                warn!("Failed to output certificate: {}", e);
+                warn!("输出证书失败: {}", e);
             }
-
-            #[cfg(feature = "benchmark")]
-            {
-                diag_commits_emitted += 1;
-            }
-        }
-
-        #[cfg(feature = "benchmark")]
-        if commit_round % (WAVE * 5) == 0 {
-            let avg_cert_age_ms = if diag_cert_age_samples > 0 {
-                diag_cert_age_sum_ms / diag_cert_age_samples
-            } else {
-                0
-            };
-            info!(
-                "DIAG_CONSENSUS_COMMIT round={} seen_certificates={} commit_checks={} commits_emitted={} skip_round_no_quorum={} skip_leader_unavailable={} skip_missing_b2={} skip_missing_b1={} skip_qc_chain_invalid={} avg_cert_age_ms={} cert_age_samples={}",
-                commit_round,
-                diag_seen_certificates,
-                diag_commit_round_checks,
-                diag_commits_emitted,
-                diag_skip_round_no_quorum,
-                diag_skip_leader_unavailable,
-                diag_skip_missing_b2,
-                diag_skip_missing_b1,
-                diag_skip_qc_chain_invalid,
-                avg_cert_age_ms,
-                diag_cert_age_samples,
-            );
-            // Prune old entries from the cert-age map.
-            let cutoff = commit_round.saturating_sub(consensus.gc_depth);
-            diag_cert_received_at.retain(|_k, _v| true);
         }
     }
 }
 
-/// Flatten the sub-DAG referenced by the committed leader. Traverses both
-/// parents (r-1) and parents_2 (r-2) edges so every block causally referenced
-/// by the leader is ordered exactly once.
-fn order_dag(leader: &Certificate, state: &State, gc_depth: Round) -> Vec<Certificate> {
-    debug!("Processing sub-dag of {:?}", leader);
-    let mut ordered = Vec::new();
-    let mut already_ordered = HashSet::new();
+// ── Section 5.1: 轮结束条件 ─────────────────────────────────
 
-    let mut buffer = vec![leader];
-    while let Some(x) = buffer.pop() {
-        debug!("Sequencing {:?}", x);
-        ordered.push(x.clone());
+/// 本地判定 round `r` 是否已结束。
+///
+/// 条件（两者必须同时满足）：
+/// 1. 本节点在 `r` 轮有自己的块（说明自己的 QC 已形成）；
+/// 2. `r` 轮至少有 2f+1 个不同作者的块。
+fn round_ended(
+    round: Round,
+    name: crypto::PublicKey,
+    consensus: &Consensus,
+    state: &State,
+) -> bool {
+    let our_cert_exists = state
+        .dag
+        .get(&round)
+        .map(|by_auth| by_auth.contains_key(&name))
+        .unwrap_or(false);
+    our_cert_exists && consensus.round_has_quorum(round, &state.dag)
+}
 
-        for parent in &x.header.parents {
-            let (digest, certificate) = match state
-                .dag
-                .get(&(x.round() - 1))
-                .map(|level| level.values().find(|(d, _)| d == parent))
-                .flatten()
-            {
-                Some(v) => v,
-                None => continue,
-            };
+// ── Section 6: Leader 链验证 ─────────────────────────────────
 
-            let mut skip = already_ordered.contains(&digest);
-            skip |= state
-                .last_committed
-                .get(&certificate.origin())
-                .map_or(false, |r| *r >= certificate.round());
-            if !skip {
-                buffer.push(certificate);
-                already_ordered.insert(digest);
+/// 验证 Section 6 提交规则所需的同作者三块链 b3→b2→b1。
+///
+/// ```text
+/// commit_round = r（r%4==0, r≥4）
+/// leader_round = r-3
+///
+/// b3 = Leader 在 leader_round 的块
+/// b2 = 同作者在 leader_round+1 的块（须携带 b3 的 QC）
+/// b1 = 同作者在 leader_round+2 的块（须携带 b2 的 QC）
+/// ```
+///
+/// 返回 `Some((b3, b2, b1))` 当且仅当：
+/// - Leader 在 `leader_round` 存在；
+/// - b2、b1 均存在且属于同作者；
+/// - b2.qc → b3 且 b1.qc → b2（含 `voter_round < commit_round` 检查）。
+#[allow(unused_variables)]
+fn verify_leader_chain(
+    consensus: &Consensus,
+    commit_round: Round,
+    state: &State,
+    diag: &mut Diag,
+) -> Option<(Certificate, Certificate, Certificate)> {
+    let leader_round = commit_round - 3;
+
+    // Step 1: 选出 Leader。
+    let (_, b3) = consensus.leader(leader_round, commit_round, &state.dag)?;
+
+    #[cfg(feature = "benchmark")]
+    info!(
+        "DIAG_COMMIT_CANDIDATE commit_round={} leader_round={} leader_author={}",
+        commit_round,
+        b3.round(),
+        b3.origin()
+    );
+
+    // Step 2: 找到同作者在后续两轮的块。
+    let Some(b2) = consensus.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
+    else {
+        #[cfg(feature = "benchmark")]
+        {
+            diag.skip_missing_b2 += 1;
+        }
+        return None;
+    };
+    let Some(b1) = consensus.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)
+    else {
+        #[cfg(feature = "benchmark")]
+        {
+            diag.skip_missing_b1 += 1;
+        }
+        return None;
+    };
+
+    // Step 3: 验证内嵌 QC 链 — b2 携带 b3 的 QC，b1 携带 b2 的 QC。
+    if !consensus.embedded_qc_links(b2, &b3, commit_round)
+        || !consensus.embedded_qc_links(b1, b2, commit_round)
+    {
+        #[cfg(feature = "benchmark")]
+        {
+            diag.skip_qc_chain_invalid += 1;
+        }
+        debug!("Leader {:?} 不满足 b3→b2→b1 QC 链", b3);
+        return None;
+    }
+
+    debug!("Leader {:?} 满足 Section-6 提交规则", b3);
+    Some((b3.clone(), b2.clone(), b1.clone()))
+}
+
+// ── 因果可达性 BFS ──────────────────────────────────────────
+
+/// 从种子集合出发，沿 `parents`（r-1 跳）和 `parents_2`（r-2 跳）反向
+/// BFS 遍历 DAG，收集所有因果可达区块的 `header.id`。
+///
+/// 种子包含：
+/// - Leader 三块链（b3, b2, b1），由内嵌 QC 链验证；
+/// - 锚定的 commit_round-1 轮块（被 ≥f+1 个 commit_round 块引用）。
+///
+/// 不在可达集合中的块是"孤儿块"——可能由拜占庭节点注入，与已验证的
+/// 提交前沿无因果联系，不在当前 wave 提交。
+fn causal_reachability(seeds: &[&Certificate], state: &State) -> HashSet<Digest> {
+    let mut reachable: HashSet<Digest> = HashSet::new();
+    let mut buffer: Vec<&Certificate> = seeds.to_vec();
+
+    while let Some(cert) = buffer.pop() {
+        // 以 header.id 去重——每个块只处理一次。
+        if !reachable.insert(cert.header.id.clone()) {
+            continue;
+        }
+
+        // 沿 parents（r-1 跳）回溯。
+        if let Some(prev_round) = cert.round().checked_sub(1) {
+            if let Some(by_round) = state.dag.get(&prev_round) {
+                for parent_digest in &cert.header.parents {
+                    if let Some((_, parent_cert)) =
+                        by_round.values().find(|(d, _)| d == parent_digest)
+                    {
+                        if !reachable.contains(&parent_cert.header.id) {
+                            buffer.push(parent_cert);
+                        }
+                    }
+                }
             }
         }
 
-        if x.round() >= 2 {
-            for parent in &x.header.parents_2 {
-                let (digest, certificate) = match state
-                    .dag
-                    .get(&(x.round() - 2))
-                    .map(|level| level.values().find(|(d, _)| d == parent))
-                    .flatten()
-                {
-                    Some(v) => v,
-                    None => continue,
-                };
-
-                let mut skip = already_ordered.contains(&digest);
-                skip |= state
-                    .last_committed
-                    .get(&certificate.origin())
-                    .map_or(false, |r| *r >= certificate.round());
-                if !skip {
-                    buffer.push(certificate);
-                    already_ordered.insert(digest);
+        // 沿 parents_2（r-2 跳，NovelDAG 专属）回溯。
+        if let Some(prev2_round) = cert.round().checked_sub(2) {
+            if let Some(by_round) = state.dag.get(&prev2_round) {
+                for parent_digest in &cert.header.parents_2 {
+                    if let Some((_, parent_cert)) =
+                        by_round.values().find(|(d, _)| d == parent_digest)
+                    {
+                        if !reachable.contains(&parent_cert.header.id) {
+                            buffer.push(parent_cert);
+                        }
+                    }
                 }
             }
         }
     }
 
-    ordered.retain(|x| x.round() + gc_depth >= state.last_committed_round);
-    ordered.sort_by_key(|x| x.round());
-    ordered
+    reachable
 }
 
-/// Collect all uncommitted certificates with round < commit_round.
+// ── Wave 提交收集 ───────────────────────────────────────────
+
+/// 收集当前 wave 中所有可安全提交的未提交证书。
 ///
-/// Once the leader's embedded-QC chain is verified, every block in rounds
-/// ≤ commit_round-2 is causally stable: the leader is unique (QC chain)
-/// and the 2f+1 quorum at commit_round anchors the round boundary.
+/// 安全性由两层互补检查保证：
 ///
-/// For the topmost round (commit_round-1), only certificates whose digest
-/// appears in the parents of a commit_round block we already hold are
-/// committed.  Any certificate at round commit_round-1 must have received
-/// 2f+1 votes from round commit_round; by quorum intersection, at least
-/// f+1 of our commit_round blocks reference it, so this gate is always
-/// satisfied for a genuine certificate and acts as a safety net.
-/// Ordering by (round, digest) gives a deterministic total order that all
-/// honest nodes will reproduce.
-fn collect_wave_blocks(commit_round: Round, state: &State) -> Vec<Certificate> {
-    // Anchoring set: parent digests of all commit_round blocks we hold.
-    let anchored: HashSet<Digest> = state
+/// 1. **锚定**（仅 commit_round-1 轮）：
+///    一个 round = commit_round-1 的证书只有当 ≥ `validity_threshold`（=f+1）
+///    个 commit_round 块在 `parents` 中引用它时才被提交。这保证所有诚实节点
+///    对该证书的存在达成共识。
+///
+/// 2. **因果可达性**（round < commit_round-1 的轮次）：
+///    更早轮次的证书只有当其 `header.id` 在提交前沿的因果可达集合中时才被
+///    提交。提交前沿 = {b3, b2, b1} ∪ {锚定的 commit_round-1 块}。
+///    这防止提交与已验证块无因果联系的孤儿块。
+///
+/// Leader 三块链被显式纳入提交前沿，因为即使拜占庭 Leader 在彼此 `parents`
+/// 中互相排除，内嵌 QC 链已验证它们的存在与唯一性。
+///
+/// 最终按 (round, digest) 字典序输出，保证所有诚实节点复现完全相同的序列。
+fn collect_wave(
+    commit_round: Round,
+    state: &State,
+    validity_threshold: usize,
+    leader_blocks: &[&Certificate],
+) -> Vec<Certificate> {
+    // ── 锚定计数：统计每个 r-1 摘要被 commit_round 块引用的次数 ──
+    let anchored: HashMap<Digest, usize> = match state.dag.get(&commit_round) {
+        Some(by_auth) => {
+            let mut counts = HashMap::new();
+            for (_, cert) in by_auth.values() {
+                for parent in &cert.header.parents {
+                    *counts.entry(parent.clone()).or_insert(0) += 1;
+                }
+            }
+            counts
+        }
+        None => HashMap::new(),
+    };
+
+    // ── 锚定的 r-1 块（引用数 ≥ f+1） ──
+    let anchored_r1: Vec<&Certificate> = state
         .dag
-        .get(&commit_round)
+        .get(&(commit_round.saturating_sub(1)))
         .map(|by_auth| {
             by_auth
                 .values()
-                .flat_map(|(_, cert)| cert.header.parents.iter().cloned())
+                .filter(|(_, cert)| {
+                    anchored
+                        .get(&cert.digest())
+                        .map_or(false, |&count| count >= validity_threshold)
+                })
+                .map(|(_, cert)| cert)
                 .collect()
         })
         .unwrap_or_default();
 
+    // ── 提交前沿 = Leader 链 + 锚定 r-1 块 ──
+    let mut seeds: Vec<&Certificate> = leader_blocks.to_vec();
+    seeds.extend(anchored_r1.iter().copied());
+    let reachable = causal_reachability(&seeds, state);
+
+    // ── 收集并过滤 ──
     let mut blocks: Vec<&Certificate> = state
         .dag
         .iter()
@@ -392,14 +468,18 @@ fn collect_wave_blocks(commit_round: Round, state: &State) -> Vec<Certificate> {
         })
         .filter(|cert| {
             if cert.round() == commit_round - 1 {
-                anchored.contains(&cert.digest())
+                // 锚定检查：必须被 ≥f+1 个 commit_round 块引用。
+                anchored
+                    .get(&cert.digest())
+                    .map_or(false, |&count| count >= validity_threshold)
             } else {
-                true
+                // 因果可达检查：必须在提交前沿的可达集合中。
+                reachable.contains(&cert.header.id)
             }
         })
         .collect();
 
-    // Deterministic order: round first, then header digest.
+    // 确定性排序：先按轮次，再按 header.id 字典序。
     blocks.sort_by_key(|c| (c.round(), c.header.id.clone()));
     blocks.into_iter().cloned().collect()
 }
