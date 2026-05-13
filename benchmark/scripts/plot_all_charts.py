@@ -53,8 +53,8 @@ PROTOS = ["narwhal", "noveldag", "wahoo"]
 HIGHLIGHTED = "noveldag"  # the protocol we showcase; pairwise charts compute its advantage over each entry in COMPARED
 COMPARED = ["narwhal", "wahoo"]  # opponents (one panel row each)
 FAULTS = [0, 1, 3]
-DELAYS = [0, 50, 100]
-RATES = list(range(60000, 331000, 30000))
+DELAYS = [0, 100]
+RATES = [60000, 130000, 200000, 270000]
 
 # Color palette - distinct per (proto, fault)
 PROTO_COLORS = {
@@ -68,7 +68,7 @@ PROTO_COLORS = {
     ("wahoo", 1): "#7B1FA2",
     ("wahoo", 3): "#4A148C",
 }
-DELAY_COLORS = {0: "#4CAF50", 50: "#FF9800", 100: "#F44336"}
+DELAY_COLORS = {0: "#4CAF50", 100: "#F44336"}
 MARKERS = {"narwhal": "s", "noveldag": "o", "wahoo": "^"}
 FAULT_MARKERS = {0: "o", 1: "s", 3: "D"}
 
@@ -97,10 +97,10 @@ for col, faults in enumerate(FAULTS):
                     x_vals.append(v)
                     y_vals.append(l)
             if x_vals:
-                ls = "-" if delay == 0 else "--" if delay == 50 else ":"
+                ls = "-" if delay == 0 else "--"
                 ax.plot(x_vals, y_vals, marker=MARKERS[proto], linestyle=ls,
                         color=PROTO_COLORS[(proto, faults)], markersize=6, linewidth=1.8,
-                        alpha=0.85, label=f"{proto} d={delay}ms",
+                        alpha=0.85, label=f"{proto} d={delay}ms (RTT={delay*2})",
                         markerfacecolor="white" if delay > 0 else PROTO_COLORS[(proto, faults)])
     ax.set_xlabel("Consensus TPS (tx/s)", fontsize=10)
     ax.set_ylabel("Consensus Latency (ms)", fontsize=10)
@@ -118,7 +118,7 @@ print("1/15: tps_vs_latency")
 # ═══════════════════════════════════════════════════════════════
 # CHART 2: TPS Advantage Heatmap — NovelDAG vs each opponent, one row per opponent
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(len(COMPARED), 3, figsize=(20, 5.5 * len(COMPARED)),
+fig, axes = plt.subplots(len(COMPARED), len(DELAYS), figsize=(14, 5.5 * len(COMPARED)),
                           sharey=True)
 if len(COMPARED) == 1:
     axes = np.array([axes])
@@ -172,7 +172,7 @@ print("2/15: heatmap_advantage")
 # ═══════════════════════════════════════════════════════════════
 # CHART 3: Small multiples - TPS vs Rate (9 subplots)
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(3, 3, figsize=(16, 13), sharex=True, sharey=False)
+fig, axes = plt.subplots(3, len(DELAYS), figsize=(12, 13), sharex=True, sharey=False)
 for row, faults in enumerate(FAULTS):
     for col, delay in enumerate(DELAYS):
         ax = axes[row][col]
@@ -187,9 +187,11 @@ for row, faults in enumerate(FAULTS):
                 ax.plot(x_vals, y_vals, marker=MARKERS[proto], linestyle="-",
                         color=PROTO_COLORS[(proto, faults)], linewidth=2, markersize=5,
                         label=proto)
+        ax.set_ylim(bottom=0)
         ax.set_title(f"f={faults}, delay={delay}ms", fontsize=10)
         ax.grid(True, alpha=0.2)
-        ax.legend(fontsize=7)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7)
         if row == 2:
             ax.set_xlabel("Injection Rate (K tx/s)", fontsize=9)
         if col == 0:
@@ -211,7 +213,7 @@ for col, faults in enumerate(FAULTS):
     x_labels = []
     bar_positions = []
     for proto_idx, proto in enumerate(PROTOS):
-        for delay_idx, delay in enumerate([50, 100]):
+        for delay_idx, delay in enumerate(DELAYS[1:]):
             degs = []
             for rate in RATES:
                 base_tps = get_val(proto, faults, 0, rate, "tps")
@@ -224,7 +226,7 @@ for col, faults in enumerate(FAULTS):
                 bar_positions.append(pos)
                 x_labels.append(f"{proto}\nd{delay}")
                 color = PROTO_COLORS[(proto, faults)]
-                alpha = 0.5 if delay == 50 else 0.9
+                alpha = 0.9
                 ax.bar(pos, mean_deg, color=color, alpha=alpha, edgecolor="white",
                        label=f"{proto} d={delay}ms" if col == 0 else "")
 
@@ -245,7 +247,7 @@ print("4/15: latency_penalty_bars")
 # ═══════════════════════════════════════════════════════════════
 # CHART 5: Bubble chart — TPS vs Latency, bubble size = rate
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 5.5))
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
     for proto in PROTOS:
@@ -292,10 +294,10 @@ for col, faults in enumerate(FAULTS):
                     x_vals.append(rate // 1000)
                     y_vals.append(v / rate * 100)
             if x_vals:
-                ls = "-" if delay == 0 else "--" if delay == 50 else ":"
+                ls = "-" if delay == 0 else "--"
                 ax.plot(x_vals, y_vals, marker=MARKERS[proto], linestyle=ls,
                         color=PROTO_COLORS[(proto, faults)], linewidth=1.8, markersize=5,
-                        label=f"{proto} d={delay}")
+                        label=f"{proto} d={delay}ms")
     ax.axhline(y=100, color="gray", linestyle=":", alpha=0.5)
     ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
     ax.set_ylabel("Efficiency (TPS / Rate %)", fontsize=10)
@@ -313,7 +315,7 @@ print("6/15: efficiency_pct")
 # ═══════════════════════════════════════════════════════════════
 # CHART 7: Latency CDF-style — latency distribution across rates
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 5.5))
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
     for proto in PROTOS:
@@ -328,10 +330,12 @@ for col, delay in enumerate(DELAYS):
             cum = np.linspace(0, 100, len(sorted_lat))
             ax.plot(sorted_lat, cum, color=PROTO_COLORS.get((proto, 0), "#333"),
                     linewidth=2.5, label=proto, drawstyle="steps-post")
+    ax.set_xlim(left=0)
     ax.set_xlabel("Latency (ms)", fontsize=10)
     ax.set_ylabel("Cumulative % of Configurations", fontsize=10)
     ax.set_title(f"delay = {delay}ms ({delay*2}ms RTT)", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=9)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=9)
     ax.grid(True, alpha=0.2)
 fig.suptitle("Latency Distribution: % of Configurations Below Threshold",
              fontsize=14, fontweight="bold")
@@ -352,9 +356,9 @@ for col, faults in enumerate(FAULTS):
         x_labels = []
         for rate in RATES:
             t0 = get_val(proto, faults, 0, rate, "tps")
-            t100 = get_val(proto, faults, 100, rate, "tps")
-            if t0 and t100 and t0 > 0:
-                slopes.append((t0 - t100) / t0 * 100)
+            t_hi = get_val(proto, faults, DELAYS[-1], rate, "tps")
+            if t0 and t_hi and t0 > 0:
+                slopes.append((t0 - t_hi) / t0 * 100)
                 x_labels.append(f"{rate//1000}")
         if slopes:
             ax.plot(range(len(slopes)), slopes, marker=MARKERS[proto],
@@ -362,12 +366,13 @@ for col, faults in enumerate(FAULTS):
                     label=proto)
     ax.set_xticks(range(len(x_labels)))
     ax.set_xticklabels(x_labels, fontsize=7, rotation=45)
-    ax.set_ylabel("TPS Loss: 0ms→100ms delay (%)", fontsize=10)
+    ax.set_ylabel(f"TPS Loss: 0ms\u2192{DELAYS[-1]}ms delay (%)", fontsize=10)
     ax.set_xlabel("Injection Rate (K tx/s)", fontsize=9)
     ax.set_title(f"f = {faults}", fontsize=12, fontweight="bold")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
     ax.grid(True, alpha=0.2)
-fig.suptitle("Throughput Sensitivity to 100ms Delay by Injection Rate",
+fig.suptitle(f"Throughput Sensitivity to {DELAYS[-1]}ms Delay by Injection Rate",
              fontsize=14, fontweight="bold")
 plt.tight_layout()
 fig.savefig(OUT_DIR / "08_delay_sensitivity.png", dpi=150, bbox_inches="tight")
@@ -379,7 +384,7 @@ print("8/15: delay_sensitivity")
 # CHART 9: Radar chart — multi-dimensional comparison at 180K
 # ═══════════════════════════════════════════════════════════════
 RATE_FOCUS = 180000
-fig, axes = plt.subplots(1, 3, figsize=(18, 6), subplot_kw=dict(polar=True))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 6), subplot_kw=dict(polar=True))
 categories = ["TPS\n(higher=better)", "Efficiency\n(higher=better)", "Latency\n(lower=better)",
               "Stability\n(higher=better)", "Peak TPS\nratio"]
 
@@ -434,7 +439,7 @@ print("9/15: radar_comparison")
 # Allow negative values (red) so wahoo's slow-path penalty under f>=1
 # is visible alongside the f=0 advantage.
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(len(COMPARED), 3, figsize=(20, 5.5 * len(COMPARED)),
+fig, axes = plt.subplots(len(COMPARED), len(DELAYS), figsize=(14, 5.5 * len(COMPARED)),
                           sharey=True)
 if len(COMPARED) == 1:
     axes = np.array([axes])
@@ -486,7 +491,7 @@ print("10/15: heatmap_latency_advantage")
 # ═══════════════════════════════════════════════════════════════
 # CHART 11: Peak TPS comparison bar chart (3 protocols)
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 5.5))
 bar_width = 0.25
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
@@ -531,7 +536,7 @@ print("11/15: peak_tps_bars")
 # CHART 12: TPS advantage vs Rate — solid lines per compared proto,
 # linestyle per fault. Each delay gets its own panel.
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 5.5))
 FAULT_LS = {0: "-", 1: "--", 3: ":"}
 for col, delay in enumerate(DELAYS):
     ax = axes[col]
@@ -554,7 +559,8 @@ for col, delay in enumerate(DELAYS):
     ax.set_xlabel("Injection Rate (K tx/s)", fontsize=10)
     ax.set_ylabel(f"{HIGHLIGHTED} TPS Advantage (%)", fontsize=10)
     ax.set_title(f"delay = {delay}ms ({delay*2}ms RTT)", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=7, ncol=2)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=7, ncol=2)
     ax.grid(True, alpha=0.2)
 fig.suptitle(f"{HIGHLIGHTED} TPS Advantage over narwhal / wahoo by Rate and Fault Count",
              fontsize=14, fontweight="bold")
@@ -646,7 +652,7 @@ print("14/15: latency_vs_delay")
 # CHART 15: Box plot — TPS distribution across runs (all rates)
 # Three boxes per fault group, one per protocol.
 # ═══════════════════════════════════════════════════════════════
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+fig, axes = plt.subplots(1, len(DELAYS), figsize=(12, 5.5))
 group_width = 0.7
 box_w = group_width / max(len(PROTOS), 1)
 for col, delay in enumerate(DELAYS):
