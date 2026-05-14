@@ -30,31 +30,30 @@ PF_RULES_FILE = "/tmp/pf_delay.conf"
 # ═══════════════════════════════════════════════════════════════
 
 
-def _sudo_password() -> str:
-    return os.environ.get("SWEEP_SUDO_PASSWORD", "")
-
-
-def _sudo_run(cmd: list[str], timeout: int = 20) -> tuple[bool, str]:
-    full = ["sudo", "-S"] + cmd
+def _run_osascript(cmd: str, timeout: int = 20) -> bool:
+    """通过 osascript GUI 提权执行需要管理员权限的命令。
+    弹出 macOS 授权对话框，用户输入密码或触控 ID 确认后执行。
+    比终端 sudo 更可靠——绕过 SIP 对 subprocess 中 sudo 的阻止。"""
+    script = f'do shell script "{cmd}" with administrator privileges'
     try:
-        proc = subprocess.run(
-            full,
-            input=_sudo_password() + "\n",
-            text=True,
+        subprocess.run(
+            ["osascript", "-e", script],
+            check=True,
             capture_output=True,
+            text=True,
             timeout=timeout,
         )
-        return (proc.returncode == 0, proc.stdout + proc.stderr)
-    except subprocess.TimeoutExpired:
-        return (False, "TIMEOUT")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"  [osascript ERROR] {e.stderr.strip()}", flush=True)
+        return False
 
 
 def _configure_delay(ms: int, verbose: bool = True) -> None:
     if ms == 0:
+        # 零延迟无需操作 dummynet——系统默认无包过滤/延迟。
         if verbose:
-            print("  Disabling dummynet...", flush=True)
-        _sudo_run(["pfctl", "-d"])
-        _sudo_run(["dnctl", "-q", "flush"])
+            print("  Delay=0ms (no dummynet setup needed)", flush=True)
         return
     if verbose:
         print(f"  Setting dummynet delay={ms}ms (RTT={ms * 2}ms)...", flush=True)
@@ -62,9 +61,9 @@ def _configure_delay(ms: int, verbose: bool = True) -> None:
         "dummynet in  proto tcp from any to 127.0.0.0/8 pipe 1\n"
         "dummynet out proto tcp from any to 127.0.0.0/8 pipe 1\n"
     )
-    _sudo_run(["pfctl", "-e"])
-    _sudo_run(["dnctl", "pipe", "1", "config", "delay", str(ms)])
-    _sudo_run(["pfctl", "-f", PF_RULES_FILE])
+    _run_osascript("pfctl -e")
+    _run_osascript(f"dnctl pipe 1 config delay {ms}")
+    _run_osascript(f"pfctl -f {PF_RULES_FILE}")
 
 
 def _kill_all() -> None:
