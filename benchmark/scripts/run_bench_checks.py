@@ -1,5 +1,6 @@
 """Pre-flight checks for local and cloud benchmark modes."""
 
+import os
 import shutil
 import subprocess
 import sys
@@ -33,17 +34,18 @@ def check_local(delays: list[int]) -> None:
             "dnctl not found. Dummynet requires macOS (or install ipfw/dummynet)."
         )
 
-    # Verify sudo works (non-interactive, password via stdin)
+    # Verify sudo works with hardcoded password (same as run_bench_pipeline)
+    sudo_pass = os.environ.get("SWEEP_SUDO_PASSWORD", "561280")
     proc = subprocess.run(
         ["sudo", "-S", "echo", "sudo_ok"],
-        input="\n",
+        input=sudo_pass + "\n",
         capture_output=True,
         text=True,
         timeout=10,
     )
     if "sudo_ok" not in proc.stdout:
         raise PreflightError(
-            "sudo with password-stdin failed. Set SWEEP_SUDO_PASSWORD env var or use --sudo-password."
+            f"sudo with password-stdin failed (check password or sudo permissions)"
         )
 
 
