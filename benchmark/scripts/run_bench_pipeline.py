@@ -46,10 +46,9 @@ def sudo_run(cmd: list[str], timeout: int = 20) -> tuple[bool, str]:
 
 def _configure_delay(ms: int, verbose: bool = True) -> None:
     if ms == 0:
+        # 零延迟无需操作 dummynet——系统默认无包过滤。
         if verbose:
-            print("  Disabling dummynet...", flush=True)
-        sudo_run(["pfctl", "-d"])
-        sudo_run(["dnctl", "-q", "flush"])
+            print("  Delay=0ms (no dummynet setup needed)", flush=True)
         return
     if verbose:
         print(f"  Setting dummynet delay={ms}ms (RTT={ms * 2}ms)...", flush=True)
