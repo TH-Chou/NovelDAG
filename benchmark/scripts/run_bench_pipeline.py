@@ -29,31 +29,27 @@ PF_RULES_FILE = "/tmp/pf_delay.conf"
 # Dummynet helpers (local mode only)
 # ═══════════════════════════════════════════════════════════════
 
+SUDO_PASSWORD = os.environ.get("SWEEP_SUDO_PASSWORD", "561280")
 
-def _run_osascript(cmd: str, timeout: int = 20) -> bool:
-    """通过 osascript GUI 提权执行需要管理员权限的命令。
-    弹出 macOS 授权对话框，用户输入密码或触控 ID 确认后执行。
-    比终端 sudo 更可靠——绕过 SIP 对 subprocess 中 sudo 的阻止。"""
-    script = f'do shell script "{cmd}" with administrator privileges'
+def sudo_run(cmd: list[str], timeout: int = 20) -> tuple[bool, str]:
+    full = ["sudo", "-S"] + cmd
     try:
-        subprocess.run(
-            ["osascript", "-e", script],
-            check=True,
+        proc = subprocess.run(
+            full, input=SUDO_PASSWORD + "\n", text=True,
             capture_output=True,
-            text=True,
             timeout=timeout,
         )
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"  [osascript ERROR] {e.stderr.strip()}", flush=True)
-        return False
+        return (proc.returncode == 0, proc.stdout + proc.stderr)
+    except subprocess.TimeoutExpired:
+        return (False, "TIMEOUT")
 
 
 def _configure_delay(ms: int, verbose: bool = True) -> None:
     if ms == 0:
-        # 零延迟无需操作 dummynet——系统默认无包过滤/延迟。
         if verbose:
-            print("  Delay=0ms (no dummynet setup needed)", flush=True)
+            print("  Disabling dummynet...", flush=True)
+        sudo_run(["pfctl", "-d"])
+        sudo_run(["dnctl", "-q", "flush"])
         return
     if verbose:
         print(f"  Setting dummynet delay={ms}ms (RTT={ms * 2}ms)...", flush=True)
@@ -61,9 +57,14 @@ def _configure_delay(ms: int, verbose: bool = True) -> None:
         "dummynet in  proto tcp from any to 127.0.0.0/8 pipe 1\n"
         "dummynet out proto tcp from any to 127.0.0.0/8 pipe 1\n"
     )
-    _run_osascript("pfctl -e")
-    _run_osascript(f"dnctl pipe 1 config delay {ms}")
-    _run_osascript(f"pfctl -f {PF_RULES_FILE}")
+    sudo_run(["pfctl", "-e"])
+    sudo_run(["dnctl", "pipe", "1", "config", "delay", str(ms)])
+    sudo_run(["pfctl", "-f", PF_RULES_FILE])
+    ok, out = sudo_run(["dnctl", "show"])
+    if ok and f"{ms} ms" in out:
+        print(f"  [OK] dummynet confirmed: {ms}ms", flush=True)
+    else:
+        print(f"  [WARN] dummynet may not be active", flush=True)
 
 
 def _kill_all() -> None:
@@ -137,9 +138,13 @@ except Exception as e:
         for line in result.stdout.splitlines():
             if line.startswith("METRICS_JSON:"):
                 return json.loads(line[len("METRICS_JSON:"):])
+        # 子进程失败时输出 stderr 以便排查
+        if result.stderr:
+            print(f"  [stderr] {result.stderr.strip()[:300]}", flush=True)
         return None
     except subprocess.TimeoutExpired:
         _kill_all()
+        print("  [TIMEOUT]", flush=True)
         return None
 
 

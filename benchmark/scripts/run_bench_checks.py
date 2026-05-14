@@ -27,23 +27,23 @@ def check_local(delays: list[int]) -> None:
     if not delays or all(d == 0 for d in delays):
         return
 
-    # Dummynet requires dnctl
+    # Dummynet requires sudo and dnctl
     if shutil.which("dnctl") is None:
         raise PreflightError(
             "dnctl not found. Dummynet requires macOS (or install ipfw/dummynet)."
         )
 
-    # Verify osascript works for admin privileges (macOS GUI prompt).
-    # Replaces terminal sudo which may be blocked by SIP.
+    # Verify sudo works (non-interactive, password via stdin)
     proc = subprocess.run(
-        ["osascript", "-e", 'do shell script "echo osa_ok" with administrator privileges'],
+        ["sudo", "-S", "echo", "sudo_ok"],
+        input="\n",
         capture_output=True,
         text=True,
         timeout=10,
     )
-    if "osa_ok" not in proc.stdout:
+    if "sudo_ok" not in proc.stdout:
         raise PreflightError(
-            "osascript admin prompt failed. Ensure Terminal has accessibility permissions."
+            "sudo with password-stdin failed. Set SWEEP_SUDO_PASSWORD env var or use --sudo-password."
         )
 
 
