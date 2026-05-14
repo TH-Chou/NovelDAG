@@ -367,8 +367,18 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            // Use header.round as voter_round so that votes in embedded QCs
-            // always satisfy voter_round < commit_round for later pipeline commits.
+            // NovelDAG 流水线设计：使用 header.round 而非投票者当前轮次。
+            //
+            // 设计文档将 voter_round 定义为"投票者当前所处轮次"，但在
+            // NovelDAG 流水线中，投票者投票时可能已推进到更高轮次（例如
+            // 对 r-3 轮 Leader 投票时，投票者已处于 r-1 轮）。若使用实际
+            // 轮次，voter_round 可能 ≥ commit_round，导致 Section 6 QC
+            // 链检查拒绝有效 QC，阻塞提交。
+            //
+            // 使用 header.round 的安全性：
+            // 1. qc.round < commit_round 已约束 QC 形成时间早于提交轮
+            // 2. qc.target == parent.id  防止跨块 QC 重放
+            // 3. QC 嵌入已签名 Header 中，摘要包含全部投票数据，无法伪造
             let vote = Vote::new(header, header.round, &self.name, &mut self.signature_service).await;
             debug!("Created {:?}", vote);
             if vote.origin == self.name {

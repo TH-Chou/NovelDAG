@@ -282,9 +282,21 @@ impl Consensus {
         let Some(qc) = child.header.qc.as_ref() else {
             return false;
         };
-        qc.target == parent.header.id
+        let structural_ok = qc.target == parent.header.id
             && qc.round == parent.round()
             && qc.round < commit_round
-            && qc.votes.iter().all(|vote| vote.voter_round < commit_round)
+            && qc.votes.iter().all(|vote| vote.voter_round < commit_round);
+        if structural_ok {
+            // 防御深度：QC 投票权重应在 Primary 层已验证 ≥ 2f+1。
+            // debug_assert! 在 release 构建中被编译器移除，零运行时开销。
+            // 空投票的 QC 来自合成 peer 证书（maybe_synthesize_peer_cert）
+            // 或测试夹具，此时跳过权重检查。
+            debug_assert!(
+                qc.votes.is_empty() || qc.votes.iter().map(|v| self.committee.stake(&v.author)).sum::<Stake>()
+                    >= self.committee.quorum_threshold(),
+                "embedded QC lacks quorum weight"
+            );
+        }
+        structural_ok
     }
 }
