@@ -429,7 +429,7 @@ fn collect_wave(
     // ── 锚定的 r-1 块（引用数 ≥ f+1） ──
     let anchored_r1: Vec<&Certificate> = state
         .dag
-        .get(&(commit_round.saturating_sub(1)))
+        .get(&(commit_round - 1))
         .map(|by_auth| {
             by_auth
                 .values()
@@ -446,7 +446,14 @@ fn collect_wave(
     // ── 提交前沿 = Leader 链 + 锚定 r-1 块 ──
     let mut seeds: Vec<&Certificate> = leader_blocks.to_vec();
     seeds.extend(anchored_r1.iter().copied());
-    let reachable = causal_reachability(&seeds, state);
+    // 构建反向索引：Digest → &Certificate，使 causal_reachability O(1) 查找。
+    let index: HashMap<Digest, &Certificate> = state
+        .dag
+        .iter()
+        .filter(|(r, _)| **r < commit_round)
+        .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| (cert.digest(), cert)))
+        .collect();
+    let reachable = causal_reachability(&seeds, &index, &state.last_committed);
 
     // ── 收集并过滤 ──
     let mut blocks: Vec<&Certificate> = state
