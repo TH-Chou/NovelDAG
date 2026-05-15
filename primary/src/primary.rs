@@ -9,7 +9,6 @@ use crate::messages::{Certificate, Header, RecpMessage, Vote};
 use crate::payload_receiver::PayloadReceiver;
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
-use crate::wahoo::{messages::SignedWahoo, Node as WahooNode, WahooMessage};
 use async_trait::async_trait;
 use bytes::Bytes;
 use config::{Committee, DagProtocol, KeyPair, Parameters, WorkerId};
@@ -41,13 +40,6 @@ pub enum PrimaryMessage {
     /// over the bincode-encoded `WahooMessage`, mirroring Go's
     /// `MsgWithSig{Msg, Sig}` triple. Only delivered when the running
     /// `dag_protocol` is `DagProtocol::Wahoo`.
-    Wahoo(SignedWahoo),
-    /// Wahoo paper Section IV-B Algorithm 2 line 5: ⟨RECP, h, ρ⟩.
-    /// Broadcast at the start of every EPBC phase to provide the
-    /// reception-assertion shares that drive the next wave's
-    /// `LeaderLink::NoCommit` proof. Defined here in Phase A so that
-    /// the wire format is in place ahead of the Wahoo-on-Core merge.
-    /// No producer/consumer is wired yet.
     Recp(RecpMessage),
 }
 
@@ -265,7 +257,7 @@ impl Primary {
         // `leader_link`.
         let (tx_recp, rx_recp) = channel::<RecpMessage>(CHANNEL_CAPACITY);
         let (tx_committed, mut rx_committed) =
-            channel::<crate::wahoo::CommittedBlock>(CHANNEL_CAPACITY);
+            
         // Same shape as the channels created in `Primary::spawn` for the
         // other three protocols. Wahoo only consumes our own batches
         // (others' batches are still drained so workers don't deadlock
@@ -449,11 +441,7 @@ impl MessageHandler for WahooReceiverHandler {
                         sender
                     );
                     return Ok(());
-                }
-                self.tx_wahoo_messages
-                    .send(signed.msg)
-                    .await
-                    .expect("Wahoo channel closed");
+                };
             }
             // Phase B Step 3d: Wahoo PB/EPBC blocks now arrive as
             // first-class `PrimaryMessage::Header`. The header is
@@ -501,11 +489,7 @@ impl MessageHandler for WahooReceiverHandler {
                             return Ok(());
                         }
                     }
-                }
-                self.tx_wahoo_messages
-                    .send(WahooMessage::Block(h))
-                    .await
-                    .expect("Wahoo channel closed");
+                };
             }
             PrimaryMessage::Vote(v) => {
                 if self.committee.stake(&v.author) == 0 {
@@ -522,11 +506,7 @@ impl MessageHandler for WahooReceiverHandler {
                         v.round
                     );
                     return Ok(());
-                }
-                self.tx_wahoo_messages
-                    .send(WahooMessage::Vote(v))
-                    .await
-                    .expect("Wahoo channel closed");
+                };
             }
             PrimaryMessage::Recp(recp) => {
                 // Paper Section IV-B Algorithm 2 line 5 envelope. Filter

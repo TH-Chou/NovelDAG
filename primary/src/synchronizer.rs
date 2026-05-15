@@ -17,11 +17,8 @@ pub struct Synchronizer {
     name: PublicKey,
     /// The committee information (used for re-verification of stored certificates).
     committee: Committee,
-<<<<<<< HEAD
-=======
     /// Which DAG protocol variant is running.
     dag_protocol: DagProtocol,
->>>>>>> unify-three-protocols
     /// The persistent storage.
     store: Store,
     /// Send commands to the `HeaderWaiter`.
@@ -51,10 +48,7 @@ impl Synchronizer {
         Self {
             name,
             committee: committee.clone(),
-<<<<<<< HEAD
-=======
             dag_protocol,
->>>>>>> unify-three-protocols
             store,
             tx_header_waiter,
             tx_certificate_waiter,
@@ -141,11 +135,7 @@ impl Synchronizer {
                     let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
                     // Re-verify certificates read from storage to guard against
                     // disk corruption or stray unverified data.
-<<<<<<< HEAD
-                    certificate.verify(&self.committee)?;
-=======
                     certificate.verify(&self.committee, self.dag_protocol)?;
->>>>>>> unify-three-protocols
                     self.certificate_cache.insert(digest, certificate.clone());
                     parents_1.push(certificate);
                 }
@@ -153,37 +143,6 @@ impl Synchronizer {
             }
         }
 
-<<<<<<< HEAD
-        let mut read_parents_2 = Vec::new();
-        for digest in &header.parents_2 {
-            if let Some(genesis) = self
-                .genesis
-                .iter()
-                .find(|(x, _)| x == digest)
-                .map(|(_, x)| x)
-            {
-                parents_2.push(genesis.clone());
-                continue;
-            }
-            // Check in-memory cache before hitting RocksDB.
-            if let Some(certificate) = self.certificate_cache.get(digest) {
-                parents_2.push(certificate.clone());
-                continue;
-            }
-
-            let mut store = self.store.clone();
-            let digest = digest.clone();
-            read_parents_2.push(async move { (digest.clone(), store.read(digest.to_vec()).await) });
-        }
-
-        for (digest, result) in join_all(read_parents_2).await {
-            match result? {
-                Some(certificate_bytes) => {
-                    let certificate: Certificate = bincode::deserialize(&certificate_bytes)?;
-                    certificate.verify(&self.committee)?;
-                    self.certificate_cache.insert(digest, certificate.clone());
-                    parents_2.push(certificate);
-=======
         // Second-hop parents are only required for NovelDAG.
         if self.dag_protocol == DagProtocol::NovelDAG {
             let mut read_parents_2 = Vec::new();
@@ -217,7 +176,6 @@ impl Synchronizer {
                         parents_2.push(certificate);
                     }
                     None => missing.push(digest),
->>>>>>> unify-three-protocols
                 }
             }
         }

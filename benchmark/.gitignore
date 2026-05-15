@@ -7,10 +7,6 @@ plots/
 
 # Benchmark runtime artifacts
 .db-*
-<<<<<<< HEAD
-logs/
-=======
->>>>>>> unify-three-protocols
 .node-*.json
 .committee.json
 .parameters.json
