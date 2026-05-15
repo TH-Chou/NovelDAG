@@ -1,4 +1,4 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
+// TJU BLOCKCHAIN RESEARCH
 // NovelDAG 共识协议：4 轮一波，r-3 轮 Leader，b3→b2→b1 内嵌 QC 链。
 // 严格遵循设计文档 Section 5.1（轮结束条件）和 Section 6（提交规则）。
 
@@ -7,7 +7,7 @@ use crate::State;
 use crypto::Digest;
 use crypto::Hash as _;
 use log::{debug, info, log_enabled, warn};
-use primary::{Certificate, Round};
+use primary::{Certificate, PublicKey, Round};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "benchmark")]
 use std::time::Instant;
@@ -450,7 +450,7 @@ fn collect_wave(
     let index: HashMap<Digest, &Certificate> = state
         .dag
         .iter()
-        .filter(|(r, _)| **r < commit_round)
+        .filter(|(r, _)| **r >= state.last_committed_round && **r < commit_round)
         .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| (cert.digest(), cert)))
         .collect();
     let reachable = causal_reachability(&seeds, &index, &state.last_committed);
@@ -459,7 +459,7 @@ fn collect_wave(
     let mut blocks: Vec<&Certificate> = state
         .dag
         .iter()
-        .filter(|(r, _)| **r < commit_round)
+        .filter(|(r, _)| **r >= state.last_committed_round && **r < commit_round)
         .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| cert))
         .filter(|cert| {
             state
