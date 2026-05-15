@@ -139,10 +139,9 @@ impl Consensus {
 
     async fn run(&mut self) {
         match self.dag_protocol {
-            DagProtocol::Narwhal => narwhal::run(self).await,
-            DagProtocol::Bullshark => bullshark::run(self).await,
+            
             DagProtocol::NovelDAG => noveldag::run(self).await,
-
+            
         }
     }
 

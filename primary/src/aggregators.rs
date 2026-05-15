@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crate::error::{DagError, DagResult};
-use crate::messages::{Certificate, Header, Vote, WahooTag, WahooVotePhase};
+use crate::messages::{Certificate, Header, Vote};
 use config::{Committee, Stake};
 use crypto::{Digest, Hash as _, PublicKey};
 use std::collections::HashSet;
@@ -153,26 +153,9 @@ pub enum WahooQuorum {
     Pbc(Certificate),
 }
 
-#[allow(dead_code)]
-impl WahooQuorum {
-    pub fn tag(&self) -> WahooTag {
-        match self {
-            WahooQuorum::Ts1(_) => WahooTag::EpbcTs1,
-            WahooQuorum::Ts2(_) => WahooTag::EpbcTs2,
-            WahooQuorum::Tf(_) => WahooTag::EpbcTf,
-            WahooQuorum::Pbc(_) => WahooTag::Pbc,
-        }
-    }
 
-    pub fn into_inner(self) -> Certificate {
-        match self {
-            WahooQuorum::Ts1(c)
-            | WahooQuorum::Ts2(c)
-            | WahooQuorum::Tf(c)
-            | WahooQuorum::Pbc(c) => c,
-        }
-    }
-}
+
+
 
 /// Per-phase vote bucket: dedup by `vote.author`, sum stake, emit on
 /// threshold. Each bucket latches `done` after firing so duplicate
@@ -219,101 +202,6 @@ pub struct WahooVotesAggregator {
     pbc: PhaseBucket,
 }
 
-#[allow(dead_code)]
-impl WahooVotesAggregator {
-    pub fn new() -> Self {
-        Self {
-            ts1: PhaseBucket::default(),
-            ts2: PhaseBucket::default(),
-            tf: PhaseBucket::default(),
-            pbc: PhaseBucket::default(),
-        }
-    }
 
-    /// Append a Wahoo vote and return a quorum certificate if its phase just
-    /// crossed its threshold.
-    ///
-    /// `committee.total_stake()` is computed by summing every authority's
-    /// stake; for Wahoo's `Tf` (fast path) we treat this as the n-of-n
-    /// threshold (no Byzantine fault tolerance — every node must sign).
-    pub fn append(
-        &mut self,
-        vote: Vote,
-        committee: &Committee,
-        header: &Header,
-    ) -> DagResult<Option<WahooQuorum>> {
-        let phase = vote
-            .wahoo_phase
-            .ok_or_else(|| DagError::MalformedHeader(vote.id.clone()))?;
-        let quorum = committee.quorum_threshold();
-        let total: Stake = committee
-            .authorities
-            .keys()
-            .map(|name| committee.stake(name))
-            .sum();
 
-        let votes_opt = match phase {
-            WahooVotePhase::Ts1 => self.ts1.append(vote, committee, quorum)?,
-            WahooVotePhase::Ts2 => self.ts2.append(vote, committee, quorum)?,
-            WahooVotePhase::Tf => self.tf.append(vote, committee, total)?,
-            WahooVotePhase::Pbc => self.pbc.append(vote, committee, quorum)?,
-        };
 
-        Ok(votes_opt.map(|votes| {
-            let cert = Certificate {
-                header: header.clone(),
-                votes,
-            };
-            match phase {
-                WahooVotePhase::Ts1 => WahooQuorum::Ts1(cert),
-                WahooVotePhase::Ts2 => WahooQuorum::Ts2(cert),
-                WahooVotePhase::Tf => WahooQuorum::Tf(cert),
-                WahooVotePhase::Pbc => WahooQuorum::Pbc(cert),
-            }
-        }))
-    }
-
-    /// Returns true if the TF (fast-path n-of-n) quorum has already fired.
-    /// The Wahoo core can use this to skip emitting the TS1/TS2 slow-path
-    /// certs once a strictly stronger TF cert is in flight.
-    pub fn tf_done(&self) -> bool {
-        self.tf.done
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::messages::Header;
-    use crypto::PublicKey;
-
-    fn dummy_vote(author: PublicKey, phase: WahooVotePhase) -> Vote {
-        Vote {
-            id: Digest::default(),
-            round: 1,
-            voter_round: 1,
-            origin: PublicKey::default(),
-            author,
-            wahoo_phase: Some(phase),
-            signature: Default::default(),
-        }
-    }
-
-    // NB: a full multi-authority test fixture lives in `tests/core_tests.rs`
-    // and is exercised once Phase B step 2 wires the aggregator into Core.
-    // This unit test just verifies the AuthorityReuse guard and the latch.
-    #[test]
-    fn duplicate_authority_rejected() {
-        let header = Header::default();
-        let mut agg = WahooVotesAggregator::new();
-        let committee = crate::common::committee();
-        let author = *committee.authorities.keys().next().unwrap();
-        let v1 = dummy_vote(author, WahooVotePhase::Pbc);
-        let v2 = dummy_vote(author, WahooVotePhase::Pbc);
-        assert!(agg.append(v1, &committee, &header).is_ok());
-        assert!(matches!(
-            agg.append(v2, &committee, &header),
-            Err(DagError::AuthorityReuse(_))
-        ));
-    }
-}

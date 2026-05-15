@@ -327,23 +327,7 @@ impl Core {
                         );
                     }
                 }
-                DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
-                    // Single-parent validation: r-1 parents must form a quorum.
-                    let mut stake_1 = 0;
-                    for x in &parents_1 {
-                        ensure!(
-                            x.round() + 1 == header.round,
-                            DagError::MalformedHeader(header.id.clone())
-                        );
-                        stake_1 += self.committee.stake(&x.origin());
-                    }
-                    if header.round > 0 {
-                        ensure!(
-                            stake_1 >= self.committee.quorum_threshold(),
-                            DagError::HeaderRequiresQuorum(header.id.clone())
-                        );
-                    }
-                }
+                
             }
         }
 
@@ -515,56 +499,8 @@ impl Core {
                     self.send_qc_signal(&certificate).await;
                 }
             }
-            DagProtocol::Narwhal => {
-                // Store to disk for crash recovery.
-                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
-                self.store.write(certificate.digest().to_vec(), bytes).await;
-
-                if let Some(parents) = self
-                    .certificates_aggregators
-                    .entry(certificate.round())
-                    .or_insert_with(|| Box::new(CertificatesAggregator::new()))
-                    .append(certificate.clone(), &self.committee)?
-                {
-                    let signal = ProposerSignal {
-                        round: certificate.round() + 1,
-                        parents_1: parents,
-                        parents_2: Vec::new(),
-                        qc: None,
-                        certificates_1: Vec::new(),
-                    };
-                    self.tx_proposer
-                        .send(signal)
-                        .await
-                        .expect("Failed to send certificate");
-                }
-            }
-            DagProtocol::Bullshark | DagProtocol::Wahoo => {
-                // Store to disk for crash recovery.
-                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
-                self.store.write(certificate.digest().to_vec(), bytes).await;
-
-                if let Some(parents) = self
-                    .certificates_vec_aggregators
-                    .entry(certificate.round())
-                    .or_insert_with(|| Box::new(CertificatesVecAggregator::new()))
-                    .append(certificate.clone(), &self.committee)?
-                {
-                    let parents_1: Vec<Digest> =
-                        parents.iter().map(|c| c.digest()).collect();
-                    let signal = ProposerSignal {
-                        round: certificate.round(),
-                        parents_1,
-                        parents_2: Vec::new(),
-                        qc: None,
-                        certificates_1: parents,
-                    };
-                    self.tx_proposer
-                        .send(signal)
-                        .await
-                        .expect("Failed to send certificate");
-                }
-            }
+            
+            
         }
 
         // Send it to the consensus layer.

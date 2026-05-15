@@ -61,11 +61,9 @@ pub type WorkerId = u32;
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DagProtocol {
-    Narwhal,
-    Bullshark,
+
     #[serde(rename = "noveldag")]
     NovelDAG,
-    Wahoo,
 }
 
 impl Default for DagProtocol {
@@ -77,10 +75,7 @@ impl Default for DagProtocol {
 impl DagProtocol {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Narwhal => "narwhal",
-            Self::Bullshark => "bullshark",
             Self::NovelDAG => "noveldag",
-            Self::Wahoo => "wahoo",
         }
     }
 }

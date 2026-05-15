@@ -348,88 +348,8 @@ impl Header {
                     );
                 }
             }
-            DagProtocol::Narwhal | DagProtocol::Bullshark => {
-                // Narwhal/Bullshark headers only use the parents field;
-                // parents_2 and qc are allowed but not required.
-                if self.round == 0 {
-                    ensure!(
-                        self.parents.is_empty() && self.parents_2.is_empty(),
-                        DagError::MalformedHeader(self.id.clone())
-                    );
-                } else {
-                    ensure!(
-                        !self.parents.is_empty(),
-                        DagError::MalformedHeader(self.id.clone())
-                    );
-                }
-                // Phase A invariant: only Wahoo headers may carry wahoo_tag
-                // or leader_link.
-                ensure!(
-                    self.wahoo_tag.is_none() && self.leader_link.is_none(),
-                    DagError::MalformedHeader(self.id.clone())
-                );
-            }
-            DagProtocol::Wahoo => {
-                // Wahoo wave structure (paper Section IV):
-                //   round 0         : genesis (empty parents, no tag/link)
-                //   round odd ≥ 1   : EPBC phase of wave w = (round+1)/2
-                //                     wahoo_tag ∈ {EpbcTs1, EpbcTs2, EpbcTf}
-                //                     leader_link is optional (only required by
-                //                     paper Algorithm 2 for wave ≥ 2; current
-                //                     transitional code may leave it as None)
-                //   round even ≥ 2  : PBC phase of wave w = round/2
-                //                     wahoo_tag = Pbc
-                //                     coin_share carries the leader-election
-                //                     partial signature (same field NovelDAG
-                //                     re-uses for its threshold coin)
-                //
-                // During the Phase B migration, tags may legitimately be `None`
-                // on headers produced by transitional code paths. We therefore
-                // accept `None` *and* the correct tag for the round parity,
-                // rejecting only outright wrong tags (e.g. EpbcTs1 at an even
-                // round). Once Phase D lands, tags become mandatory.
-                if self.round == 0 {
-                    ensure!(
-                        self.parents.is_empty()
-                            && self.parents_2.is_empty()
-                            && self.wahoo_tag.is_none()
-                            && self.leader_link.is_none(),
-                        DagError::MalformedHeader(self.id.clone())
-                    );
-                } else {
-                    ensure!(
-                        !self.parents.is_empty(),
-                        DagError::MalformedHeader(self.id.clone())
-                    );
-                    let is_epbc_round = self.round % 2 == 1;
-                    if let Some(tag) = self.wahoo_tag {
-                        let tag_matches_round = match tag {
-                            WahooTag::EpbcTs1 | WahooTag::EpbcTs2 | WahooTag::EpbcTf => {
-                                is_epbc_round
-                            }
-                            WahooTag::Pbc | WahooTag::PbcVoteComplete => !is_epbc_round,
-                        };
-                        ensure!(
-                            tag_matches_round,
-                            DagError::MalformedHeader(self.id.clone())
-                        );
-                    }
-                    // `leader_link` is only meaningful on EPBC (odd-round)
-                    // headers. PBC headers carry the leader choice in
-                    // `coin_share`, not in `leader_link`.
-                    if !is_epbc_round {
-                        ensure!(
-                            self.leader_link.is_none(),
-                            DagError::MalformedHeader(self.id.clone())
-                        );
-                    }
-                    // Structural validation of the link itself.
-                    if let Some(link) = &self.leader_link {
-                        link.verify_structure(committee)
-                            .map_err(|_| DagError::MalformedHeader(self.id.clone()))?;
-                    }
-                }
-            }
+            
+            
         }
 
         // Ensure the authority has voting rights.
@@ -849,60 +769,9 @@ mod wahoo_verify_tests {
         s
     }
 
-    #[test]
-    fn round_0_must_have_no_wahoo_fields() {
-        let committee = committee();
-        let h = make_wahoo_header(0, None, None, Vec::new(), BTreeSet::new());
-        assert!(h.verify(&committee, DagProtocol::Wahoo).is_ok());
 
-        let h = make_wahoo_header(0, Some(WahooTag::EpbcTs1), None, Vec::new(), BTreeSet::new());
-        assert!(h.verify(&committee, DagProtocol::Wahoo).is_err());
-    }
 
-    #[test]
-    fn odd_round_accepts_epbc_tags() {
-        let committee = committee();
-        for tag in [WahooTag::EpbcTs1, WahooTag::EpbcTs2, WahooTag::EpbcTf] {
-            let h = make_wahoo_header(1, Some(tag), None, Vec::new(), one_parent());
-            assert!(
-                h.verify(&committee, DagProtocol::Wahoo).is_ok(),
-                "EPBC tag {:?} must be valid at odd round",
-                tag
-            );
-        }
-    }
 
-    #[test]
-    fn odd_round_rejects_pbc_tag() {
-        let committee = committee();
-        let h = make_wahoo_header(3, Some(WahooTag::Pbc), None, Vec::new(), one_parent());
-        assert!(h.verify(&committee, DagProtocol::Wahoo).is_err());
-    }
-
-    #[test]
-    fn even_round_accepts_pbc_tag_and_rejects_epbc_tags() {
-        let committee = committee();
-        let h = make_wahoo_header(2, Some(WahooTag::Pbc), None, Vec::new(), one_parent());
-        assert!(h.verify(&committee, DagProtocol::Wahoo).is_ok());
-
-        for tag in [WahooTag::EpbcTs1, WahooTag::EpbcTs2, WahooTag::EpbcTf] {
-            let h = make_wahoo_header(2, Some(tag), None, Vec::new(), one_parent());
-            assert!(h.verify(&committee, DagProtocol::Wahoo).is_err());
-        }
-    }
-
-    #[test]
-    fn even_round_rejects_leader_link() {
-        let committee = committee();
-        let h = make_wahoo_header(
-            2,
-            Some(WahooTag::Pbc),
-            Some(LeaderLink::default()),
-            Vec::new(),
-            one_parent(),
-        );
-        assert!(h.verify(&committee, DagProtocol::Wahoo).is_err());
-    }
 
     #[test]
     fn no_commit_link_requires_n_minus_f_recps() {
@@ -979,15 +848,5 @@ mod wahoo_verify_tests {
         assert!(link.verify_structure(&committee).is_err());
     }
 
-    #[test]
-    fn narwhal_rejects_wahoo_fields() {
-        let committee = committee();
-        // A Narwhal-protocol header must NOT carry wahoo_tag/leader_link
-        // even if round-parity rules would otherwise permit them.
-        let h = make_wahoo_header(1, Some(WahooTag::EpbcTs1), None, Vec::new(), one_parent());
-        assert!(h.verify(&committee, DagProtocol::Narwhal).is_err());
-
-        let h = make_wahoo_header(1, None, Some(LeaderLink::default()), Vec::new(), one_parent());
-        assert!(h.verify(&committee, DagProtocol::Narwhal).is_err());
-    }
+ 
 }

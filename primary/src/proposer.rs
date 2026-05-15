@@ -12,9 +12,7 @@ use std::collections::BTreeSet;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
-#[cfg(test)]
-#[path = "tests/proposer_tests.rs"]
-pub mod proposer_tests;
+
 
 /// The proposer creates new headers and send them to the core for broadcasting and further processing.
 #[derive(Clone, Debug)]
@@ -101,17 +99,11 @@ impl Proposer {
 
         tokio::spawn(async move {
             // Bullshark starts at round 0; Narwhal/NovelDAG start at round 1.
-            let initial_round = if dag_protocol == DagProtocol::Bullshark {
-                0
-            } else {
-                1
-            };
+            let initial_round = 1;
+           
             // Bullshark stores genesis certificates; Narwhal/NovelDAG store digests.
-            let initial_parent_certs = if dag_protocol == DagProtocol::Bullshark {
-                genesis_certs
-            } else {
-                Vec::new()
-            };
+            let initial_parent_certs = genesis_certs;
+            
 
             Self {
                 name,
@@ -490,48 +482,7 @@ impl Proposer {
                     }
                 }
 
-                DagProtocol::Narwhal => {
-                    let enough_parents = !self.parents_1.is_empty();
-                    let enough_digests = self.payload_size >= self.header_size;
-                    let timer_expired = timer.is_elapsed();
-                    if (timer_expired || enough_digests) && enough_parents {
-                        self.make_header().await;
-                        self.payload_size = 0;
-
-                        let deadline =
-                            Instant::now() + Duration::from_millis(self.max_header_delay);
-                        timer.as_mut().reset(deadline);
-                    }
-                }
-
-                DagProtocol::Bullshark | DagProtocol::Wahoo => {
-                    let enough_parents = !self.last_parent_certs.is_empty();
-                    let enough_digests = self.payload_size >= self.header_size;
-                    let timer_expired = timer.is_elapsed();
-
-                    if (timer_expired || (enough_digests && advance)) && enough_parents {
-                        if timer_expired {
-                            warn!("Timer expired for round {}", self.round);
-                        }
-
-                        // Advance to the next round.
-                        self.round += 1;
-                        debug!("Dag moved to round {}", self.round);
-
-                        // Build header from stored parent digests.
-                        self.parents_1 = self
-                            .last_parent_certs
-                            .drain(..)
-                            .map(|x| x.digest())
-                            .collect();
-                        self.make_header().await;
-                        self.payload_size = 0;
-
-                        let deadline =
-                            Instant::now() + Duration::from_millis(self.max_header_delay);
-                        timer.as_mut().reset(deadline);
-                    }
-                }
+                
             }
 
             tokio::select! {
@@ -584,37 +535,9 @@ impl Proposer {
                             }
                             debug!("Dag moved to round {}", self.round);
                         }
-                        DagProtocol::Narwhal => {
-                            if signal.round < self.round {
-                                continue;
-                            }
-
-                            // Advance to the next round.
-                            self.round = signal.round;
-                            self.parents_1 = signal.parents_1;
-                            debug!("Dag moved to round {}", self.round);
-                        }
-                        DagProtocol::Bullshark | DagProtocol::Wahoo => {
-                            use std::cmp::Ordering;
-                            match signal.round.cmp(&self.round) {
-                                Ordering::Greater => {
-                                    self.round = signal.round;
-                                    self.last_parent_certs = signal.certificates_1;
-                                },
-                                Ordering::Less => {
-                                    // Ignore parents from older rounds.
-                                },
-                                Ordering::Equal => {
-                                    self.last_parent_certs.extend(signal.certificates_1);
-                                }
-                            }
-
-                            // Check whether we can advance to the next round.
-                            advance = match self.round % 2 {
-                                0 => self.update_leader(),
-                                _ => self.enough_votes(),
-                            };
-                        }
+                        
+                        
+                        
                     }
                 }
                 Some((digest, worker_id)) = self.rx_workers.recv() => {
