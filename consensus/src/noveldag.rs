@@ -340,6 +340,7 @@ fn verify_leader_chain<'a>(
 // ── 因果可达性 BFS ──────────────────────────────────────────
 
 /// 从种子集合出发，沿 `parents`（r-1 跳）和 `parents_2`（r-2 跳）反向
+/// BFS 遍历因果可达顶点。`index` 提供 Digest→&Certificate 的 O(1) 映射。
 /// BFS 遍历 DAG，收集所有因果可达区块的 `header.id`。
 ///
 /// 种子包含：
@@ -348,42 +349,35 @@ fn verify_leader_chain<'a>(
 ///
 /// 不在可达集合中的块是"孤儿块"——可能由拜占庭节点注入，与已验证的
 /// 提交前沿无因果联系，不在当前 wave 提交。
-fn causal_reachability(seeds: &[&Certificate], state: &State) -> HashSet<Digest> {
+fn causal_reachability(seeds: &[&Certificate], index: &HashMap<Digest, &Certificate>, last_committed: &HashMap<PublicKey, Round>) -> HashSet<Digest> {
     let mut reachable: HashSet<Digest> = HashSet::new();
     let mut buffer: Vec<&Certificate> = seeds.to_vec();
 
     while let Some(cert) = buffer.pop() {
+        // 跳过已提交区块——其 parents 已在之前的 wave 中被处理。
+        if last_committed.get(&cert.origin()).map_or(false, |r| *r >= cert.round()) {
+            continue;
+        }
+
         // 以 header.id 去重——每个块只处理一次。
         if !reachable.insert(cert.header.id.clone()) {
             continue;
         }
 
-        // 沿 parents（r-1 跳）回溯。
-        if let Some(prev_round) = cert.round().checked_sub(1) {
-            if let Some(by_round) = state.dag.get(&prev_round) {
-                for parent_digest in &cert.header.parents {
-                    if let Some((_, parent_cert)) =
-                        by_round.values().find(|(d, _)| d == parent_digest)
-                    {
-                        if !reachable.contains(&parent_cert.header.id) {
-                            buffer.push(parent_cert);
-                        }
-                    }
+        // 沿 parents（r-1 跳）回溯——O(1) 索引查找。
+        for parent_digest in &cert.header.parents {
+            if let Some(parent_cert) = index.get(parent_digest) {
+                if !reachable.contains(&parent_cert.header.id) {
+                    buffer.push(parent_cert);
                 }
             }
         }
 
-        // 沿 parents_2（r-2 跳，NovelDAG 专属）回溯。
-        if let Some(prev2_round) = cert.round().checked_sub(2) {
-            if let Some(by_round) = state.dag.get(&prev2_round) {
-                for parent_digest in &cert.header.parents_2 {
-                    if let Some((_, parent_cert)) =
-                        by_round.values().find(|(d, _)| d == parent_digest)
-                    {
-                        if !reachable.contains(&parent_cert.header.id) {
-                            buffer.push(parent_cert);
-                        }
-                    }
+        // 沿 parents_2（r-2 跳）回溯——O(1) 索引查找。
+        for parent_digest in &cert.header.parents_2 {
+            if let Some(parent_cert) = index.get(parent_digest) {
+                if !reachable.contains(&parent_cert.header.id) {
+                    buffer.push(parent_cert);
                 }
             }
         }
