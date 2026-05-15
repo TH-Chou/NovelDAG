@@ -142,7 +142,7 @@ impl Consensus {
             DagProtocol::Narwhal => narwhal::run(self).await,
             DagProtocol::Bullshark => bullshark::run(self).await,
             DagProtocol::NovelDAG => noveldag::run(self).await,
-            DagProtocol::Wahoo => wahoo::run(self).await,
+
         }
     }
 
