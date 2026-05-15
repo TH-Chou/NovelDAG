@@ -134,7 +134,7 @@ class LogParser:
         }
 
         ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
-        
+
         return proposals, commits, configs, ip
 
     def _parse_workers(self, log):
@@ -166,7 +166,8 @@ class LogParser:
         return tps, bps, duration
 
     def _consensus_latency(self):
-        latency = [c - self.proposals[d] for d, c in self.commits.items()]
+        latency = [c - self.proposals[d] for d, c in self.commits.items()
+                   if d in self.proposals]
         return mean(latency) if latency else 0
 
     def _end_to_end_throughput(self):
@@ -254,7 +255,7 @@ class LogParser:
 
     def print(self, filename):
         assert isinstance(filename, str)
-        with open(filename, 'a') as f:
+        with open(filename, 'w') as f:
             f.write(self.result())
 
     @classmethod

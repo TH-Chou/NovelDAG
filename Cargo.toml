@@ -1,2 +1,8 @@
 [workspace]
 members = ["primary", "node", "store", "crypto", "worker", "consensus", "network", "config"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"

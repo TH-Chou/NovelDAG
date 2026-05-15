@@ -1,7 +1,12 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
-import boto3
-from botocore.exceptions import ClientError
 from collections import defaultdict, OrderedDict
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError as BotoClientError
+except ImportError:
+    boto3 = None
+    BotoClientError = Exception
 from pathlib import Path
 import json
 import shutil
@@ -15,7 +20,7 @@ from benchmark.settings import Settings, SettingsError
 
 class AWSError(Exception):
     def __init__(self, error):
-        assert isinstance(error, ClientError)
+        assert isinstance(error, BotoClientError)
         self.message = error.response["Error"]["Message"]
         self.code = error.response["Error"]["Code"]
         super().__init__(self.message)
@@ -165,7 +170,7 @@ class AWSInstanceManager:
         for client in self.clients.values():
             try:
                 self._create_security_group(client)
-            except ClientError as e:
+            except BotoClientError as e:
                 error = AWSError(e)
                 if error.code != "InvalidGroup.Duplicate":
                     raise BenchError("Failed to create security group", error)
@@ -207,7 +212,7 @@ class AWSInstanceManager:
             Print.info("Waiting for all instances to boot...")
             self._wait(["pending"])
             Print.heading(f"Successfully created {size} new instances")
-        except ClientError as e:
+        except BotoClientError as e:
             raise BenchError("Failed to create AWS instances", AWSError(e))
 
     def terminate_instances(self):
@@ -230,7 +235,7 @@ class AWSInstanceManager:
                 client.delete_security_group(GroupName=self.SECURITY_GROUP_NAME)
 
             Print.heading(f"Testbed of {size} instances destroyed")
-        except ClientError as e:
+        except BotoClientError as e:
             raise BenchError("Failed to terminate instances", AWSError(e))
 
     def start_instances(self, max):
@@ -244,7 +249,7 @@ class AWSInstanceManager:
                     size += len(target)
                     client.start_instances(InstanceIds=target)
             Print.heading(f"Starting {size} instances")
-        except ClientError as e:
+        except BotoClientError as e:
             raise BenchError("Failed to start instances", AWSError(e))
 
     def stop_instances(self):
@@ -255,14 +260,14 @@ class AWSInstanceManager:
                     client.stop_instances(InstanceIds=ids[region])
             size = sum(len(x) for x in ids.values())
             Print.heading(f"Stopping {size} instances")
-        except ClientError as e:
+        except BotoClientError as e:
             raise BenchError(AWSError(e))
 
     def hosts(self, flat=False):
         try:
             _, ips = self._get(["pending", "running"])
             return [x for y in ips.values() for x in y] if flat else ips
-        except ClientError as e:
+        except BotoClientError as e:
             raise BenchError("Failed to gather instances IPs", AWSError(e))
 
     def print_info(self):

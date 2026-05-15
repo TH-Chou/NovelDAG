@@ -1,3 +1,11 @@
 target/
 .DS_Store
 .claude/
+<<<<<<< HEAD
+=======
+benchmark/benchmark_client
+benchmark/node
+
+# Per-test RocksDB scratch dirs created by `cargo test` in workspace crates.
+**/.db_test_*
+>>>>>>> unify-three-protocols

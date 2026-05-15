@@ -30,23 +30,23 @@ class PathMaker:
 
     @staticmethod
     def committee_file():
-        return '.committee.json'
+        return join(PathMaker.logs_path(), '.committee.json')
 
     @staticmethod
     def parameters_file():
-        return '.parameters.json'
+        return join(PathMaker.logs_path(), '.parameters.json')
 
     @staticmethod
     def key_file(i):
         assert isinstance(i, int) and i >= 0
-        return f'.node-{i}.json'
+        return join(PathMaker.logs_path(), f'.node-{i}.json')
 
     @staticmethod
     def db_path(i, j=None):
         assert isinstance(i, int) and i >= 0
         assert (isinstance(j, int) and i >= 0) or j is None
         worker_id = f'-{j}' if j is not None else ''
-        return f'.db-{i}{worker_id}'
+        return join(PathMaker.logs_path(), f'.db-{i}{worker_id}')
 
     @staticmethod
     def logs_path():
@@ -71,14 +71,23 @@ class PathMaker:
 
     @staticmethod
     def results_path():
-        return 'results'
+        return join(PathMaker.logs_path(), 'results')
 
     @staticmethod
-    def result_file(faults, nodes, workers, collocate, rate, tx_size):
+    def result_file(faults, nodes, workers, collocate, rate, tx_size, dag_protocol=None):
+        protocol_part = f'-{dag_protocol}' if dag_protocol else ''
         return join(
             PathMaker.results_path(),
-            f'bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}.txt'
+            f'bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}{protocol_part}.txt'
         )
+
+    @staticmethod
+    def csv_plots_path():
+        return 'csv_plots'
+
+    @staticmethod
+    def paper_path():
+        return 'paper'
 
     @staticmethod
     def plots_path():

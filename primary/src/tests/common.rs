@@ -145,6 +145,7 @@ pub fn votes(header: &Header) -> Vec<Vote> {
                 voter_round: header.round,
                 origin: header.author,
                 author,
+                wahoo_phase: None,
                 signature: Signature::default(),
             };
             Vote {

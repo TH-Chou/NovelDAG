@@ -1,12 +1,15 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use config::{Committee, ConsensusProtocol, Stake};
+// Unified consensus router: dispatches to narwhal, bullshark, or noveldag based on dag_protocol.
+use config::{Committee, ConsensusProtocol, DagProtocol, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
-use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
 use std::cmp::max;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tokio::sync::mpsc::{Receiver, Sender};
+
+mod noveldag;
+mod wahoo;
 
 #[cfg(test)]
 #[path = "tests/consensus_tests.rs"]
@@ -15,16 +18,12 @@ pub mod consensus_tests;
 /// The representation of the DAG in memory.
 type Dag = HashMap<Round, HashMap<PublicKey, (Digest, Certificate)>>;
 
-/// Number of DAG rounds in one consensus wave.
-/// Keep this even so the leader interval (`ROUNDS_PER_WAVE / 2`) is integral.
-const ROUNDS_PER_WAVE: Round = 4;
-
 /// The state that needs to be persisted for crash-recovery.
-struct State {
+pub(crate) struct State {
     /// The last committed round.
     last_committed_round: Round,
-    // Keeps the last committed round for each authority. This map is used to clean up the dag and
-    // ensure we don't commit twice the same certificate.
+    /// Keeps the last committed round for each authority. This map is used to clean up the dag and
+    /// ensure we don't commit twice the same certificate.
     last_committed: HashMap<PublicKey, Round>,
     /// Keeps the latest committed certificate (and its parents) for every authority. Anything older
     /// must be regularly cleaned up through the function `update`.
@@ -55,8 +54,6 @@ impl State {
         let last_committed_round = *self.last_committed.values().max().unwrap();
         self.last_committed_round = last_committed_round;
 
-        // TODO: This cleanup is dangerous: we need to ensure consensus can receive idempotent replies
-        // from the primary. Here we risk cleaning up a certificate and receiving it again later.
         for (name, round) in &self.last_committed {
             self.dag.retain(|r, authorities| {
                 authorities.retain(|n, _| n != name || r >= round);
@@ -68,29 +65,34 @@ impl State {
 
 pub struct Consensus {
     /// The committee information.
-    committee: Committee,
+    pub(crate) committee: Committee,
     /// The depth of the garbage collector.
-    gc_depth: Round,
+    pub(crate) gc_depth: Round,
+    /// Which DAG protocol variant is running.
+    dag_protocol: DagProtocol,
     /// The consensus leader election mode.
-    consensus_protocol: ConsensusProtocol,
+    pub(crate) consensus_protocol: ConsensusProtocol,
+    /// The public key of this authority, used by NovelDAG for round-completion detection.
+    pub(crate) name: PublicKey,
 
     /// Receives new certificates from the primary. The primary should send us new certificates only
     /// if it already sent us its whole history.
-    rx_primary: Receiver<Certificate>,
+    pub(crate) rx_primary: Receiver<Certificate>,
     /// Outputs the sequence of ordered certificates to the primary (for cleanup and feedback).
-    tx_primary: Sender<Certificate>,
+    pub(crate) tx_primary: Sender<Certificate>,
     /// Outputs the sequence of ordered certificates to the application layer.
-    tx_output: Sender<Certificate>,
+    pub(crate) tx_output: Sender<Certificate>,
 
     /// The genesis certificates.
-    genesis: Vec<Certificate>,
-    /// Pre-computed order_dag results keyed by leader_round, computed one round ahead
-    /// of the wave boundary to reduce commit-time latency.
-    precomputed: HashMap<Round, Vec<Certificate>>,
+    pub(crate) genesis: Vec<Certificate>,
+    
+
+
 }
 
 impl Consensus {
     pub fn spawn(
+        name: PublicKey,
         committee: Committee,
         gc_depth: Round,
         rx_primary: Receiver<Certificate>,
@@ -98,8 +100,10 @@ impl Consensus {
         tx_output: Sender<Certificate>,
     ) {
         Self::spawn_with_protocol(
+            name,
             committee,
             gc_depth,
+            DagProtocol::NovelDAG,
             ConsensusProtocol::RoundRobin,
             rx_primary,
             tx_primary,
@@ -108,8 +112,10 @@ impl Consensus {
     }
 
     pub fn spawn_with_protocol(
+        name: PublicKey,
         committee: Committee,
         gc_depth: Round,
+        dag_protocol: DagProtocol,
         consensus_protocol: ConsensusProtocol,
         rx_primary: Receiver<Certificate>,
         tx_primary: Sender<Certificate>,
@@ -119,12 +125,13 @@ impl Consensus {
             Self {
                 committee: committee.clone(),
                 gc_depth,
+                dag_protocol,
                 consensus_protocol,
+                name,
                 rx_primary,
                 tx_primary,
                 tx_output,
                 genesis: Certificate::genesis(&committee),
-                precomputed: HashMap::new(),
             }
             .run()
             .await;
@@ -132,6 +139,7 @@ impl Consensus {
     }
 
     async fn run(&mut self) {
+<<<<<<< HEAD
         debug_assert!(ROUNDS_PER_WAVE >= 2 && ROUNDS_PER_WAVE % 2 == 0);
 
         // The consensus state (everything else is immutable).
@@ -368,19 +376,19 @@ impl Consensus {
                     diag_skip_qc_chain_invalid,
                 );
             }
+=======
+        match self.dag_protocol {
+            DagProtocol::Narwhal => narwhal::run(self).await,
+            DagProtocol::Bullshark => bullshark::run(self).await,
+            DagProtocol::NovelDAG => noveldag::run(self).await,
+            DagProtocol::Wahoo => wahoo::run(self).await,
+>>>>>>> unify-three-protocols
         }
     }
 
-    /// Returns the certificate (and the certificate's digest) originated by the leader of the
-    /// specified round (if any).
-    fn leader<'a>(
-        &self,
-        round: Round,
-        coin_round: Round,
-        dag: &'a Dag,
-    ) -> Option<&'a (Digest, Certificate)> {
-        let by_round = dag.get(&round)?;
+    // ---------------- Shared helpers (used by multiple protocol modules) ----------------
 
+<<<<<<< HEAD
         // We elect the leader of round r-2 using either:
         // - round-robin (deterministic fallback), or
         // - a reproducible common-coin value derived from round-r certificates.
@@ -409,6 +417,9 @@ impl Consensus {
     }
 
     fn round_robin_coin(&self, round: Round) -> Round {
+=======
+    pub(crate) fn round_robin_coin(&self, round: Round) -> Round {
+>>>>>>> unify-three-protocols
         #[cfg(test)]
         {
             let _ = round;
@@ -420,7 +431,7 @@ impl Consensus {
         }
     }
 
-    fn common_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
+    pub(crate) fn common_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
         let certificates = dag.get(&round)?;
         let weight: Stake = certificates
             .values()
@@ -446,30 +457,69 @@ impl Consensus {
         Some(seed)
     }
 
-    /// Pre-compute order_dag one round before the wave boundary.
-    /// Returns None if the leader chain is not (yet) complete.
-    fn precompute_order(
-        &self,
-        leader_round: Round,
-        commit_round: Round,
-        state: &State,
-    ) -> Option<Vec<Certificate>> {
-        let (_, leader) = self.leader(leader_round, commit_round, &state.dag)?;
-        let b3 = leader.clone();
-
-        let b2 = self.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)?;
-        let b1 = self.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)?;
-
-        if !self.embedded_qc_links(b2, &b3, commit_round)
-            || !self.embedded_qc_links(b1, b2, commit_round)
-        {
+    /// NovelDAG threshold coin: combines BLS coin_shares embedded in headers at
+    /// `round`. Requires f+1 valid shares, which is guaranteed by the 2f+1
+    /// quorum at `round`. Returns a deterministic u64 that all honest nodes
+    /// will reproduce, regardless of which specific 2f+1 certificates they hold.
+    pub(crate) fn threshold_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
+        let certificates = dag.get(&round)?;
+        let weight: Stake = certificates
+            .values()
+            .map(|(_, c)| self.committee.stake(&c.origin()))
+            .sum();
+        if weight < self.committee.quorum_threshold() {
             return None;
         }
-
-        Some(self.order_dag(&b3, state))
+        let authorities: Vec<PublicKey> = self.committee.authorities.keys().cloned().collect();
+        let threshold = crypto::coin_threshold(self.committee.size());
+        let shares: Vec<(PublicKey, Vec<u8>)> = certificates
+            .values()
+            .filter_map(|(_, cert)| {
+                if cert.header.coin_share.is_empty() {
+                    None
+                } else {
+                    Some((cert.origin(), cert.header.coin_share.clone()))
+                }
+            })
+            .collect();
+        crypto::recover_coin(&authorities, threshold, round, &shares).map(|coin| coin as Round)
     }
 
-    fn round_has_quorum(&self, round: Round, dag: &Dag) -> bool {
+    /// Returns the certificate (and digest) originated by the leader.
+    pub(crate) fn leader<'a>(
+        &self,
+        round: Round,
+        coin_round: Round,
+        dag: &'a Dag,
+    ) -> Option<&'a (Digest, Certificate)> {
+        let by_round = dag.get(&round)?;
+
+        let leader = match self.consensus_protocol {
+            ConsensusProtocol::RoundRobin => {
+                let coin = self.round_robin_coin(round);
+                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                keys.sort();
+                keys[coin as usize % self.committee.size()]
+            }
+            ConsensusProtocol::CommonCoin => {
+                let coin = if self.dag_protocol == DagProtocol::NovelDAG {
+                    self.threshold_coin(coin_round, dag)
+                        .unwrap_or_else(|| self.round_robin_coin(round))
+                } else {
+                    self
+                        .common_coin(coin_round, dag)
+                        .unwrap_or_else(|| self.round_robin_coin(round))
+                };
+                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                keys.sort();
+                keys[coin as usize % self.committee.size()]
+            }
+        };
+
+        by_round.get(&leader)
+    }
+
+    pub(crate) fn round_has_quorum(&self, round: Round, dag: &Dag) -> bool {
         let Some(certificates) = dag.get(&round) else {
             return false;
         };
@@ -480,7 +530,7 @@ impl Consensus {
         weight >= self.committee.quorum_threshold()
     }
 
-    fn certificate_by_author<'a>(
+    pub(crate) fn certificate_by_author<'a>(
         &self,
         round: Round,
         author: PublicKey,
@@ -491,7 +541,7 @@ impl Consensus {
             .map(|(_, certificate)| certificate)
     }
 
-    fn embedded_qc_links(
+    pub(crate) fn embedded_qc_links(
         &self,
         child: &Certificate,
         parent: &Certificate,
@@ -500,11 +550,10 @@ impl Consensus {
         let Some(qc) = child.header.qc.as_ref() else {
             return false;
         };
-        // 这里做的是“链接校验”而非收集 parent：
-        // child 的 embedded QC 必须准确指向 parent，并且投票轮次早于 commit_round。
-        qc.target == parent.header.id
+        let structural_ok = qc.target == parent.header.id
             && qc.round == parent.round()
             && qc.round < commit_round
+<<<<<<< HEAD
             && qc.votes.iter().all(|vote| vote.voter_round < commit_round)
     }
 
@@ -568,13 +617,20 @@ impl Consensus {
                     }
                 }
             }
+=======
+            && qc.votes.iter().all(|vote| vote.voter_round < commit_round);
+        if structural_ok {
+            // 防御深度：QC 投票权重应在 Primary 层已验证 ≥ 2f+1。
+            // debug_assert! 在 release 构建中被编译器移除，零运行时开销。
+            // 空投票的 QC 来自合成 peer 证书（maybe_synthesize_peer_cert）
+            // 或测试夹具，此时跳过权重检查。
+            debug_assert!(
+                qc.votes.is_empty() || qc.votes.iter().map(|v| self.committee.stake(&v.author)).sum::<Stake>()
+                    >= self.committee.quorum_threshold(),
+                "embedded QC lacks quorum weight"
+            );
+>>>>>>> unify-three-protocols
         }
-
-        // Ensure we do not commit garbage collected certificates.
-        ordered.retain(|x| x.round() + self.gc_depth >= state.last_committed_round);
-
-        // Ordering the output by round is not really necessary but it makes the commit sequence prettier.
-        ordered.sort_by_key(|x| x.round());
-        ordered
+        structural_ok
     }
 }

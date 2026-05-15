@@ -5,14 +5,15 @@ use crate::error::DagError;
 use crate::garbage_collector::GarbageCollector;
 use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
-use crate::messages::{Certificate, Header, Vote};
+use crate::messages::{Certificate, Header, RecpMessage, Vote};
 use crate::payload_receiver::PayloadReceiver;
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
+use crate::wahoo::{messages::SignedWahoo, Node as WahooNode, WahooMessage};
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee, KeyPair, Parameters, WorkerId};
-use crypto::{Digest, PublicKey, SignatureService};
+use config::{Committee, DagProtocol, KeyPair, Parameters, WorkerId};
+use crypto::{Digest, Hash as _, PublicKey, SignatureService};
 use futures::sink::SinkExt as _;
 use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
@@ -35,6 +36,19 @@ pub enum PrimaryMessage {
     Vote(Vote),
     Certificate(Certificate),
     CertificatesRequest(Vec<Digest>, /* requestor */ PublicKey),
+    /// All Wahoo-specific traffic is multiplexed through this variant.
+    /// The inner `SignedWahoo` envelope carries an ED25519 signature
+    /// over the bincode-encoded `WahooMessage`, mirroring Go's
+    /// `MsgWithSig{Msg, Sig}` triple. Only delivered when the running
+    /// `dag_protocol` is `DagProtocol::Wahoo`.
+    Wahoo(SignedWahoo),
+    /// Wahoo paper Section IV-B Algorithm 2 line 5: ⟨RECP, h, ρ⟩.
+    /// Broadcast at the start of every EPBC phase to provide the
+    /// reception-assertion shares that drive the next wave's
+    /// `LeaderLink::NoCommit` proof. Defined here in Phase A so that
+    /// the wire format is in place ahead of the Wahoo-on-Core merge.
+    /// No producer/consumer is wired yet.
+    Recp(RecpMessage),
 }
 
 /// The messages sent by the primary to its workers.
@@ -66,6 +80,14 @@ impl Primary {
         tx_consensus: Sender<Certificate>,
         rx_consensus: Receiver<Certificate>,
     ) {
+        if parameters.dag_protocol == DagProtocol::Wahoo {
+            // Wahoo runs an entirely independent state machine that does
+            // not use Header/Vote/Certificate or the
+            // Core/Proposer/Synchronizer pipeline. We spawn its own node
+            // here and return.
+            Self::spawn_wahoo(keypair, committee, parameters, store, tx_consensus, rx_consensus);
+            return;
+        }
         let (tx_others_digests, rx_others_digests) = channel(CHANNEL_CAPACITY);
         let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
         let (tx_parents, rx_parents) = channel(CHANNEL_CAPACITY);
@@ -130,6 +152,7 @@ impl Primary {
         let synchronizer = Synchronizer::new(
             name,
             &committee,
+            parameters.dag_protocol,
             store.clone(),
             /* tx_header_waiter */ tx_sync_headers,
             /* tx_certificate_waiter */ tx_sync_certificates,
@@ -142,6 +165,7 @@ impl Primary {
         Core::spawn(
             name,
             committee.clone(),
+            parameters.dag_protocol,
             store.clone(),
             synchronizer,
             signature_service.clone(),
@@ -189,6 +213,8 @@ impl Primary {
         Proposer::spawn(
             name,
             &committee,
+            parameters.dag_protocol,
+            parameters.consensus_protocol,
             signature_service,
             parameters.header_size,
             parameters.max_header_delay,
@@ -211,6 +237,335 @@ impl Primary {
                 .ip()
         );
     }
+}
+
+impl Primary {
+    /// Wahoo-mode entry point. Spawns the standalone `wahoo::Node` task,
+    /// a network handler that forwards `PrimaryMessage::Wahoo(_)` to it,
+    /// and a draining handler for worker batches (Wahoo's blocks carry
+    /// synthetic txs, mirroring the Go reference's
+    /// `wahoo/node.go::NewBlock` which generates txs internally).
+    fn spawn_wahoo(
+        keypair: KeyPair,
+        committee: Committee,
+        parameters: Parameters,
+        _store: Store,
+        tx_consensus: Sender<Certificate>,
+        mut rx_consensus: Receiver<Certificate>,
+    ) {
+        parameters.log();
+        let name = keypair.name;
+        let secret = keypair.secret;
+        let signature_service = SignatureService::new(secret);
+
+        let (tx_wahoo_messages, rx_wahoo_messages) = channel::<WahooMessage>(CHANNEL_CAPACITY);
+        // Phase C Step 4a: dedicated channel for paper Section IV-B
+        // RECP messages. Wahoo `Node` buffers them into `recp_pool` and
+        // consults it when building the next EPBC header's
+        // `leader_link`.
+        let (tx_recp, rx_recp) = channel::<RecpMessage>(CHANNEL_CAPACITY);
+        let (tx_committed, mut rx_committed) =
+            channel::<crate::wahoo::CommittedBlock>(CHANNEL_CAPACITY);
+        // Same shape as the channels created in `Primary::spawn` for the
+        // other three protocols. Wahoo only consumes our own batches
+        // (others' batches are still drained so workers don't deadlock
+        // their reliable senders, but we discard them).
+        let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
+        let (tx_others_digests, mut rx_others_digests) = channel(CHANNEL_CAPACITY);
+        tokio::spawn(async move {
+            while rx_others_digests.recv().await.is_some() {}
+        });
+
+        // Network listener for primary-to-primary traffic.
+        let mut primary_addr = committee
+            .primary(&name)
+            .expect("Our public key is not in the committee")
+            .primary_to_primary;
+        primary_addr.set_ip("0.0.0.0".parse().unwrap());
+        NetworkReceiver::spawn(
+            primary_addr,
+            WahooReceiverHandler {
+                tx_wahoo_messages,
+                tx_recp,
+                committee: committee.clone(),
+            },
+        );
+        info!(
+            "Wahoo primary {} listening to primary messages on {}",
+            name, primary_addr
+        );
+
+        // Network listener for worker-to-primary traffic. We reuse the
+        // generic `WorkerReceiverHandler` from the non-Wahoo path so the
+        // same `WorkerPrimaryMessage::OurBatch(digest, wid)` envelopes
+        // workers send for Narwhal/Bullshark/NovelDAG flow into Wahoo's
+        // `Node` unchanged.
+        let mut worker_addr = committee
+            .primary(&name)
+            .expect("Our public key is not in the committee")
+            .worker_to_primary;
+        worker_addr.set_ip("0.0.0.0".parse().unwrap());
+        NetworkReceiver::spawn(
+            worker_addr,
+            WorkerReceiverHandler {
+                tx_our_digests,
+                tx_others_digests,
+            },
+        );
+        info!(
+            "Wahoo primary {} listening to worker messages on {}",
+            name, worker_addr
+        );
+
+        // Snapshot the IP before `committee` moves into WahooNode.
+        let wahoo_boot_ip = committee
+            .primary(&name)
+            .expect("Our public key is not in the committee")
+            .primary_to_primary
+            .ip();
+
+        // Spawn the Wahoo state machine.
+        let node = WahooNode::new(
+            name,
+            committee,
+            signature_service,
+            parameters.batch_size,
+            rx_wahoo_messages,
+            rx_our_digests,
+            rx_recp,
+            tx_committed,
+        );
+        tokio::spawn(async move {
+            node.run().await;
+        });
+
+        // Bridge committed Wahoo blocks → tx_consensus by synthesising an
+        // empty-vote Certificate around each block's metadata. The
+        // consensus layer's `wahoo::run` forwards them to `tx_output`.
+        tokio::spawn(async move {
+            while let Some(committed) = rx_committed.recv().await {
+                let cert = wahoo_block_to_certificate(&committed.block);
+                if tx_consensus.send(cert).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Drain tx_primary feedback (consensus → primary). Wahoo doesn't
+        // need it for GC, but the consensus task expects the channel to
+        // be alive.
+        tokio::spawn(async move {
+            while rx_consensus.recv().await.is_some() {}
+        });
+
+        info!(
+            "Wahoo primary {} successfully booted on {}",
+            name, wahoo_boot_ip
+        );
+    }
+}
+
+/// Synthesise a `Certificate` from a committed Wahoo block.
+///
+/// Three fields matter downstream:
+///   * `header.author` / `header.round` — feed `Header::Display` which
+///     produces `B<round>(<author>)`, the prefix
+///     `benchmark/benchmark/logs.py` expects on every `Committed` line.
+///   * `header.payload` — copied verbatim from the Wahoo block's
+///     `payload_digests`. `consensus::wahoo::run` iterates
+///     `header.payload.keys()` to emit one `Committed B{r}({a}) -> {d}`
+///     per worker-batch digest, exactly mirroring how
+///     Narwhal/Bullshark/NovelDAG report committed payload. Each digest
+///     pairs with the worker's `Batch <d> contains <n> B` log line and
+///     the matching `Created` line emitted in `Node::broadcast_block`.
+///   * `header.id` — refreshed via `Header::digest()` so the synthetic
+///     certificate is internally consistent.
+fn wahoo_block_to_certificate(block: &crate::wahoo::messages::WahooBlock) -> Certificate {
+    use crypto::Hash as _;
+    let mut header = Header::default();
+    header.author = block.author;
+    header.round = block.round;
+    header.payload = block.payload.clone();
+    header.id = header.digest();
+    Certificate {
+        header,
+        votes: Vec::new(),
+    }
+}
+
+#[derive(Clone)]
+struct WahooReceiverHandler {
+    tx_wahoo_messages: Sender<WahooMessage>,
+    /// Phase C Step 4a: paper Section IV-B RECP share stream, keyed on a
+    /// separate channel because RECPs are neither signed via
+    /// `SignedWahoo` nor dispatched through `msg_handle.go`; they are
+    /// their own top-level `PrimaryMessage::Recp(_)` variant.
+    tx_recp: Sender<RecpMessage>,
+    /// All authority public keys, indexed by `PublicKey`. Used to verify
+    /// the per-message ED25519 signature, mirroring Go's
+    /// `wahoo/msg_handle.go::HandleMsgLoop` which calls
+    /// `verifySigED25519` against `n.publicKeyMap[sender]`.
+    committee: Committee,
+}
+
+#[async_trait]
+impl MessageHandler for WahooReceiverHandler {
+    async fn dispatch(&self, writer: &mut Writer, serialized: Bytes) -> Result<(), Box<dyn Error>> {
+        let _ = writer.send(Bytes::from("Ack")).await;
+        match bincode::deserialize::<PrimaryMessage>(&serialized) {
+            Ok(msg) => match msg {
+            PrimaryMessage::Wahoo(signed) => {
+                // Phase B Step 3d cutover: `SignedWahoo` only carries the
+                // 4 Wahoo-specific message types (Elect / Ready / Done /
+                // ReVote). Block and Vote variants must arrive as
+                // `PrimaryMessage::Header(_)` and `PrimaryMessage::Vote(_)`
+                // respectively, so we reject any legacy SignedWahoo
+                // envelope that still wraps them — accepting it would
+                // allow a peer to bypass `Header::verify` /
+                // `Vote.signature.verify` and inject unsigned content.
+                if matches!(
+                    signed.msg,
+                    WahooMessage::Block(_) | WahooMessage::Vote(_)
+                ) {
+                    log::warn!(
+                        "Wahoo: rejected legacy SignedWahoo wrapping Block/Vote (must use PrimaryMessage::Header/Vote); dropping"
+                    );
+                    return Ok(());
+                }
+                let sender = signed.msg.sender();
+                if self.committee.stake(&sender) == 0 {
+                    log::warn!("Wahoo: dropped message from unknown authority {}", sender);
+                    return Ok(());
+                }
+                // Recompute the digest the sender signed: the bincode
+                // encoding of the inner `WahooMessage`, hashed via the
+                // shared `Hash` trait.
+                let payload =
+                    bincode::serialize(&signed.msg).map_err(DagError::SerializationError)?;
+                let digest = wahoo_digest(&payload);
+                if signed.sig.verify(&digest, &sender).is_err() {
+                    log::warn!(
+                        "Wahoo: signature verification failed (sender={}); dropping",
+                        sender
+                    );
+                    return Ok(());
+                }
+                self.tx_wahoo_messages
+                    .send(signed.msg)
+                    .await
+                    .expect("Wahoo channel closed");
+            }
+            // Phase B Step 3d: Wahoo PB/EPBC blocks now arrive as
+            // first-class `PrimaryMessage::Header`. The header is
+            // authenticated by its inline `signature` field; we verify
+            // here and then re-wrap as `WahooMessage::Block` for the
+            // existing Node dispatch (`handle_message`) which still
+            // matches on the internal enum.
+            PrimaryMessage::Header(h) => {
+                if self.committee.stake(&h.author) == 0 {
+                    log::warn!(
+                        "Wahoo Header: dropped from unknown authority {}",
+                        h.author
+                    );
+                    return Ok(());
+                }
+                if h.id != h.digest() {
+                    log::warn!(
+                        "Wahoo Header: invalid id from {} round {}; dropping",
+                        h.author,
+                        h.round
+                    );
+                    return Ok(());
+                }
+                if h.signature.verify(&h.id, &h.author).is_err() {
+                    log::warn!(
+                        "Wahoo Header: signature verification failed (author={} round={}); dropping",
+                        h.author,
+                        h.round
+                    );
+                    return Ok(());
+                }
+                // Phase C Step 4d: verify the carried BLS leader-link if
+                // present and attesting a real previous wave (round >= 3
+                // and odd, i.e. EPBC rounds). Empty default links are
+                // allowed at early rounds since `build_leader_link`
+                // returns `None` for round < 3.
+                if let Some(ll) = &h.leader_link {
+                    if h.round >= 3 && h.round % 2 == 1 {
+                        let attested_round = h.round - 2;
+                        if let Err(e) = ll.verify_with_crypto(&self.committee, attested_round) {
+                            log::warn!(
+                                "Wahoo Header: leader-link BLS proof rejected (author={} round={}): {}; dropping",
+                                h.author, h.round, e
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+                self.tx_wahoo_messages
+                    .send(WahooMessage::Block(h))
+                    .await
+                    .expect("Wahoo channel closed");
+            }
+            PrimaryMessage::Vote(v) => {
+                if self.committee.stake(&v.author) == 0 {
+                    log::warn!(
+                        "Wahoo Vote: dropped from unknown authority {}",
+                        v.author
+                    );
+                    return Ok(());
+                }
+                if v.signature.verify(&v.digest(), &v.author).is_err() {
+                    log::warn!(
+                        "Wahoo Vote: signature verification failed (author={} round={}); dropping",
+                        v.author,
+                        v.round
+                    );
+                    return Ok(());
+                }
+                self.tx_wahoo_messages
+                    .send(WahooMessage::Vote(v))
+                    .await
+                    .expect("Wahoo channel closed");
+            }
+            PrimaryMessage::Recp(recp) => {
+                // Paper Section IV-B Algorithm 2 line 5 envelope. Filter
+                // out unknown authorities early; the Wahoo `Node` does a
+                // second stake check inside `handle_recp`, but bailing
+                // here saves a channel hop.
+                if self.committee.stake(&recp.author) == 0 {
+                    log::warn!(
+                        "Wahoo RECP: dropped share from unknown authority {}",
+                        recp.author
+                    );
+                    return Ok(());
+                }
+                self.tx_recp
+                    .send(recp)
+                    .await
+                    .expect("Wahoo RECP channel closed");
+            }
+            other => log::warn!(
+                "Wahoo node received non-Wahoo PrimaryMessage; dropping: {:?}",
+                other
+            ),
+            },
+            Err(e) => log::warn!("Wahoo dispatch: bincode deserialize failed: {}", e),
+        }
+        Ok(())
+    }
+}
+
+/// Hash the bincode-encoded `WahooMessage` to produce the digest signed
+/// by `Node::sign_wahoo`. Public so test code in `wahoo::node` can
+/// reproduce it.
+pub(crate) fn wahoo_digest(payload: &[u8]) -> Digest {
+    use ed25519_dalek::{Digest as _, Sha512};
+    use std::convert::TryInto;
+    let mut hasher = Sha512::new();
+    hasher.update(payload);
+    let out = hasher.finalize();
+    Digest(out[..32].try_into().expect("sha512 truncation"))
 }
 
 /// Defines how the network receiver handles incoming primary messages.

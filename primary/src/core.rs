@@ -1,5 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use crate::aggregators::VotesAggregator;
+use crate::aggregators::{CertificatesAggregator, CertificatesVecAggregator, VotesAggregator};
 use crate::error::{DagError, DagResult};
 use crate::messages::{Certificate, EmbeddedQc, Header, Vote};
 use crate::primary::{PrimaryMessage, Round};
@@ -7,7 +7,7 @@ use crate::proposer::ProposerSignal;
 use crate::synchronizer::Synchronizer;
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use config::Committee;
+use config::{Committee, DagProtocol};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
@@ -27,6 +27,8 @@ pub struct Core {
     name: PublicKey,
     /// The committee information.
     committee: Committee,
+    /// Which DAG protocol variant is running.
+    dag_protocol: DagProtocol,
     /// The persistent storage.
     store: Store,
     /// Handles synchronization with other nodes and our workers.
@@ -61,6 +63,10 @@ pub struct Core {
     current_header: Header,
     /// Aggregates votes into a certificate.
     votes_aggregator: VotesAggregator,
+    /// Aggregates certificates to use as parents for new headers (Narwhal/Bullshark).
+    certificates_aggregators: HashMap<Round, Box<CertificatesAggregator>>,
+    /// Aggregates certificates to use as parents (Bullshark full-cert variant).
+    certificates_vec_aggregators: HashMap<Round, Box<CertificatesVecAggregator>>,
     /// Certificates observed per round keyed by authority.
     certificates_by_round: HashMap<Round, HashMap<PublicKey, Certificate>>,
     /// Next round whose completion we still need to signal to the proposer.
@@ -70,6 +76,7 @@ pub struct Core {
     /// A network sender to broadcast headers and certificates reliably.
     network: ReliableSender,
     /// A best-effort network sender for votes (no retry needed).
+    #[allow(dead_code)]
     vote_network: SimpleSender,
     /// Keeps the cancel handlers of the messages we sent.
     cancel_handlers: HashMap<Round, Vec<CancelHandler>>,
@@ -80,6 +87,7 @@ impl Core {
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
+        dag_protocol: DagProtocol,
         store: Store,
         synchronizer: Synchronizer,
         signature_service: SignatureService,
@@ -101,6 +109,7 @@ impl Core {
             Self {
                 name,
                 committee,
+                dag_protocol,
                 store,
                 synchronizer,
                 signature_service,
@@ -117,6 +126,8 @@ impl Core {
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
                 current_header: Header::default(),
                 votes_aggregator: VotesAggregator::new(),
+                certificates_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
+                certificates_vec_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
                 next_round_to_signal: 1,
                 pending_qc_signals: HashSet::new(),
@@ -181,12 +192,14 @@ impl Core {
                 break;
             }
 
-            // Send signal even without own certificate — the QC can arrive later.
+            // Require our own certificate's QC before signalling the proposer.
+            // Without it the proposer would deadlock: the follow-up QC signal
+            // arrives too late once the proposer has advanced to a later round.
             let own_certificate = by_authority.get(&self.name);
             let qc = own_certificate.map(|c| Self::certificate_to_embedded_qc(c));
-
-            if qc.is_none() {
-                self.pending_qc_signals.insert(round + 1);
+            let needs_qc = round >= 1; // proposer target round >= 2
+            if needs_qc && qc.is_none() {
+                break;
             }
 
             let signal = ProposerSignal {
@@ -194,6 +207,7 @@ impl Core {
                 parents_1,
                 parents_2,
                 qc,
+                certificates_1: Vec::new(),
             };
 
             self.tx_proposer
@@ -215,6 +229,7 @@ impl Core {
                 parents_1: Vec::new(),
                 parents_2: Vec::new(),
                 qc: Some(qc),
+                certificates_1: Vec::new(),
             };
             let _ = self.tx_proposer.send(signal).await;
         }
@@ -265,50 +280,70 @@ impl Core {
 
         if header.round == 0 {
             // Genesis/initialization headers have no parent quorum requirements.
-            // Their structural validity has already been checked by `Header::verify`.
         } else {
-            // Check first-hop parents (`r-1`).
-            let mut stake_1 = 0;
-            for x in &parents_1 {
-                ensure!(
-                    x.round() + 1 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                stake_1 += self.committee.stake(&x.origin());
-            }
-            ensure!(
-                stake_1 >= self.committee.quorum_threshold(),
-                DagError::HeaderRequiresQuorum(header.id.clone())
-            );
+            match self.dag_protocol {
+                DagProtocol::NovelDAG => {
+                    // Check first-hop parents (`r-1`).
+                    let mut stake_1 = 0;
+                    for x in &parents_1 {
+                        ensure!(
+                            x.round() + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_1 += self.committee.stake(&x.origin());
+                    }
+                    ensure!(
+                        stake_1 >= self.committee.quorum_threshold(),
+                        DagError::HeaderRequiresQuorum(header.id.clone())
+                    );
 
-            // Check second-hop parents (`r-2`) and embedded QC requirements.
-            let mut stake_2 = 0;
-            for x in &parents_2 {
-                ensure!(
-                    x.round() + 2 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                stake_2 += self.committee.stake(&x.origin());
-            }
-            if header.round >= 2 {
-                ensure!(
-                    stake_2 >= self.committee.quorum_threshold(),
-                    DagError::HeaderRequiresQuorum(header.id.clone())
-                );
-                let qc = header
-                    .qc
-                    .as_ref()
-                    .ok_or_else(|| DagError::MalformedHeader(header.id.clone()))?;
-                ensure!(
-                    qc.round + 1 == header.round,
-                    DagError::MalformedHeader(header.id.clone())
-                );
-                ensure!(
-                    parents_1
-                        .iter()
-                        .any(|certificate| certificate.header.id == qc.target),
-                    DagError::MalformedHeader(header.id.clone())
-                );
+                    // Check second-hop parents (`r-2`) and embedded QC requirements.
+                    let mut stake_2 = 0;
+                    for x in &parents_2 {
+                        ensure!(
+                            x.round() + 2 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_2 += self.committee.stake(&x.origin());
+                    }
+                    if header.round >= 2 {
+                        ensure!(
+                            stake_2 >= self.committee.quorum_threshold(),
+                            DagError::HeaderRequiresQuorum(header.id.clone())
+                        );
+                        let qc = header
+                            .qc
+                            .as_ref()
+                            .ok_or_else(|| DagError::MalformedHeader(header.id.clone()))?;
+                        ensure!(
+                            qc.round + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        ensure!(
+                            parents_1
+                                .iter()
+                                .any(|certificate| certificate.header.id == qc.target),
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                    }
+                }
+                DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
+                    // Single-parent validation: r-1 parents must form a quorum.
+                    let mut stake_1 = 0;
+                    for x in &parents_1 {
+                        ensure!(
+                            x.round() + 1 == header.round,
+                            DagError::MalformedHeader(header.id.clone())
+                        );
+                        stake_1 += self.committee.stake(&x.origin());
+                    }
+                    if header.round > 0 {
+                        ensure!(
+                            stake_1 >= self.committee.quorum_threshold(),
+                            DagError::HeaderRequiresQuorum(header.id.clone())
+                        );
+                    }
+                }
             }
         }
 
@@ -332,8 +367,23 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
+<<<<<<< HEAD
             // Use header.round as voter_round so that votes in embedded QCs
             // always satisfy voter_round < commit_round for later pipeline commits.
+=======
+            // NovelDAG 流水线设计：使用 header.round 而非投票者当前轮次。
+            //
+            // 设计文档将 voter_round 定义为"投票者当前所处轮次"，但在
+            // NovelDAG 流水线中，投票者投票时可能已推进到更高轮次（例如
+            // 对 r-3 轮 Leader 投票时，投票者已处于 r-1 轮）。若使用实际
+            // 轮次，voter_round 可能 ≥ commit_round，导致 Section 6 QC
+            // 链检查拒绝有效 QC，阻塞提交。
+            //
+            // 使用 header.round 的安全性：
+            // 1. qc.round < commit_round 已约束 QC 形成时间早于提交轮
+            // 2. qc.target == parent.id  防止跨块 QC 重放
+            // 3. QC 嵌入已签名 Header 中，摘要包含全部投票数据，无法伪造
+>>>>>>> unify-three-protocols
             let vote = Vote::new(header, header.round, &self.name, &mut self.signature_service).await;
             debug!("Created {:?}", vote);
             if vote.origin == self.name {
@@ -348,12 +398,39 @@ impl Core {
                     .primary_to_primary;
                 let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
                     .expect("Failed to serialize our own vote");
-                // Use best-effort sender for votes: lost votes are tolerated (still have 2f+1 redundancy).
-                self.vote_network.send(address, Bytes::from(bytes)).await;
+                let handler = self.network.send(address, Bytes::from(bytes)).await;
+                self.cancel_handlers
+                    .entry(header.round)
+                    .or_insert_with(Vec::new)
+                    .push(handler);
             }
         }
         Ok(())
     }
+
+    /// NovelDAG: peer blocks never arrive as independent Certificates — the
+    /// author's QC is piggybacked inside the next round's header.qc field.
+    /// To keep the downstream DAG-tracking logic uniform, we synthesize a
+    /// local empty-votes Certificate from every peer Header we successfully
+    /// processed. The consensus layer only reads certificate.header.* fields
+    /// (never certificate.votes), so an empty-votes certificate is
+    /// semantically equivalent to a real one here. This is only invoked at
+    /// the direct Header dispatch points — never inside process_certificate's
+    /// header-processing path, to avoid double-emitting a cert for the same
+    /// block.
+    async fn maybe_synthesize_peer_cert(&mut self, header: &Header) {
+        if self.dag_protocol != DagProtocol::NovelDAG || header.author == self.name {
+            return;
+        }
+        let synthetic = Certificate {
+            header: header.clone(),
+            votes: Vec::new(),
+        };
+        if let Err(e) = self.process_certificate(synthetic).await {
+            warn!("Failed to process synthetic certificate: {}", e);
+        }
+    }
+
 
     #[async_recursion]
     async fn process_vote(&mut self, vote: Vote) -> DagResult<()> {
@@ -366,28 +443,34 @@ impl Core {
         {
             debug!("Assembled {:?}", certificate);
 
-            // Broadcast the certificate.
-            let addresses = self
-                .committee
-                .others_primaries(&self.name)
-                .iter()
-                .map(|(_, x)| x.primary_to_primary)
-                .collect();
-            let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate.clone()))
-                .expect("Failed to serialize our own certificate");
-            let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
-            self.cancel_handlers
-                .entry(certificate.round())
-                .or_insert_with(Vec::new)
-                .extend(handlers);
+            // Broadcast the certificate (Narwhal/Bullshark: the cert itself
+            // is the 3rd network phase). NovelDAG skips this phase entirely:
+            // the QC is delivered by piggybacking inside the next round's
+            // header.qc field, saving one delta of latency per round.
+            if self.dag_protocol != DagProtocol::NovelDAG {
+                let addresses = self
+                    .committee
+                    .others_primaries(&self.name)
+                    .iter()
+                    .map(|(_, x)| x.primary_to_primary)
+                    .collect();
+                let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate.clone()))
+                    .expect("Failed to serialize our own certificate");
+                let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
+                self.cancel_handlers
+                    .entry(certificate.round())
+                    .or_insert_with(Vec::new)
+                    .extend(handlers);
+            }
 
-            // Process the new certificate.
+            // Process the new certificate locally in all modes.
             self.process_certificate(certificate)
                 .await
                 .expect("Failed to process valid certificate");
         }
         Ok(())
     }
+
 
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
@@ -416,21 +499,77 @@ impl Core {
             return Ok(());
         }
 
-        // Store the certificate.
-        let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
-        self.store.write(certificate.digest().to_vec(), bytes).await;
+        match self.dag_protocol {
+            DagProtocol::NovelDAG => {
+                // NovelDAG certificates are never broadcast: peer blocks arrive
+                // as headers and are synthesised locally with empty votes. Skip
+                // disk storage — they would fail `Certificate::verify()` on
+                // re-read.  Instead, cache them in-memory so that
+                // `get_parents()` can find them without hitting the store.
+                self.synchronizer.cache_certificate(&certificate);
 
-        self.certificates_by_round
-            .entry(certificate.round())
-            .or_insert_with(HashMap::new)
-            .insert(certificate.origin(), certificate.clone());
+                self.certificates_by_round
+                    .entry(certificate.round())
+                    .or_insert_with(HashMap::new)
+                    .insert(certificate.origin(), certificate.clone());
 
-        self.try_signal_proposer().await;
+                self.try_signal_proposer().await;
 
-        // If this is our own newly-formed certificate, send a QC follow-up in case
-        // the proposer was signaled without QC earlier.
-        if certificate.origin() == self.name {
-            self.send_qc_signal(&certificate).await;
+                // If this is our own newly-formed certificate, send a QC follow-up.
+                if certificate.origin() == self.name {
+                    self.send_qc_signal(&certificate).await;
+                }
+            }
+            DagProtocol::Narwhal => {
+                // Store to disk for crash recovery.
+                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                self.store.write(certificate.digest().to_vec(), bytes).await;
+
+                if let Some(parents) = self
+                    .certificates_aggregators
+                    .entry(certificate.round())
+                    .or_insert_with(|| Box::new(CertificatesAggregator::new()))
+                    .append(certificate.clone(), &self.committee)?
+                {
+                    let signal = ProposerSignal {
+                        round: certificate.round() + 1,
+                        parents_1: parents,
+                        parents_2: Vec::new(),
+                        qc: None,
+                        certificates_1: Vec::new(),
+                    };
+                    self.tx_proposer
+                        .send(signal)
+                        .await
+                        .expect("Failed to send certificate");
+                }
+            }
+            DagProtocol::Bullshark | DagProtocol::Wahoo => {
+                // Store to disk for crash recovery.
+                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                self.store.write(certificate.digest().to_vec(), bytes).await;
+
+                if let Some(parents) = self
+                    .certificates_vec_aggregators
+                    .entry(certificate.round())
+                    .or_insert_with(|| Box::new(CertificatesVecAggregator::new()))
+                    .append(certificate.clone(), &self.committee)?
+                {
+                    let parents_1: Vec<Digest> =
+                        parents.iter().map(|c| c.digest()).collect();
+                    let signal = ProposerSignal {
+                        round: certificate.round(),
+                        parents_1,
+                        parents_2: Vec::new(),
+                        qc: None,
+                        certificates_1: parents,
+                    };
+                    self.tx_proposer
+                        .send(signal)
+                        .await
+                        .expect("Failed to send certificate");
+                }
+            }
         }
 
         // Send it to the consensus layer.
@@ -444,7 +583,7 @@ impl Core {
         Ok(())
     }
 
-    fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
+    async fn sanitize_header(&mut self, header: &Header) -> DagResult<()> {
         ensure!(
             self.gc_round <= header.round,
             DagError::TooOld(header.id.clone(), header.round)
@@ -456,10 +595,17 @@ impl Core {
             header.round <= max_future_round,
             DagError::TooOld(header.id.clone(), header.round)
         );
+<<<<<<< HEAD
 
         // Verify the header's signature.
         header.verify(&self.committee)?;
 
+=======
+
+        // Verify the header's signature (CPU-bound; runs on blocking pool).
+        header.verify_async(&self.committee, self.dag_protocol).await?;
+
+>>>>>>> unify-three-protocols
         Ok(())
     }
 
@@ -481,49 +627,60 @@ impl Core {
         vote.verify(&self.committee).map_err(DagError::from)
     }
 
-    fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
+    async fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
         ensure!(
             self.gc_round <= certificate.round(),
             DagError::TooOld(certificate.digest(), certificate.round())
         );
 
-        // Verify the certificate (and the embedded header).
-        certificate.verify(&self.committee).map_err(DagError::from)
+        // Verify the certificate (and the embedded header); CPU-bound work
+        // runs on the blocking pool.
+        certificate.verify_async(&self.committee, self.dag_protocol).await?;
+        Ok(())
     }
 
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
-        loop {
+            loop {
             let result = tokio::select! {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
                         PrimaryMessage::Header(header) => {
-                            match self.sanitize_header(&header) {
+                            let result = match self.sanitize_header(&header).await {
                                 Ok(()) => self.process_header(&header).await,
-                                error => error
+                                error => error,
+                            };
+                            if result.is_ok() {
+                                self.maybe_synthesize_peer_cert(&header).await;
                             }
-
+                            result
                         },
                         PrimaryMessage::Vote(vote) => {
                             match self.sanitize_vote(&vote) {
                                 Ok(()) => self.process_vote(vote).await,
-                                error => error
+                                error => error,
                             }
                         },
                         PrimaryMessage::Certificate(certificate) => {
-                            match self.sanitize_certificate(&certificate) {
-                                Ok(()) =>  self.process_certificate(certificate).await,
-                                error => error
+                            match self.sanitize_certificate(&certificate).await {
+                                Ok(()) => self.process_certificate(certificate).await,
+                                error => error,
                             }
                         },
-                        _ => panic!("Unexpected core message")
+                        _ => panic!("Unexpected core message"),
                     }
                 },
 
                 // We receive here loopback headers from the `HeaderWaiter`. Those are headers for which we interrupted
                 // execution (we were missing some of their dependencies) and we are now ready to resume processing.
-                Some(header) = self.rx_header_waiter.recv() => self.process_header(&header).await,
+                Some(header) = self.rx_header_waiter.recv() => {
+                    let result = self.process_header(&header).await;
+                    if result.is_ok() {
+                        self.maybe_synthesize_peer_cert(&header).await;
+                    }
+                    result
+                },
 
                 // We receive here loopback certificates from the `CertificateWaiter`. Those are certificates for which
                 // we interrupted execution (we were missing some of their ancestors) and we are now ready to resume
@@ -549,9 +706,12 @@ impl Core {
                 let gc_round = round - self.gc_depth;
                 self.last_voted.retain(|k, _| k >= &gc_round);
                 self.processing.retain(|k, _| k >= &gc_round);
+                self.certificates_aggregators.retain(|k, _| k >= &gc_round);
+                self.certificates_vec_aggregators.retain(|k, _| k >= &gc_round);
                 self.cancel_handlers.retain(|k, _| k >= &gc_round);
                 self.gc_round = gc_round;
             }
         }
+
     }
 }

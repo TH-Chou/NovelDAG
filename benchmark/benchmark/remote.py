@@ -4,12 +4,14 @@ from fabric import Connection, ThreadingGroup as Group
 from fabric.exceptions import GroupException
 from paramiko import RSAKey
 from paramiko.ssh_exception import PasswordRequiredException, SSHException
-from os.path import basename, splitext
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from os.path import basename, join, splitext
 from pathlib import Path
 from time import sleep
 from math import ceil
 from copy import deepcopy
 import subprocess
+import threading
 
 from benchmark.config import Committee, Key, NodeParameters, BenchParameters, ConfigError
 from benchmark.utils import BenchError, Print, PathMaker, progress_bar
@@ -255,12 +257,12 @@ class Bench:
 
         return committee
 
-    def _run_single(self, rate, committee, bench_parameters, debug=False):
+    def _run_single(self, rate, committee, bench_parameters, debug=False, clean_logs=True):
         faults = bench_parameters.faults
 
-        # Kill any potentially unfinished run and delete logs.
+        # Kill any potentially unfinished run and (optionally) delete logs.
         hosts = committee.ips()
-        self.kill(hosts=hosts, delete_logs=True)
+        self.kill(hosts=hosts, delete_logs=clean_logs)
 
         # Run the clients (they will wait for the nodes to be ready).
         # Filter all faulty nodes from the client addresses (or they will wait
@@ -324,31 +326,59 @@ class Bench:
         cmd = CommandMaker.clean_logs()
         subprocess.run([cmd], shell=True, stderr=subprocess.DEVNULL)
 
-        # Download log files.
+        # Build download task list: (host, remote_path, local_path)
+        tasks = []
         workers_addresses = committee.workers_addresses(faults)
-        progress = progress_bar(workers_addresses, prefix='Downloading workers logs:')
-        for i, addresses in enumerate(progress):
+        for i, addresses in enumerate(workers_addresses):
             for id, address in addresses:
                 host = Committee.ip(address)
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
-                c.get(
-                    PathMaker.client_log_file(i, id), 
-                    local=PathMaker.client_log_file(i, id)
-                )
-                c.get(
-                    PathMaker.worker_log_file(i, id), 
-                    local=PathMaker.worker_log_file(i, id)
-                )
+                tasks.append((host,
+                    PathMaker.client_log_file(i, id),
+                    PathMaker.client_log_file(i, id)))
+                tasks.append((host,
+                    PathMaker.worker_log_file(i, id),
+                    PathMaker.worker_log_file(i, id)))
 
         primary_addresses = committee.primary_addresses(faults)
-        progress = progress_bar(primary_addresses, prefix='Downloading primaries logs:')
-        for i, address in enumerate(progress):
+        for i, address in enumerate(primary_addresses):
             host = Committee.ip(address)
-            c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
-            c.get(
-                PathMaker.primary_log_file(i), 
-                local=PathMaker.primary_log_file(i)
-            )
+            tasks.append((host,
+                PathMaker.primary_log_file(i),
+                PathMaker.primary_log_file(i)))
+
+        # Parallel download with retry and conservative concurrency.
+        results = {'done': 0, 'errors': 0}
+        lock = threading.Lock()
+
+        def _download_one(host, remote, local):
+            for attempt in range(1, self.SSH_RETRIES + 1):
+                try:
+                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c.get(remote, local=local)
+                    with lock:
+                        results['done'] += 1
+                    return
+                except Exception as e:
+                    if attempt == self.SSH_RETRIES:
+                        with lock:
+                            results['errors'] += 1
+                        Print.warn(f'Failed to download {remote} from {host}: {e}')
+                    else:
+                        sleep(self.SSH_RETRY_DELAY_SECONDS)
+
+        Print.info(f'Downloading logs from {len(tasks)} remote paths...')
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [
+                pool.submit(_download_one, host, remote, local)
+                for host, remote, local in tasks
+            ]
+            for f in as_completed(futures):
+                f.result()  # surface any unexpected exceptions
+
+        Print.info(
+            f'Downloaded {results["done"]}/{len(tasks)} files'
+            + (f' ({results["errors"]} errors)' if results["errors"] else '')
+        )
 
         # Parse logs and return the parser.
         Print.info('Parsing logs and computing performance...')
@@ -368,6 +398,76 @@ class Bench:
         ]
         g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
         g.run(' && '.join(cmd), hide=True)
+
+    def _batch_download(self, hosts, protocol, rates):
+        """Download all checkpointed logs from all hosts in parallel,
+        organising them into per-rate local directories."""
+        # Flatten hosts list.
+        flat_hosts = []
+        for h in hosts:
+            if isinstance(h, list):
+                flat_hosts.extend(h)
+            else:
+                flat_hosts.append(h)
+
+        # Build download task list: (host, remote_path, local_path)
+        tasks = []
+        for host in flat_hosts:
+            c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+            for r in rates:
+                # Find all checkpoint dirs for this rate (handles multiple runs).
+                result = c.run(
+                    f'find batch_logs/{protocol} -path "*/r{r}-run*/*.log" 2>/dev/null || true',
+                    hide=True, warn=True,
+                )
+                if not result.stdout.strip():
+                    continue
+                local_dir = join(PathMaker.logs_path(), f'rate-{r}')
+                Path(local_dir).mkdir(parents=True, exist_ok=True)
+                for log_file in result.stdout.strip().split('\n'):
+                    log_name = basename(log_file)
+                    tasks.append((host, log_file, join(local_dir, log_name)))
+
+        if not tasks:
+            Print.warn('No checkpointed logs found on any host')
+            return
+
+        # Parallel download with retry and conservative concurrency.
+        results = {'done': 0, 'errors': 0}
+        lock = threading.Lock()
+
+        def _download_one(host, remote, local):
+            for attempt in range(1, self.SSH_RETRIES + 1):
+                try:
+                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c.get(remote, local=local)
+                    with lock:
+                        results['done'] += 1
+                    return
+                except Exception as e:
+                    if attempt == self.SSH_RETRIES:
+                        with lock:
+                            results['errors'] += 1
+                        Print.warn(f'Failed to download {remote} from {host}: {e}')
+                    else:
+                        sleep(self.SSH_RETRY_DELAY_SECONDS)
+
+        Print.info(
+            f'Downloading {len(tasks)} log files from '
+            f'{len(flat_hosts)} hosts in parallel...'
+        )
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [
+                pool.submit(_download_one, host, remote, local)
+                for host, remote, local in tasks
+            ]
+            for f in as_completed(futures):
+                f.result()
+
+        Print.info(
+            f'Downloaded {results["done"]}/{len(tasks)} files'
+            + (f' ({results["errors"]} errors)' if results["errors"] else '')
+        )
 
     def run_batch(self, bench_parameters_dict, node_parameters_dict, batch_id, debug=False):
         assert isinstance(debug, bool)
@@ -494,7 +594,8 @@ class Bench:
             e = FabricError(e) if isinstance(e, GroupException) else e
             raise BenchError('Failed to configure nodes', e)
 
-        # Run benchmarks.
+        # Run benchmarks: execute each rate then checkpoint logs on remote.
+        first_rate = True
         for n in bench_parameters.nodes:
             committee_copy = deepcopy(committee)
             committee_copy.remove_nodes(committee.size() - n)
@@ -502,27 +603,50 @@ class Bench:
             for r in bench_parameters.rate:
                 Print.heading(f'\nRunning {n} nodes (input rate: {r:,} tx/s)')
 
-                # Run the benchmark.
                 for i in range(bench_parameters.runs):
                     Print.heading(f'Run {i+1}/{bench_parameters.runs}')
                     try:
                         self._run_single(
-                            r, committee_copy, bench_parameters, debug
+                            r, committee_copy, bench_parameters, debug,
+                            clean_logs=first_rate,
                         )
+                        first_rate = False
 
-                        faults = bench_parameters.faults
-                        logger = self._logs(committee_copy, faults)
-                        logger.print(PathMaker.result_file(
-                            faults,
-                            n, 
-                            bench_parameters.workers,
-                            bench_parameters.collocate,
-                            r, 
-                            bench_parameters.tx_size, 
-                        ))
+                        checkpoint_id = f'r{r}-run{i+1}'
+                        self._checkpoint_logs(
+                            committee_copy.ips(),
+                            node_parameters.json['dag_protocol'],
+                            checkpoint_id,
+                        )
                     except (subprocess.SubprocessError, GroupException, ParseError, ExecutionError) as e:
                         self.kill(hosts=selected_hosts)
                         if isinstance(e, GroupException):
                             e = FabricError(e)
                         Print.error(BenchError('Benchmark failed', e))
                         continue
+
+        # Batch-download all checkpointed logs in parallel.
+        self._batch_download(
+            selected_hosts,
+            node_parameters.json['dag_protocol'],
+            bench_parameters.rate,
+        )
+
+        # Parse each rate's logs and write result files.
+        faults = bench_parameters.faults
+        for n in bench_parameters.nodes:
+            for r in bench_parameters.rate:
+                rate_logs_dir = join(PathMaker.logs_path(), f'rate-{r}')
+                if not Path(rate_logs_dir).exists():
+                    Print.warn(f'No logs found for rate={r}')
+                    continue
+                logger = LogParser.process(rate_logs_dir, faults=faults)
+                logger.print(PathMaker.result_file(
+                    faults,
+                    n,
+                    bench_parameters.workers,
+                    bench_parameters.collocate,
+                    r,
+                    bench_parameters.tx_size,
+                    node_parameters.json['dag_protocol'],
+                ))

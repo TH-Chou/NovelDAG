@@ -1,0 +1,22 @@
+# Quick smoke test: single protocol, low rate, 1 run.
+# Usage: python run_bench.py --mode local run --config configs/smoke.yaml
+
+output:
+  csv_dir: csv_plots
+  plot_dir: plots
+  checkpoint_dir: .checkpoints
+
+outlier_rejection:
+  method: none
+
+groups:
+  smoke:
+    protocols: [noveldag]
+    rates: [60000]
+    faults: [0]
+    bench:
+      nodes: 4
+      duration: 15
+      runs: 1
+    node:
+      dag_protocol: noveldag

@@ -1,5 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
+use config::{ConsensusProtocol, DagProtocol};
 use crate::common::{committee, keys};
 use tokio::sync::mpsc::channel;
 
@@ -16,6 +17,8 @@ async fn propose_empty() {
     Proposer::spawn(
         name,
         &committee(),
+        DagProtocol::Narwhal,
+        ConsensusProtocol::RoundRobin,
         signature_service,
         /* header_size */ 1_000,
         /* max_header_delay */ 20,
@@ -28,7 +31,7 @@ async fn propose_empty() {
     let header = rx_headers.recv().await.unwrap();
     assert_eq!(header.round, 1);
     assert!(header.payload.is_empty());
-    assert!(header.verify(&committee()).is_ok());
+    assert!(header.verify(&committee(), DagProtocol::Narwhal).is_ok());
 }
 
 #[tokio::test]
@@ -44,6 +47,8 @@ async fn propose_payload() {
     Proposer::spawn(
         name,
         &committee(),
+        DagProtocol::Narwhal,
+        ConsensusProtocol::RoundRobin,
         signature_service,
         /* header_size */ 32,
         /* max_header_delay */ 1_000_000, // Ensure it is not triggered.
@@ -64,5 +69,5 @@ async fn propose_payload() {
     let header = rx_headers.recv().await.unwrap();
     assert_eq!(header.round, 1);
     assert_eq!(header.payload.get(&digest), Some(&worker_id));
-    assert!(header.verify(&committee()).is_ok());
+    assert!(header.verify(&committee(), DagProtocol::Narwhal).is_ok());
 }
