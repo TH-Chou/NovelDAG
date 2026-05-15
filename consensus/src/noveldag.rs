@@ -4,10 +4,10 @@
 
 use crate::Consensus;
 use crate::State;
-use crypto::Digest;
+use crypto::{Digest, PublicKey};
 use crypto::Hash as _;
 use log::{debug, info, log_enabled, warn};
-use primary::{Certificate, PublicKey, Round};
+use primary::{Certificate,  Round};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "benchmark")]
 use std::time::Instant;
