@@ -1,4 +1,4 @@
-# 基于 DAG-Rider 风格优化的 DAG 共识构图协议（形式化描述草案）
+# 基于 DAG-Rider 风格优化的 DAG 共识构图协议（NovelDAG）
 
 ## 1. 系统模型
 
