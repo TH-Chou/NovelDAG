@@ -284,12 +284,12 @@ fn round_ended(
 /// - b2、b1 均存在且属于同作者；
 /// - b2.qc → b3 且 b1.qc → b2（含 `voter_round < commit_round` 检查）。
 #[allow(unused_variables)]
-fn verify_leader_chain(
+fn verify_leader_chain<'a>(
     consensus: &Consensus,
     commit_round: Round,
-    state: &State,
+    state: &'a State,
     diag: &mut Diag,
-) -> Option<(Certificate, Certificate, Certificate)> {
+) -> Option<(&'a Certificate, &'a Certificate, &'a Certificate)> {
     let leader_round = commit_round - 3;
 
     // Step 1: 选出 Leader。
@@ -334,7 +334,7 @@ fn verify_leader_chain(
     }
 
     debug!("Leader {:?} 满足 Section-6 提交规则", b3);
-    Some((b3.clone(), b2.clone(), b1.clone()))
+    Some((b3, b2, b1))
 }
 
 // ── 因果可达性 BFS ──────────────────────────────────────────
