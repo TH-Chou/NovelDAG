@@ -84,9 +84,17 @@ pub(crate) async fn run(consensus: &mut Consensus) {
 
     // 已触发过提交检查的轮次（防重入）。
     let mut completed_rounds: HashSet<Round> = HashSet::new();
+    #[cfg(feature = "benchmark")]
     let mut diag = Diag::new();
+    #[cfg(not(feature = "benchmark"))]
+    let _diag = Diag::new();
 
     while let Some(certificate) = consensus.rx_primary.recv().await {
+        let cutoff = state
+            .last_committed_round
+            .saturating_sub(consensus.gc_depth);
+        completed_rounds.retain(|r| *r >= cutoff);
+
         #[cfg(feature = "benchmark")]
         {
             diag.seen_certificates += 1;
@@ -143,10 +151,29 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         }
 
         // ── Section 6 提交规则：验证 Leader 的 b3→b2→b1 链 ──
-        let Some((b3, b2, b1)) = verify_leader_chain(consensus, commit_round, &state, &mut diag)
-        else {
-            continue;
+        let (b3, b2, b1) = match verify_leader_chain(consensus, commit_round, &state) {
+            Ok(triple) => triple,
+            Err(reason) => {
+                #[cfg(feature = "benchmark")]
+                match reason {
+                    ChainError::LeaderUnavailable => diag.skip_leader_unavailable += 1,
+                    ChainError::MissingB2 => diag.skip_missing_b2 += 1,
+                    ChainError::MissingB1 => diag.skip_missing_b1 += 1,
+                    ChainError::QcChainInvalid => diag.skip_qc_chain_invalid += 1,
+                }
+                #[cfg(not(feature = "benchmark"))]
+                let _ = reason;
+                continue;
+            }
         };
+
+        #[cfg(feature = "benchmark")]
+        info!(
+            "DIAG_COMMIT_CANDIDATE commit_round={} leader_round={} leader_author={}",
+            commit_round,
+            b3.round(),
+            b3.origin()
+        );
 
         #[cfg(feature = "benchmark")]
         info!(
@@ -174,12 +201,6 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         for x in sequence.iter() {
             state.update(x, consensus.gc_depth);
         }
-
-        // GC completed_rounds：超出 GC 深度的轮次永不再达。
-        let cutoff = state
-            .last_committed_round
-            .saturating_sub(consensus.gc_depth);
-        completed_rounds.retain(|r| *r >= cutoff);
 
         // 日志：每节点最新提交轮次。
         if log_enabled!(log::Level::Debug) {
@@ -283,58 +304,42 @@ fn round_ended(
 /// - Leader 在 `leader_round` 存在；
 /// - b2、b1 均存在且属于同作者；
 /// - b2.qc → b3 且 b1.qc → b2（含 `voter_round < commit_round` 检查）。
-#[allow(unused_variables)]
+enum ChainError {
+    LeaderUnavailable,
+    MissingB2,
+    MissingB1,
+    QcChainInvalid,
+}
+
 fn verify_leader_chain<'a>(
     consensus: &Consensus,
     commit_round: Round,
     state: &'a State,
-    diag: &mut Diag,
-) -> Option<(&'a Certificate, &'a Certificate, &'a Certificate)> {
+) -> Result<(&'a Certificate, &'a Certificate, &'a Certificate), ChainError> {
+    debug_assert!(commit_round >= WAVE, "commit_round must be >= WAVE");
     let leader_round = commit_round - 3;
 
-    // Step 1: 选出 Leader。
-    let (_, b3) = consensus.leader(leader_round, commit_round, &state.dag)?;
+    let (_, b3) = consensus
+        .leader(leader_round, commit_round, &state.dag)
+        .ok_or(ChainError::LeaderUnavailable)?;
 
-    #[cfg(feature = "benchmark")]
-    info!(
-        "DIAG_COMMIT_CANDIDATE commit_round={} leader_round={} leader_author={}",
-        commit_round,
-        b3.round(),
-        b3.origin()
-    );
+    let b2 = consensus
+        .certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
+        .ok_or(ChainError::MissingB2)?;
 
-    // Step 2: 找到同作者在后续两轮的块。
-    let Some(b2) = consensus.certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
-    else {
-        #[cfg(feature = "benchmark")]
-        {
-            diag.skip_missing_b2 += 1;
-        }
-        return None;
-    };
-    let Some(b1) = consensus.certificate_by_author(leader_round + 2, b3.origin(), &state.dag)
-    else {
-        #[cfg(feature = "benchmark")]
-        {
-            diag.skip_missing_b1 += 1;
-        }
-        return None;
-    };
+    let b1 = consensus
+        .certificate_by_author(leader_round + 2, b3.origin(), &state.dag)
+        .ok_or(ChainError::MissingB1)?;
 
-    // Step 3: 验证内嵌 QC 链 — b2 携带 b3 的 QC，b1 携带 b2 的 QC。
-    if !consensus.embedded_qc_links(b2, &b3, commit_round)
+    if !consensus.embedded_qc_links(b2, b3, commit_round)
         || !consensus.embedded_qc_links(b1, b2, commit_round)
     {
-        #[cfg(feature = "benchmark")]
-        {
-            diag.skip_qc_chain_invalid += 1;
-        }
         debug!("Leader {:?} 不满足 b3→b2→b1 QC 链", b3);
-        return None;
+        return Err(ChainError::QcChainInvalid);
     }
 
     debug!("Leader {:?} 满足 Section-6 提交规则", b3);
-    Some((b3, b2, b1))
+    Ok((b3, b2, b1))
 }
 
 // ── 因果可达性 BFS ──────────────────────────────────────────
@@ -349,22 +354,33 @@ fn verify_leader_chain<'a>(
 ///
 /// 不在可达集合中的块是"孤儿块"——可能由拜占庭节点注入，与已验证的
 /// 提交前沿无因果联系，不在当前 wave 提交。
-fn causal_reachability(seeds: &[&Certificate], index: &HashMap<Digest, &Certificate>, last_committed: &HashMap<PublicKey, Round>) -> HashSet<Digest> {
+fn causal_reachability(
+    seeds: &[&Certificate],
+    index: &HashMap<Digest, &Certificate>,
+    last_committed: &HashMap<PublicKey, Round>,
+) -> HashSet<Digest> {
+    let floor = seeds
+        .iter()
+        .map(|c| c.round())
+        .min()
+        .unwrap_or(0)
+        .saturating_sub(100);
     let mut reachable: HashSet<Digest> = HashSet::new();
     let mut buffer: Vec<&Certificate> = seeds.to_vec();
 
     while let Some(cert) = buffer.pop() {
-        // 跳过已提交区块——其 parents 已在之前的 wave 中被处理。
+        if cert.round() < floor {
+            continue;
+        }
+
         if last_committed.get(&cert.origin()).map_or(false, |r| *r >= cert.round()) {
             continue;
         }
 
-        // 以 header.id 去重——每个块只处理一次。
         if !reachable.insert(cert.header.id.clone()) {
             continue;
         }
 
-        // 沿 parents（r-1 跳）回溯——O(1) 索引查找。
         for parent_digest in &cert.header.parents {
             if let Some(parent_cert) = index.get(parent_digest) {
                 if !reachable.contains(&parent_cert.header.id) {
@@ -373,7 +389,6 @@ fn causal_reachability(seeds: &[&Certificate], index: &HashMap<Digest, &Certific
             }
         }
 
-        // 沿 parents_2（r-2 跳）回溯——O(1) 索引查找。
         for parent_digest in &cert.header.parents_2 {
             if let Some(parent_cert) = index.get(parent_digest) {
                 if !reachable.contains(&parent_cert.header.id) {
@@ -452,6 +467,12 @@ fn collect_wave(
         .iter()
         .filter(|(r, _)| **r >= state.last_committed_round && **r < commit_round)
         .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| (cert.digest(), cert)))
+        .filter(|(_, cert)| {
+            state
+                .last_committed
+                .get(&cert.origin())
+                .map_or(true, |last_r| cert.round() > *last_r)
+        })
         .collect();
     let reachable = causal_reachability(&seeds, &index, &state.last_committed);
 
