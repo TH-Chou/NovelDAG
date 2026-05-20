@@ -12,6 +12,7 @@ from math import ceil
 from copy import deepcopy
 import subprocess
 import threading
+import re
 
 from benchmark.config import Committee, Key, NodeParameters, BenchParameters, ConfigError
 from benchmark.utils import BenchError, Print, PathMaker, progress_bar
@@ -348,6 +349,11 @@ class Bench:
                 )
                 log_file = PathMaker.worker_log_file(i, id)
                 self._background_run(host, cmd, log_file)
+
+        # Delay before starting timed benchmark (let P2P mesh stabilize).
+        if bench_parameters.benchmark_delay > 0:
+            Print.info(f'Waiting {bench_parameters.benchmark_delay}s for P2P mesh to stabilize...')
+            sleep(bench_parameters.benchmark_delay)
 
         # Wait for all transactions to be processed.
         duration = bench_parameters.duration
@@ -688,14 +694,14 @@ class Bench:
                     continue
                 run_dirs = sorted(
                     x for x in Path(rate_logs_dir).iterdir()
-                    if x.is_dir() and x.name.startswith('run')
+                    if x.is_dir()
                 )
                 if not run_dirs:
                     run_dirs = [Path(rate_logs_dir)]
                 for run_dir in run_dirs:
                     logger = LogParser.process(str(run_dir), faults=faults)
-                    run_suffix = ''.join(ch for ch in run_dir.name if ch.isdigit())
-                    if run_suffix:
+                    run_match = re.search(r'run(\d+)$', run_dir.name)
+                    if run_match:
                         output_file = PathMaker.run_result_file(
                             faults,
                             n,
@@ -703,7 +709,7 @@ class Bench:
                             bench_parameters.collocate,
                             r,
                             bench_parameters.tx_size,
-                            int(run_suffix),
+                            int(run_match.group(1)),
                             node_parameters.json['dag_protocol'],
                         )
                     else:

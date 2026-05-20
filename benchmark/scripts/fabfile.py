@@ -584,6 +584,7 @@ def remote(
     tx_size=512,
     duration=300,
     runs=2,
+    benchmark_delay=0,
 ):
     ''' Run benchmarks on AWS '''
     from benchmark.remote import Bench
@@ -600,6 +601,7 @@ def remote(
         'tx_size': int(tx_size),
         'duration': int(duration),
         'runs': int(runs),
+        'benchmark_delay': int(benchmark_delay),
     }
     node_params = {
         'header_size': 1_000,  # bytes
@@ -632,6 +634,7 @@ def remote_run_batch(
     tx_size=512,
     duration=300,
     runs=2,
+    benchmark_delay=0,
 ):
     ''' Run benchmarks on AWS and keep logs on remote machines for later collection '''
     from benchmark.remote import Bench
@@ -652,6 +655,7 @@ def remote_run_batch(
         'tx_size': int(tx_size),
         'duration': int(duration),
         'runs': int(runs),
+        'benchmark_delay': int(benchmark_delay),
     }
     node_params = {
         'header_size': 1_000,  # bytes

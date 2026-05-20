@@ -234,6 +234,8 @@ class BenchParameters:
             self.duration = int(json['duration'])
 
             self.runs = int(json['runs']) if 'runs' in json else 1
+
+            self.benchmark_delay = int(json['benchmark_delay']) if 'benchmark_delay' in json else 0
         except KeyError as e:
             raise ConfigError(f'Malformed bench parameters: missing key {e}')
 
