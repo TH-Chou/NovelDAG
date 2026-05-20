@@ -18,6 +18,35 @@ from benchmark.utils import Print, BenchError, progress_bar
 from benchmark.settings import Settings, SettingsError
 
 
+# ── Retry helper for transient AWS API failures ──────────────────
+_AWS_RETRIES = 8
+_AWS_RETRY_BASE_DELAY = 2  # seconds, exponential backoff
+
+
+def _aws_retry(action_name, fn, *args, **kwargs):
+    """Call *fn(...)* with up to _AWS_RETRIES attempts on BotoClientError.
+    Exponential backoff caps at 60s. Raises AWSError wrapped in BenchError
+    after all retries are exhausted."""
+    last = None
+    for attempt in range(1, _AWS_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except BotoClientError as e:
+            last = e
+            if attempt == _AWS_RETRIES:
+                break
+            delay = min(_AWS_RETRY_BASE_DELAY ** attempt, 60)
+            Print.warn(
+                f'{action_name} failed (attempt {attempt}/{_AWS_RETRIES}): '
+                f'{e.response["Error"]["Code"]}. Retrying in {delay}s...'
+            )
+            sleep(delay)
+    raise BenchError(
+        f'{action_name} failed after {_AWS_RETRIES} attempts',
+        AWSError(last),
+    )
+
+
 class AWSError(Exception):
     def __init__(self, error):
         assert isinstance(error, BotoClientError)
@@ -49,11 +78,13 @@ class AWSInstanceManager:
         # 'terminated', 'stopping', and 'stopped'.
         ids, ips = defaultdict(list), defaultdict(list)
         for region, client in self.clients.items():
-            r = client.describe_instances(
+            r = _aws_retry(
+                f'describe_instances in {region}',
+                client.describe_instances,
                 Filters=[
                     {"Name": "tag:Name", "Values": [self.INSTANCE_NAME]},
                     {"Name": "instance-state-name", "Values": state},
-                ]
+                ],
             )
             instances = [y for x in r["Reservations"] for y in x["Instances"]]
             for x in instances:
@@ -175,6 +206,9 @@ class AWSInstanceManager:
                 if error.code != "InvalidGroup.Duplicate":
                     raise BenchError("Failed to create security group", error)
 
+        # Track created instance IDs per region so we can rollback on failure.
+        created_ids = defaultdict(list)
+
         try:
             # Create all instances.
             size = instances * len(self.clients)
@@ -182,7 +216,10 @@ class AWSInstanceManager:
                 self.clients.values(), prefix=f"Creating {size} instances"
             )
             for client in progress:
-                client.run_instances(
+                region = client.meta.region_name
+                result = _aws_retry(
+                    f'run_instances in {region}',
+                    client.run_instances,
                     ImageId=self._get_ami(client),
                     InstanceType=self.settings.instance_type,
                     KeyName=self.settings.key_name,
@@ -207,13 +244,38 @@ class AWSInstanceManager:
                         }
                     ],
                 )
+                created_ids[region] = [
+                    inst["InstanceId"] for inst in result["Instances"]
+                ]
 
             # Wait for the instances to boot.
             Print.info("Waiting for all instances to boot...")
             self._wait(["pending"])
             Print.heading(f"Successfully created {size} new instances")
-        except BotoClientError as e:
-            raise BenchError("Failed to create AWS instances", AWSError(e))
+
+        except (BenchError, BotoClientError) as e:
+            # Rollback: terminate any instances already created.
+            total_created = sum(len(ids) for ids in created_ids.values())
+            if total_created > 0:
+                Print.warn(
+                    f'Rolling back {total_created} already-created instances '
+                    f'(original error: {e})'
+                )
+                for region, ids in created_ids.items():
+                    if ids:
+                        client = self.clients[region]
+                        try:
+                            client.terminate_instances(InstanceIds=ids)
+                        except BotoClientError:
+                            pass
+                # Wait for rollback terminates to complete.
+                try:
+                    self._wait(["shutting-down"])
+                except (BenchError, BotoClientError):
+                    pass
+            if isinstance(e, BotoClientError):
+                raise BenchError("Failed to create AWS instances", AWSError(e))
+            raise
 
     def terminate_instances(self):
         try:
@@ -226,13 +288,20 @@ class AWSInstanceManager:
             # Terminate instances.
             for region, client in self.clients.items():
                 if ids[region]:
-                    client.terminate_instances(InstanceIds=ids[region])
+                    _aws_retry(
+                        f'terminate_instances in {region}',
+                        client.terminate_instances,
+                        InstanceIds=ids[region],
+                    )
 
             # Wait for all instances to properly shut down.
             Print.info("Waiting for all instances to shut down...")
             self._wait(["shutting-down"])
             for client in self.clients.values():
-                client.delete_security_group(GroupName=self.SECURITY_GROUP_NAME)
+                try:
+                    client.delete_security_group(GroupName=self.SECURITY_GROUP_NAME)
+                except BotoClientError:
+                    pass
 
             Print.heading(f"Testbed of {size} instances destroyed")
         except BotoClientError as e:
@@ -247,7 +316,11 @@ class AWSInstanceManager:
                     target = ids[region]
                     target = target if len(target) < max else target[:max]
                     size += len(target)
-                    client.start_instances(InstanceIds=target)
+                    _aws_retry(
+                        f'start_instances in {region}',
+                        client.start_instances,
+                        InstanceIds=target,
+                    )
             Print.heading(f"Starting {size} instances")
         except BotoClientError as e:
             raise BenchError("Failed to start instances", AWSError(e))
@@ -257,7 +330,11 @@ class AWSInstanceManager:
             ids, _ = self._get(["pending", "running"])
             for region, client in self.clients.items():
                 if ids[region]:
-                    client.stop_instances(InstanceIds=ids[region])
+                    _aws_retry(
+                        f'stop_instances in {region}',
+                        client.stop_instances,
+                        InstanceIds=ids[region],
+                    )
             size = sum(len(x) for x in ids.values())
             Print.heading(f"Stopping {size} instances")
         except BotoClientError as e:
@@ -584,7 +661,7 @@ class InstanceManager:
         return cls(AWSInstanceManager(settings))
 
     def create_instances(self, instances):
-        return self.backend.create_instances(instances)
+        return self.backend._create_instances(instances)
 
     def terminate_instances(self):
         return self.backend.terminate_instances()

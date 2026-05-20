@@ -1095,3 +1095,456 @@ def _print_dag_summary(rows, protocols):
             else:
                 line += f' {"N/A":>12}'
         print(line)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Paper figure sweep helpers
+# ═══════════════════════════════════════════════════════════════
+
+def _run_dag_sweep(
+    ctx,
+    bench_params,
+    node_params,
+    protocol_list,
+    output_csv,
+    debug,
+):
+    """Run a rate sweep across DAG protocols for a single (nodes, faults)."""
+    from benchmark.remote import Bench
+
+    rate_values = bench_params['rate']
+    if isinstance(rate_values, (int, float)):
+        rate_values = [int(rate_values)]
+    else:
+        rate_values = [int(x) for x in rate_values]
+
+    all_rows = []
+    total = len(protocol_list) * len(rate_values) * bench_params['runs']
+    current = 0
+
+    for proto in protocol_list:
+        Print.heading(
+            f'Sweeping {proto} | nodes={bench_params["nodes"][0]} '
+            f'faults={bench_params["faults"]} '
+            f'rates={rate_values[0]:,}..{rate_values[-1]:,} '
+            f'runs={bench_params["runs"]}'
+        )
+        current_node = dict(node_params)
+        current_node['dag_protocol'] = proto
+        bench = Bench(ctx)
+        bench.run(bench_params, current_node, debug)
+
+        # Collect results from individual result files
+        n_nodes = bench_params['nodes'][0]
+        for r in rate_values:
+            for run_i in range(1, bench_params['runs'] + 1):
+                current += 1
+                result_path = PathMaker.result_file(
+                    bench_params['faults'], n_nodes, bench_params['workers'],
+                    bench_params['collocate'],
+                    r, bench_params['tx_size'], proto,
+                )
+                try:
+                    with open(result_path, 'r') as f:
+                        text = f.read()
+                    metrics = _parse_result_text(text)
+                    all_rows.append({
+                        'rate': r,
+                        'nodes': n_nodes,
+                        'faults': bench_params['faults'],
+                        'protocol': proto,
+                        'consensus_tps': f'{metrics["consensus_tps"]:.2f}',
+                        'consensus_latency_ms': f'{metrics["consensus_latency_ms"]:.2f}',
+                        'end_to_end_tps': f'{metrics["end_to_end_tps"]:.2f}',
+                        'end_to_end_latency_ms': f'{metrics["end_to_end_latency_ms"]:.2f}',
+                    })
+                    Print.info(
+                        f'  [{current}/{total}] rate={r:,} proto={proto} '
+                        f'lat={metrics["consensus_latency_ms"]:.1f}ms '
+                        f'tps={metrics["end_to_end_tps"]:,.0f}'
+                    )
+                except FileNotFoundError:
+                    Print.warn(f'  [{current}/{total}] Missing: {result_path}')
+
+    # Save CSV with nodes and faults columns
+    with open(output_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                'rate', 'nodes', 'faults', 'protocol',
+                'consensus_tps', 'consensus_latency_ms',
+                'end_to_end_tps', 'end_to_end_latency_ms',
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(all_rows)
+    print(f'Saved {len(all_rows)} rows to {output_csv}')
+
+    _print_dag_summary(all_rows, protocol_list)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Figure 1 & 2: DAG protocol comparison across node counts
+#   - Protocols: NovelDAG, Narwhal (Tusk), Wahoo
+#   - Nodes: 10, 20, 50
+#   - Faults: 0
+#   - 500KB max block size (= batch_size 500_000), 512B tx
+# ═══════════════════════════════════════════════════════════════
+
+@task
+def paper_fig1_fig2(
+    ctx,
+    duration=30,
+    debug=True,
+    nodes='10,20,50',
+    faults=0,
+    workers=1,
+    tx_size=512,
+    runs=2,
+    rate_start=60_000,
+    rate_step=30_000,
+    rate_end=300_000,
+    protocols='noveldag,narwhal,wahoo',
+    consensus='round_robin',
+    output_csv='csv_plots/paper_fig1_fig2.csv',
+):
+    ''' Figure 1 & 2: Rate sweep across node counts (10, 20, 50), faults=0.
+
+    Compares NovelDAG, Narwhal (Tusk), and Wahoo.
+    - WAN measurements (AWS remote testbed)
+    - 500KB max block size, 512B transaction size
+    '''
+    node_list = [int(x.strip()) for x in str(nodes).split(',') if x.strip()]
+    protocol_list = [p.strip() for p in str(protocols).split(',') if p.strip()]
+    rate_list = list(range(int(rate_start), int(rate_end) + 1, int(rate_step)))
+
+    for proto in protocol_list:
+        if proto not in ('narwhal', 'bullshark', 'noveldag', 'wahoo'):
+            raise BenchError(f'Invalid dag_protocol: {proto}')
+
+    node_params = {
+        'header_size': 1_000,
+        'max_header_delay': 200,
+        'gc_depth': 50,
+        'sync_retry_delay': 10_000,
+        'sync_retry_nodes': 3,
+        'batch_size': 500_000,
+        'max_batch_delay': 200,
+        'consensus_protocol': consensus,
+    }
+
+    # Merge per-node-count CSVs
+    all_rows = []
+    for n in node_list:
+        Print.heading(f'=== nodes={n} faults={faults} ===')
+        partial_csv = f'{output_csv}.n{n}.tmp.csv'
+        bench_params = {
+            'faults': int(faults),
+            'nodes': [n],
+            'workers': int(workers),
+            'collocate': True,
+            'rate': rate_list,
+            'tx_size': int(tx_size),
+            'duration': int(duration),
+            'runs': int(runs),
+        }
+        _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
+                        partial_csv, debug)
+
+        try:
+            with open(partial_csv, newline='') as f:
+                for row in csv.DictReader(f):
+                    all_rows.append(row)
+        except FileNotFoundError:
+            Print.warn(f'Partial CSV not found: {partial_csv}')
+
+    # Write merged CSV
+    with open(output_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                'rate', 'nodes', 'faults', 'protocol',
+                'consensus_tps', 'consensus_latency_ms',
+                'end_to_end_tps', 'end_to_end_latency_ms',
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(all_rows)
+    print(f'Merged {len(all_rows)} rows to {output_csv}')
+    _print_dag_summary(all_rows, protocol_list)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Figure 3: DAG protocol comparison under crash faults
+#   - Protocols: NovelDAG, Narwhal (Tusk), Wahoo
+#   - Nodes: 10
+#   - Faults: 0, 1, 3
+#   - 500KB max block size, 512B tx
+# ═══════════════════════════════════════════════════════════════
+
+@task
+def paper_fig3(
+    ctx,
+    duration=30,
+    debug=True,
+    nodes=10,
+    faults='0,1,3',
+    workers=1,
+    tx_size=512,
+    runs=2,
+    rate_start=60_000,
+    rate_step=30_000,
+    rate_end=300_000,
+    protocols='noveldag,narwhal,wahoo',
+    consensus='round_robin',
+    output_csv='csv_plots/paper_fig3.csv',
+):
+    ''' Figure 3: Rate sweep across crash faults (0, 1, 3), nodes=10.
+
+    Compares NovelDAG, Narwhal (Tusk), and Wahoo.
+    - WAN measurements (AWS remote testbed)
+    - 500KB max block size, 512B transaction size
+    '''
+    fault_list = [int(x.strip()) for x in str(faults).split(',') if x.strip()]
+    protocol_list = [p.strip() for p in str(protocols).split(',') if p.strip()]
+    rate_list = list(range(int(rate_start), int(rate_end) + 1, int(rate_step)))
+
+    for proto in protocol_list:
+        if proto not in ('narwhal', 'bullshark', 'noveldag', 'wahoo'):
+            raise BenchError(f'Invalid dag_protocol: {proto}')
+
+    node_params = {
+        'header_size': 1_000,
+        'max_header_delay': 200,
+        'gc_depth': 50,
+        'sync_retry_delay': 10_000,
+        'sync_retry_nodes': 3,
+        'batch_size': 500_000,
+        'max_batch_delay': 200,
+        'consensus_protocol': consensus,
+    }
+
+    all_rows = []
+    for f in fault_list:
+        Print.heading(f'=== nodes={nodes} faults={f} ===')
+        partial_csv = f'{output_csv}.f{f}.tmp.csv'
+        bench_params = {
+            'faults': f,
+            'nodes': [int(nodes)],
+            'workers': int(workers),
+            'collocate': True,
+            'rate': rate_list,
+            'tx_size': int(tx_size),
+            'duration': int(duration),
+            'runs': int(runs),
+        }
+        _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
+                        partial_csv, debug)
+
+        try:
+            with open(partial_csv, newline='') as fh:
+                for row in csv.DictReader(fh):
+                    all_rows.append(row)
+        except FileNotFoundError:
+            Print.warn(f'Partial CSV not found: {partial_csv}')
+
+    with open(output_csv, 'w', newline='') as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                'rate', 'nodes', 'faults', 'protocol',
+                'consensus_tps', 'consensus_latency_ms',
+                'end_to_end_tps', 'end_to_end_latency_ms',
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(all_rows)
+    print(f'Merged {len(all_rows)} rows to {output_csv}')
+    _print_dag_summary(all_rows, protocol_list)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Paper figure plotting
+# ═══════════════════════════════════════════════════════════════
+
+@task
+def paper_plot_fig1(
+    ctx,
+    csv_path='csv_plots/paper_fig1_fig2.csv',
+    out_dir='results',
+):
+    ''' Figure 1: Throughput-latency scatter per node count.
+
+    One panel per node count (10, 20, 50). Each panel overlays
+    NovelDAG, Narwhal, Wahoo with rate annotations. '''
+    import matplotlib.pyplot as plt
+
+    rows = _read_paper_csv(csv_path)
+    protocols = sorted({r['protocol'] for r in rows})
+    node_list = sorted({int(r['nodes']) for r in rows})
+
+    markers = {'narwhal': 's', 'noveldag': 'o', 'wahoo': '^'}
+    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+
+    fig, axes = plt.subplots(1, len(node_list), figsize=(6 * len(node_list), 5.5))
+    if len(node_list) == 1:
+        axes = [axes]
+
+    for ax, n in zip(axes, node_list):
+        subset = [r for r in rows if int(r['nodes']) == n]
+        for proto in protocols:
+            pts = [r for r in subset if r['protocol'] == proto]
+            if not pts:
+                continue
+            xs = [float(r['end_to_end_tps']) for r in pts]
+            ys = [float(r['consensus_latency_ms']) for r in pts]
+            ax.plot(xs, ys, color=colors.get(proto), marker=markers.get(proto),
+                    markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+            for r_pt in pts:
+                ax.annotate(f'{int(r_pt["rate"])//1000}k',
+                            (float(r_pt['end_to_end_tps']),
+                             float(r_pt['consensus_latency_ms'])),
+                            textcoords='offset points', xytext=(5, 5),
+                            fontsize=6, alpha=0.7)
+        ax.set_title(f'n = {n}')
+        ax.set_xlabel('End-to-End Throughput (tx/s)')
+        if ax is axes[0]:
+            ax.set_ylabel('Consensus Latency (ms)')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    fig.suptitle('Figure 1: Throughput--Latency under WAN (faults=0)',
+                 fontweight='bold')
+    fig.tight_layout()
+    png = f'{out_dir}/paper_fig1_tps_latency.png'
+    fig.savefig(png, dpi=180)
+    plt.close(fig)
+    print(f'Saved: {png}')
+
+
+@task
+def paper_plot_fig2(
+    ctx,
+    csv_path='csv_plots/paper_fig1_fig2.csv',
+    out_dir='results',
+    max_latency_ms=5_000,
+):
+    ''' Figure 2: Maximum throughput per protocol keeping latency < 5s.
+
+    Bar chart grouped by node count (10, 20, 50). '''
+    import matplotlib.pyplot as plt
+
+    rows = _read_paper_csv(csv_path)
+    protocols = sorted({r['protocol'] for r in rows})
+    node_list = sorted({int(r['nodes']) for r in rows})
+
+    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+
+    # For each (protocol, nodes), find max TPS where latency <= max_latency_ms
+    best = {p: [] for p in protocols}
+    for n in node_list:
+        for proto in protocols:
+            pts = [r for r in rows
+                   if int(r['nodes']) == n and r['protocol'] == proto
+                   and float(r['consensus_latency_ms']) <= max_latency_ms]
+            max_tps = max((float(r['end_to_end_tps']) for r in pts), default=0)
+            best[proto].append(max_tps)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x = range(len(node_list))
+    width = 0.25
+    for i, proto in enumerate(protocols):
+        bars = ax.bar([xi + i * width for xi in x], best[proto], width,
+                       label=proto.capitalize(),
+                       color=colors.get(proto, '#999'),
+                       edgecolor='black', linewidth=0.5)
+        for bar, val in zip(bars, best[proto]):
+            if val > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 500,
+                        f'{val:,.0f}', ha='center', va='bottom', fontsize=8)
+
+    ax.set_xticks([xi + width for xi in x])
+    ax.set_xticklabels([str(n) for n in node_list])
+    ax.set_xlabel('Committee Size')
+    ax.set_ylabel('Max End-to-End Throughput (tx/s)')
+    ax.set_title(f'Figure 2: Max Throughput (latency < {max_latency_ms // 1000}s, faults=0)')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+
+    fig.tight_layout()
+    png = f'{out_dir}/paper_fig2_max_tps.png'
+    fig.savefig(png, dpi=180)
+    plt.close(fig)
+    print(f'Saved: {png}')
+
+
+@task
+def paper_plot_fig3(
+    ctx,
+    csv_path='csv_plots/paper_fig3.csv',
+    out_dir='results',
+):
+    ''' Figure 3: Throughput-latency under crash faults (0, 1, 3).
+
+    One panel per fault count. Each panel overlays the three protocols. '''
+    import matplotlib.pyplot as plt
+
+    rows = _read_paper_csv(csv_path)
+    protocols = sorted({r['protocol'] for r in rows})
+    fault_list = sorted({int(r['faults']) for r in rows})
+
+    markers = {'narwhal': 's', 'noveldag': 'o', 'wahoo': '^'}
+    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+
+    fig, axes = plt.subplots(1, len(fault_list), figsize=(6 * len(fault_list), 5.5))
+    if len(fault_list) == 1:
+        axes = [axes]
+
+    for ax, f in zip(axes, fault_list):
+        subset = [r for r in rows if int(r['faults']) == f]
+        for proto in protocols:
+            pts = [r for r in subset if r['protocol'] == proto]
+            if not pts:
+                continue
+            xs = [float(r['end_to_end_tps']) for r in pts]
+            ys = [float(r['consensus_latency_ms']) for r in pts]
+            ax.plot(xs, ys, color=colors.get(proto), marker=markers.get(proto),
+                    markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+            for r_pt in pts:
+                ax.annotate(f'{int(r_pt["rate"])//1000}k',
+                            (float(r_pt['end_to_end_tps']),
+                             float(r_pt['consensus_latency_ms'])),
+                            textcoords='offset points', xytext=(5, 5),
+                            fontsize=6, alpha=0.7)
+        ax.set_title(f'f = {f}')
+        ax.set_xlabel('End-to-End Throughput (tx/s)')
+        if ax is axes[0]:
+            ax.set_ylabel('Consensus Latency (ms)')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    fig.suptitle('Figure 3: Throughput--Latency under Crash Faults (n = 10)',
+                 fontweight='bold')
+    fig.tight_layout()
+    png = f'{out_dir}/paper_fig3_faults.png'
+    fig.savefig(png, dpi=180)
+    plt.close(fig)
+    print(f'Saved: {png}')
+
+
+@task
+def paper_plot_all(ctx, out_dir='results'):
+    ''' Run all three paper plots in sequence. '''
+    paper_plot_fig1(ctx, out_dir=out_dir)
+    paper_plot_fig2(ctx, out_dir=out_dir)
+    paper_plot_fig3(ctx, out_dir=out_dir)
+    Print.heading('All paper figures saved to ' + out_dir)
+
+
+def _read_paper_csv(path):
+    """Read a paper sweep CSV and return list of dicts with numeric types."""
+    rows = []
+    with open(path, newline='') as f:
+        for row in csv.DictReader(f):
+            rows.append(row)
+    return rows

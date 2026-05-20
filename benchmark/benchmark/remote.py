@@ -93,7 +93,10 @@ class Bench:
         assert isinstance(delete_logs, bool)
         hosts = hosts if hosts else self.manager.hosts(flat=True)
         delete_logs = CommandMaker.clean_logs() if delete_logs else 'true'
-        cmd = [delete_logs, f'({CommandMaker.kill()} || true)']
+        # Defensive cleanup: normal kill (tmux kill-server) + force-kill
+        # any lingering processes that might have escaped tmux.
+        force_kill = '(pkill -9 -f "^node$" || true) ; (pkill -9 -f "^benchmark_client$" || true)'
+        cmd = [delete_logs, f'({CommandMaker.kill()} || true)', force_kill]
         for attempt in range(1, self.SSH_RETRIES + 1):
             try:
                 g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
@@ -108,6 +111,21 @@ class Bench:
                     sleep(self.SSH_RETRY_DELAY_SECONDS)
                     continue
                 raise BenchError('Failed to kill nodes', FabricError(e))
+
+    def _count_alive(self, hosts):
+        """Pgrep each host to count how many still run the primary process.
+        Returns 0 if all are dead (abort), otherwise the count of alive hosts."""
+        dead = 0
+        for host in hosts:
+            try:
+                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                result = c.run('pgrep -c "^node$" || true', hide=True)
+                count = int(result.stdout.strip() or '0')
+                if count == 0:
+                    dead += 1
+            except Exception:
+                dead += 1
+        return len(hosts) - dead
 
     def _select_hosts(self, bench_parameters):
         # Collocate the primary and its workers on the same machine.
@@ -317,8 +335,21 @@ class Bench:
 
         # Wait for all transactions to be processed.
         duration = bench_parameters.duration
-        for _ in progress_bar(range(20), prefix=f'Running benchmark ({duration} sec):'):
+        for step in progress_bar(range(20), prefix=f'Running benchmark ({duration} sec):'):
             sleep(ceil(duration / 20))
+            # Periodic liveness check every 4th step (every ~60s for 300s runs).
+            # If all primaries have crashed, abort early to avoid wasting time.
+            if step > 0 and step % 4 == 0:
+                alive = self._count_alive(hosts)
+                if alive == 0:
+                    raise ExecutionError(
+                        'All primary processes died mid-benchmark -- aborting run'
+                    )
+                elif alive < len(hosts) * 0.5:
+                    Print.warn(
+                        f'Only {alive}/{len(hosts)} nodes alive -- '
+                        'possible partial failure'
+                    )
         self.kill(hosts=hosts, delete_logs=False)
 
     def _logs(self, committee, faults):

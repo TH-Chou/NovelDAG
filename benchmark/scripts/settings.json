@@ -1,0 +1,17 @@
+{
+  "key": {
+    "name": "gcp_dag_rsa",
+    "path": "/Users/apple/.ssh/gcp_dag_rsa"
+  },
+  "port": 5000,
+  "repo": {
+    "name": "NovelDAG",
+    "url": "https://github.com/TH-Chou/NovelDAG.git",
+    "branch": "unify-three-protocols"
+  },
+  "instances": {
+    "type": "m5d.2xlarge",
+    "regions": ["us-east-1"]
+  },
+  "provider": "aws"
+}
