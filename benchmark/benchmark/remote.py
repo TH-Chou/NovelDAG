@@ -37,8 +37,8 @@ class Bench:
     SSH_RETRIES = 5
     SSH_RETRY_DELAY_SECONDS = 3
 
-    def __init__(self, ctx):
-        self.manager = InstanceManager.make()
+    def __init__(self, ctx, settings_file='settings.json'):
+        self.manager = InstanceManager.make(settings_file)
         self.settings = self.manager.settings
         try:
             ctx.connect_kwargs.pkey = RSAKey.from_private_key_file(

@@ -235,7 +235,7 @@ def run_remote(
     from benchmark.remote import Bench
 
     ctx = Connection("localhost")  # Fabric context unused in our Bench override
-    b = Bench(ctx)
+    b = Bench(ctx, settings_file=settings_path)
     # Build params in the format Bench expects
     # For simplicity, iterate per config point via Bench.run()
     groups: dict[str, list[dict[str, Any]]] = {}
@@ -273,7 +273,7 @@ def collect_remote(
     from benchmark.remote import Bench
 
     ctx = Connection("localhost")
-    b = Bench(ctx)
+    b = Bench(ctx, settings_file=settings_path)
     b.collect_batch(batch_id, output_dir)
     print(f"Logs downloaded to {output_dir}/")
 

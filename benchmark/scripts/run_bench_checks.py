@@ -51,15 +51,10 @@ def check_local(delays: list[int]) -> None:
 
 def check_cloud(settings_path: str | Path) -> None:
     """Verify cloud mode prerequisites."""
-    if not Path(settings_path).exists():
-        raise PreflightError(
-            f"Settings file not found: {settings_path}. Create one with cloud provider config."
-        )
-
-    # Check that the cloud provider CLI is available
     try:
         from benchmark.settings import Settings
-        s = Settings.load(str(settings_path))
+        resolved_settings = Settings.resolve_path(str(settings_path))
+        s = Settings.load(str(resolved_settings))
     except Exception as e:
         raise PreflightError(f"Failed to load settings: {e}") from e
 
@@ -68,7 +63,7 @@ def check_cloud(settings_path: str | Path) -> None:
     if provider not in ("aws", "gcp"):
         # Try to detect from settings.json raw content
         import json
-        raw = json.loads(Path(settings_path).read_text())
+        raw = json.loads(Path(resolved_settings).read_text())
         provider = raw.get("provider", raw.get("cloud_provider", ""))
 
     if provider == "gcp":

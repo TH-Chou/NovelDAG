@@ -1,5 +1,6 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
 from json import load, JSONDecodeError
+from pathlib import Path
 
 
 class SettingsError(Exception):
@@ -64,7 +65,8 @@ class Settings:
     @classmethod
     def load(cls, filename):
         try:
-            with open(filename, 'r') as f:
+            path = cls.resolve_path(filename)
+            with open(path, 'r') as f:
                 data = load(f)
 
             provider = str(data.get('provider', 'aws')).strip().lower()
@@ -102,3 +104,25 @@ class Settings:
 
         except KeyError as e:
             raise SettingsError(f'Malformed settings: missing key {e}')
+
+    @staticmethod
+    def resolve_path(filename):
+        path = Path(filename).expanduser()
+        if path.is_absolute() and path.exists():
+            return path
+        if path.exists():
+            return path
+
+        benchmark_root = Path(__file__).resolve().parent.parent
+        candidates = [
+            benchmark_root / filename,
+            benchmark_root / 'scripts' / filename,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        raise SettingsError(
+            f'Settings file not found: {filename}. Looked in cwd, '
+            f'{benchmark_root}, and {benchmark_root / "scripts"}'
+        )

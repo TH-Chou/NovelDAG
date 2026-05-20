@@ -1,10 +1,12 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
 import csv
+import os
 import sys
 from pathlib import Path
 # Ensure benchmark package is importable regardless of CWD
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
+os.chdir(_ROOT)
 from collections import defaultdict
 from fabric import task
 
