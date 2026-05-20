@@ -11,10 +11,14 @@ use config::{Committee, DagProtocol};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{debug, error, warn};
+#[cfg(feature = "benchmark")]
+use log::info;
 use network::{CancelHandler, ReliableSender, SimpleSender};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(feature = "benchmark")]
+use std::time::Instant;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -73,6 +77,13 @@ pub struct Core {
     next_round_to_signal: Round,
     /// Rounds for which we sent a proposer signal without QC (own cert not yet ready).
     pending_qc_signals: HashSet<Round>,
+    /// Low-frequency diagnostics for NovelDAG proposer signal stalls.
+    #[cfg(feature = "benchmark")]
+    diag_signal_blocked_round: Option<Round>,
+    #[cfg(feature = "benchmark")]
+    diag_signal_blocked_since: Option<Instant>,
+    #[cfg(feature = "benchmark")]
+    diag_last_signal_block_log_at: Option<Instant>,
     /// A network sender to broadcast headers and certificates reliably.
     network: ReliableSender,
     /// A best-effort network sender for votes (no retry needed).
@@ -131,6 +142,12 @@ impl Core {
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
                 next_round_to_signal: 1,
                 pending_qc_signals: HashSet::new(),
+                #[cfg(feature = "benchmark")]
+                diag_signal_blocked_round: None,
+                #[cfg(feature = "benchmark")]
+                diag_signal_blocked_since: None,
+                #[cfg(feature = "benchmark")]
+                diag_last_signal_block_log_at: None,
                 network: ReliableSender::new(),
                 vote_network: SimpleSender::new(),
                 cancel_handlers: HashMap::with_capacity(2 * gc_depth as usize),
@@ -155,10 +172,97 @@ impl Core {
             .unwrap_or_default()
     }
 
+    #[cfg(feature = "benchmark")]
+    #[allow(clippy::too_many_arguments)]
+    fn diag_signal_blocked(
+        &mut self,
+        round: Round,
+        reason: &'static str,
+        round_authorities: usize,
+        round_weight: u32,
+        round_threshold: u32,
+        parents_1_len: usize,
+        previous_round: Round,
+        parents_2_authorities: usize,
+        parents_2_weight: u32,
+        parents_2_threshold: u32,
+        own_qc: bool,
+    ) {
+        if self.dag_protocol != DagProtocol::NovelDAG {
+            return;
+        }
+
+        let now = Instant::now();
+        if self.diag_signal_blocked_round != Some(round) {
+            self.diag_signal_blocked_round = Some(round);
+            self.diag_signal_blocked_since = Some(now);
+            self.diag_last_signal_block_log_at = None;
+        }
+
+        let should_log = self
+            .diag_last_signal_block_log_at
+            .map(|last| now.saturating_duration_since(last).as_secs() >= 5)
+            .unwrap_or(true);
+        if !should_log {
+            return;
+        }
+
+        self.diag_last_signal_block_log_at = Some(now);
+        let blocked_total_ms = self
+            .diag_signal_blocked_since
+            .map(|started| now.saturating_duration_since(started).as_millis() as u64)
+            .unwrap_or_default();
+
+        info!(
+            "DIAG_CORE_SIGNAL_BLOCKED round={} target_round={} reason={} round_authorities={} round_weight={}/{} parents_1={} previous_round={} parents_2_authorities={} parents_2_weight={}/{} own_qc={} blocked_total_ms={}",
+            round,
+            round + 1,
+            reason,
+            round_authorities,
+            round_weight,
+            round_threshold,
+            parents_1_len,
+            previous_round,
+            parents_2_authorities,
+            parents_2_weight,
+            parents_2_threshold,
+            own_qc,
+            blocked_total_ms,
+        );
+    }
+
     async fn try_signal_proposer(&mut self) {
         loop {
             let round = self.next_round_to_signal;
             let Some(by_authority) = self.certificates_by_round.get(&round) else {
+                let previous_round = if round == 1 { 0 } else { round - 1 };
+                let (_parents_2_authorities, _parents_2_weight) = self
+                    .certificates_by_round
+                    .get(&previous_round)
+                    .map(|by_authority| {
+                        (
+                            by_authority.len(),
+                            by_authority
+                                .keys()
+                                .map(|name| self.committee.stake(name))
+                                .sum::<u32>(),
+                        )
+                    })
+                    .unwrap_or_default();
+                #[cfg(feature = "benchmark")]
+                self.diag_signal_blocked(
+                    round,
+                    "missing_round_certificates",
+                    0,
+                    0,
+                    self.committee.quorum_threshold(),
+                    0,
+                    previous_round,
+                    _parents_2_authorities,
+                    _parents_2_weight,
+                    self.committee.validity_threshold(),
+                    false,
+                );
                 break;
             };
 
@@ -167,28 +271,101 @@ impl Core {
                 .map(|name| self.committee.stake(name))
                 .sum();
             if round_weight < self.committee.quorum_threshold() {
+                let previous_round = if round == 1 { 0 } else { round - 1 };
+                let (_parents_2_authorities, _parents_2_weight) = self
+                    .certificates_by_round
+                    .get(&previous_round)
+                    .map(|by_authority| {
+                        (
+                            by_authority.len(),
+                            by_authority
+                                .keys()
+                                .map(|name| self.committee.stake(name))
+                                .sum::<u32>(),
+                        )
+                    })
+                    .unwrap_or_default();
+                #[cfg(feature = "benchmark")]
+                self.diag_signal_blocked(
+                    round,
+                    "round_weight_below_quorum",
+                    by_authority.len(),
+                    round_weight,
+                    self.committee.quorum_threshold(),
+                    by_authority.len(),
+                    previous_round,
+                    _parents_2_authorities,
+                    _parents_2_weight,
+                    self.committee.validity_threshold(),
+                    by_authority.contains_key(&self.name),
+                );
                 break;
             }
 
             let parents_1 = self.round_digests(round);
             if parents_1.is_empty() {
+                let previous_round = if round == 1 { 0 } else { round - 1 };
+                let (_parents_2_authorities, _parents_2_weight) = self
+                    .certificates_by_round
+                    .get(&previous_round)
+                    .map(|by_authority| {
+                        (
+                            by_authority.len(),
+                            by_authority
+                                .keys()
+                                .map(|name| self.committee.stake(name))
+                                .sum::<u32>(),
+                        )
+                    })
+                    .unwrap_or_default();
+                #[cfg(feature = "benchmark")]
+                self.diag_signal_blocked(
+                    round,
+                    "empty_parents_1",
+                    by_authority.len(),
+                    round_weight,
+                    self.committee.quorum_threshold(),
+                    parents_1.len(),
+                    previous_round,
+                    _parents_2_authorities,
+                    _parents_2_weight,
+                    self.committee.validity_threshold(),
+                    by_authority.contains_key(&self.name),
+                );
                 break;
             }
 
             let previous_round = if round == 1 { 0 } else { round - 1 };
             let parents_2 = self.round_digests(previous_round);
 
-            let parents_2_weight: u32 = self
+            let (_parents_2_authorities, parents_2_weight): (usize, u32) = self
                 .certificates_by_round
                 .get(&previous_round)
                 .map(|by_authority| {
-                    by_authority
-                        .keys()
-                        .map(|name| self.committee.stake(name))
-                        .sum()
+                    (
+                        by_authority.len(),
+                        by_authority
+                            .keys()
+                            .map(|name| self.committee.stake(name))
+                            .sum::<u32>(),
+                    )
                 })
                 .unwrap_or_default();
             if round >= 2 && parents_2_weight < self.committee.validity_threshold() {
+                #[cfg(feature = "benchmark")]
+                self.diag_signal_blocked(
+                    round,
+                    "parents_2_weight_below_validity",
+                    by_authority.len(),
+                    round_weight,
+                    self.committee.quorum_threshold(),
+                    parents_1.len(),
+                    previous_round,
+                    _parents_2_authorities,
+                    parents_2_weight,
+                    self.committee.validity_threshold(),
+                    by_authority.contains_key(&self.name),
+                );
                 break;
             }
 
@@ -199,6 +376,20 @@ impl Core {
             let qc = own_certificate.map(|c| Self::certificate_to_embedded_qc(c));
             let needs_qc = round >= 1; // proposer target round >= 2
             if needs_qc && qc.is_none() {
+                #[cfg(feature = "benchmark")]
+                self.diag_signal_blocked(
+                    round,
+                    "missing_own_qc",
+                    by_authority.len(),
+                    round_weight,
+                    self.committee.quorum_threshold(),
+                    parents_1.len(),
+                    previous_round,
+                    _parents_2_authorities,
+                    parents_2_weight,
+                    self.committee.validity_threshold(),
+                    false,
+                );
                 break;
             }
 
@@ -214,6 +405,13 @@ impl Core {
                 .send(signal)
                 .await
                 .expect("Failed to send certificate");
+
+            #[cfg(feature = "benchmark")]
+            if self.diag_signal_blocked_round == Some(round) {
+                self.diag_signal_blocked_round = None;
+                self.diag_signal_blocked_since = None;
+                self.diag_last_signal_block_log_at = None;
+            }
 
             self.next_round_to_signal += 1;
         }
@@ -379,7 +577,13 @@ impl Core {
             // 1. qc.round < commit_round 已约束 QC 形成时间早于提交轮
             // 2. qc.target == parent.id  防止跨块 QC 重放
             // 3. QC 嵌入已签名 Header 中，摘要包含全部投票数据，无法伪造
-            let vote = Vote::new(header, header.round, &self.name, &mut self.signature_service).await;
+            let vote = Vote::new(
+                header,
+                header.round,
+                &self.name,
+                &mut self.signature_service,
+            )
+            .await;
             debug!("Created {:?}", vote);
             if vote.origin == self.name {
                 self.process_vote(vote)
@@ -426,7 +630,6 @@ impl Core {
         }
     }
 
-
     #[async_recursion]
     async fn process_vote(&mut self, vote: Vote) -> DagResult<()> {
         debug!("Processing {:?}", vote);
@@ -465,7 +668,6 @@ impl Core {
         }
         Ok(())
     }
-
 
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
@@ -517,7 +719,8 @@ impl Core {
             }
             DagProtocol::Narwhal => {
                 // Store to disk for crash recovery.
-                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                let bytes =
+                    bincode::serialize(&certificate).expect("Failed to serialize certificate");
                 self.store.write(certificate.digest().to_vec(), bytes).await;
 
                 if let Some(parents) = self
@@ -541,7 +744,8 @@ impl Core {
             }
             DagProtocol::Bullshark | DagProtocol::Wahoo => {
                 // Store to disk for crash recovery.
-                let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                let bytes =
+                    bincode::serialize(&certificate).expect("Failed to serialize certificate");
                 self.store.write(certificate.digest().to_vec(), bytes).await;
 
                 if let Some(parents) = self
@@ -550,8 +754,7 @@ impl Core {
                     .or_insert_with(|| Box::new(CertificatesVecAggregator::new()))
                     .append(certificate.clone(), &self.committee)?
                 {
-                    let parents_1: Vec<Digest> =
-                        parents.iter().map(|c| c.digest()).collect();
+                    let parents_1: Vec<Digest> = parents.iter().map(|c| c.digest()).collect();
                     let signal = ProposerSignal {
                         round: certificate.round(),
                         parents_1,
@@ -592,7 +795,9 @@ impl Core {
         );
 
         // Verify the header's signature (CPU-bound; runs on blocking pool).
-        header.verify_async(&self.committee, self.dag_protocol).await?;
+        header
+            .verify_async(&self.committee, self.dag_protocol)
+            .await?;
 
         Ok(())
     }
@@ -623,13 +828,15 @@ impl Core {
 
         // Verify the certificate (and the embedded header); CPU-bound work
         // runs on the blocking pool.
-        certificate.verify_async(&self.committee, self.dag_protocol).await?;
+        certificate
+            .verify_async(&self.committee, self.dag_protocol)
+            .await?;
         Ok(())
     }
 
     // Main loop listening to incoming messages.
     pub async fn run(&mut self) {
-            loop {
+        loop {
             let result = tokio::select! {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
@@ -695,11 +902,11 @@ impl Core {
                 self.last_voted.retain(|k, _| k >= &gc_round);
                 self.processing.retain(|k, _| k >= &gc_round);
                 self.certificates_aggregators.retain(|k, _| k >= &gc_round);
-                self.certificates_vec_aggregators.retain(|k, _| k >= &gc_round);
+                self.certificates_vec_aggregators
+                    .retain(|k, _| k >= &gc_round);
                 self.cancel_handlers.retain(|k, _| k >= &gc_round);
                 self.gc_round = gc_round;
             }
         }
-
     }
 }
