@@ -10,6 +10,7 @@ from pathlib import Path
 from time import sleep
 from math import ceil
 from copy import deepcopy
+from shutil import rmtree
 import subprocess
 import threading
 import re
@@ -482,6 +483,9 @@ class Bench:
     def _batch_download(self, hosts, protocol, rates):
         """Download all checkpointed logs from all hosts in parallel,
         organising them into per-rate local directories."""
+        for r in rates:
+            rmtree(join(PathMaker.logs_path(), f'rate-{r}'), ignore_errors=True)
+
         # Flatten hosts list.
         flat_hosts = []
         for h in hosts:

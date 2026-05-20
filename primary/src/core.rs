@@ -188,7 +188,7 @@ impl Core {
                         .sum()
                 })
                 .unwrap_or_default();
-            if round >= 2 && parents_2_weight < self.committee.quorum_threshold() {
+            if round >= 2 && parents_2_weight < self.committee.validity_threshold() {
                 break;
             }
 
