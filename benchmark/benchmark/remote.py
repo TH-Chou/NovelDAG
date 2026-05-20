@@ -203,6 +203,32 @@ class Bench:
             f'{self.SSH_RETRIES} attempts: {last_error}'
         )
 
+    def _background_run_many(self, jobs, label):
+        assert isinstance(jobs, list)
+        assert isinstance(label, str) and label
+        if not jobs:
+            return
+
+        Print.info(f'Booting {label} on {len(jobs)} host(s)...')
+        workers = min(len(jobs), 16)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(self._background_run, host, cmd, log_file)
+                for host, cmd, log_file in jobs
+            ]
+            for f in as_completed(futures):
+                f.result()
+
+    @staticmethod
+    def _active_hosts(committee, faults):
+        hosts = set()
+        for address in committee.primary_addresses(faults):
+            hosts.add(Committee.ip(address))
+        for addresses in committee.workers_addresses(faults):
+            for _, address in addresses:
+                hosts.add(Committee.ip(address))
+        return list(hosts)
+
     def _update(self, hosts, collocate):
         if collocate:
             ips = list(set(hosts))
@@ -299,29 +325,31 @@ class Bench:
         hosts = committee.ips()
         self.kill(hosts=hosts, delete_logs=clean_logs)
 
-        # Run the clients (they will wait for the nodes to be ready).
-        # Filter all faulty nodes from the client addresses (or they will wait
-        # for the faulty nodes to be online).
-        Print.info('Booting clients...')
         workers_addresses = committee.workers_addresses(faults)
         active_workers = sum(len(addresses) for addresses in workers_addresses)
         if active_workers == 0:
             raise BenchError('No active workers available to inject transactions')
         rate_share = ceil(rate / active_workers)
+
+        # Start workers first so transaction endpoints and worker-to-primary
+        # connectors are up before primaries start proposing. Each phase is
+        # started in parallel to avoid a multi-region serial SSH skew.
+        worker_jobs = []
         for i, addresses in enumerate(workers_addresses):
             for (id, address) in addresses:
                 host = Committee.ip(address)
-                cmd = CommandMaker.run_client(
-                    address,
-                    bench_parameters.tx_size,
-                    rate_share,
-                    [x for y in workers_addresses for _, x in y]
+                cmd = CommandMaker.run_worker(
+                    PathMaker.key_file(i),
+                    PathMaker.committee_file(),
+                    PathMaker.db_path(i, id),
+                    PathMaker.parameters_file(),
+                    id,
+                    debug=debug
                 )
-                log_file = PathMaker.client_log_file(i, id)
-                self._background_run(host, cmd, log_file)
+                worker_jobs.append((host, cmd, PathMaker.worker_log_file(i, id)))
+        self._background_run_many(worker_jobs, 'workers')
 
-        # Run the primaries (except the faulty ones).
-        Print.info('Booting primaries...')
+        primary_jobs = []
         for i, address in enumerate(committee.primary_addresses(faults)):
             host = Committee.ip(address)
             cmd = CommandMaker.run_primary(
@@ -331,29 +359,28 @@ class Bench:
                 PathMaker.parameters_file(),
                 debug=debug
             )
-            log_file = PathMaker.primary_log_file(i)
-            self._background_run(host, cmd, log_file)
+            primary_jobs.append((host, cmd, PathMaker.primary_log_file(i)))
+        self._background_run_many(primary_jobs, 'primaries')
 
-        # Run the workers (except the faulty ones).
-        Print.info('Booting workers...')
-        for i, addresses in enumerate(workers_addresses):
-            for (id, address) in addresses:
-                host = Committee.ip(address)
-                cmd = CommandMaker.run_worker(
-                    PathMaker.key_file(i),
-                    PathMaker.committee_file(),
-                    PathMaker.db_path(i, id),
-                    PathMaker.parameters_file(),
-                    id,  # The worker's id.
-                    debug=debug
-                )
-                log_file = PathMaker.worker_log_file(i, id)
-                self._background_run(host, cmd, log_file)
-
-        # Delay before starting timed benchmark (let P2P mesh stabilize).
+        # Delay before starting clients (let the P2P mesh stabilize).
         if bench_parameters.benchmark_delay > 0:
             Print.info(f'Waiting {bench_parameters.benchmark_delay}s for P2P mesh to stabilize...')
             sleep(bench_parameters.benchmark_delay)
+
+        # Run the clients last. They still wait for workers to be ready, but at
+        # this point the consensus mesh has already had a chance to connect.
+        client_jobs = []
+        for i, addresses in enumerate(workers_addresses):
+            for (id, address) in addresses:
+                host = Committee.ip(address)
+                cmd = CommandMaker.run_client(
+                    address,
+                    bench_parameters.tx_size,
+                    rate_share,
+                    [x for y in workers_addresses for _, x in y]
+                )
+                client_jobs.append((host, cmd, PathMaker.client_log_file(i, id)))
+        self._background_run_many(client_jobs, 'clients')
 
         # Wait for all transactions to be processed.
         duration = bench_parameters.duration
@@ -648,6 +675,26 @@ class Bench:
             e = FabricError(e) if isinstance(e, GroupException) else e
             raise BenchError('Failed to configure nodes', e)
 
+        # Remove archived logs from previous invocations. Checkpoint directory
+        # names are deterministic (r<rate>-run<n>), so stale logs from a faulty
+        # node can otherwise be downloaded and parsed as part of the new run.
+        try:
+            flat_hosts = []
+            for h in selected_hosts:
+                if isinstance(h, list):
+                    flat_hosts.extend(h)
+                else:
+                    flat_hosts.append(h)
+            if flat_hosts:
+                protocol = node_parameters.json['dag_protocol']
+                Group(*flat_hosts, user='ubuntu', connect_kwargs=self.connect).run(
+                    f'rm -rf batch_logs/{protocol}',
+                    hide=True,
+                    warn=True,
+                )
+        except GroupException as e:
+            raise BenchError('Failed to clean archived benchmark logs', FabricError(e))
+
         # Run benchmarks: execute each rate then checkpoint logs on remote.
         for n in bench_parameters.nodes:
             committee_copy = deepcopy(committee)
@@ -666,7 +713,7 @@ class Bench:
 
                         checkpoint_id = f'r{r}-run{i+1}'
                         self._checkpoint_logs(
-                            committee_copy.ips(),
+                            self._active_hosts(committee_copy, bench_parameters.faults),
                             node_parameters.json['dag_protocol'],
                             checkpoint_id,
                         )

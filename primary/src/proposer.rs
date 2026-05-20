@@ -339,6 +339,8 @@ impl Proposer {
         let mut diag_qc_ready_at: Option<Instant> = None;
         #[cfg(feature = "benchmark")]
         let mut diag_last_propose_at: Option<Instant> = None;
+        #[cfg(feature = "benchmark")]
+        let mut diag_last_blocked_log_at: Option<Instant> = None;
         // Aggregate gate-wait sums over a window so we can spot the
         // dominant critical-path gate without log-flooding.
         #[cfg(feature = "benchmark")]
@@ -390,6 +392,29 @@ impl Proposer {
                         if diag_blocked_since.is_none() {
                             diag_blocked_windows += 1;
                             diag_blocked_since = Some(Instant::now());
+                        }
+                        let now = Instant::now();
+                        let should_log = diag_last_blocked_log_at
+                            .map(|last| now.saturating_duration_since(last).as_secs() >= 5)
+                            .unwrap_or(true);
+                        if should_log {
+                            diag_last_blocked_log_at = Some(now);
+                            info!(
+                                "DIAG_PROPOSER_BLOCKED round={} parents_1={} parents_2={}/{} qc={} payload_size={} timer_expired={} missing_parents_1={} missing_parents_2={} missing_qc={} blocked_total_ms={}",
+                                self.round,
+                                self.parents_1.len(),
+                                self.parents_2.len(),
+                                self.parents_2_threshold,
+                                self.last_qc.is_some(),
+                                self.payload_size,
+                                timer_expired,
+                                diag_missing_parents_1,
+                                diag_missing_parents_2,
+                                diag_missing_qc,
+                                diag_blocked_since
+                                    .map(|started| now.saturating_duration_since(started).as_millis() as u64)
+                                    .unwrap_or(0),
+                            );
                         }
                     }
 
