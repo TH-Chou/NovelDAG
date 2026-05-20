@@ -192,16 +192,16 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         );
 
         #[cfg(feature = "benchmark")]
+        let leader_id = b3.header.id.clone();
+        #[cfg(feature = "benchmark")]
+        let leader_round_log = b3.round();
+
+        #[cfg(feature = "benchmark")]
         info!(
             "DIAG_WAVE_BATCH commit_round={} wave_blocks={}",
             commit_round,
             sequence.len(),
         );
-
-        #[cfg(feature = "benchmark")]
-        let leader_id = b3.header.id.clone();
-        #[cfg(feature = "benchmark")]
-        let leader_round_log = b3.round();
 
         for x in sequence.iter() {
             state.update(x, consensus.gc_depth);

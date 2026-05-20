@@ -661,7 +661,7 @@ class InstanceManager:
         return cls(AWSInstanceManager(settings))
 
     def create_instances(self, instances):
-        return self.backend._create_instances(instances)
+        return self.backend.create_instances(instances)
 
     def terminate_instances(self):
         return self.backend.terminate_instances()

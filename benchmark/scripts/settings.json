@@ -1,7 +1,7 @@
 {
   "key": {
-    "name": "gcp_dag_rsa",
-    "path": "/Users/apple/.ssh/gcp_dag_rsa"
+    "name": "dag-key",
+    "path": "/Users/apple/.ssh/dag-key.pem"
   },
   "port": 5000,
   "repo": {
@@ -10,8 +10,8 @@
     "branch": "unify-three-protocols"
   },
   "instances": {
-    "type": "m5d.2xlarge",
-    "regions": ["us-east-1"]
+    "type": "t3.medium",
+    "regions": ["us-east-1", "us-west-2", "eu-west-1", "ap-northeast-1", "ap-southeast-1"]
   },
   "provider": "aws"
 }

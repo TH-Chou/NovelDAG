@@ -44,6 +44,8 @@ class Bench:
             ctx.connect_kwargs.pkey = RSAKey.from_private_key_file(
                 self.manager.settings.key_path
             )
+            ctx.connect_kwargs.timeout = 60
+            ctx.connect_kwargs.banner_timeout = 60
             self.connect = ctx.connect_kwargs
         except (IOError, PasswordRequiredException, SSHException) as e:
             raise BenchError('Failed to load SSH key', e)
@@ -63,30 +65,29 @@ class Bench:
             'sudo apt-get update',
             'sudo apt-get -y upgrade',
             'sudo apt-get -y autoremove',
-
-            # The following dependencies prevent the error: [error: linker `cc` not found].
-            'sudo apt-get -y install build-essential',
-            'sudo apt-get -y install cmake',
-
-            # Install rust (non-interactive).
+            'sudo apt-get -y install build-essential cmake clang',
             'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y',
             'source $HOME/.cargo/env',
             'rustup default stable',
-
-            # This is missing from the Rocksdb installer (needed for Rocksdb).
-            'sudo apt-get install -y clang',
-
-            # Clone the repo.
-            f'(git clone {self.settings.repo_url} || (cd {self.settings.repo_name} ; git pull))'
+            f'(git clone {self.settings.repo_url} || (cd {self.settings.repo_name} ; git pull))',
         ]
         hosts = self.manager.hosts(flat=True)
-        try:
-            g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
-            g.run(' && '.join(cmd), hide=True)
-            Print.heading(f'Initialized testbed of {len(hosts)} nodes')
-        except (GroupException, ExecutionError) as e:
-            e = FabricError(e) if isinstance(e, GroupException) else e
-            raise BenchError('Failed to install repo on testbed', e)
+        for attempt in range(1, self.SSH_RETRIES + 1):
+            try:
+                g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
+                g.run(' && '.join(cmd), hide=True)
+                Print.heading(f'Initialized testbed of {len(hosts)} nodes')
+                return
+            except (GroupException, ExecutionError) as e:
+                if 'Error reading SSH protocol banner' in str(e) and attempt < self.SSH_RETRIES:
+                    Print.warn(
+                        f'SSH transient error while installing '
+                        f'(attempt {attempt}/{self.SSH_RETRIES}); retrying...'
+                    )
+                    sleep(self.SSH_RETRY_DELAY_SECONDS)
+                    continue
+                e = FabricError(e) if isinstance(e, GroupException) else e
+                raise BenchError('Failed to install repo on testbed', e)
 
     def kill(self, hosts=[], delete_logs=False):
         assert isinstance(hosts, list)
