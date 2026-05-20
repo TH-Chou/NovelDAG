@@ -270,9 +270,9 @@ class Bench:
             for ip in committee.ips(name):
                 c = Connection(ip, user='ubuntu', connect_kwargs=self.connect)
                 c.run(f'{CommandMaker.cleanup()} || true', hide=True)
-                c.put(PathMaker.committee_file(), '.')
-                c.put(PathMaker.key_file(i), '.')
-                c.put(PathMaker.parameters_file(), '.')
+                c.put(PathMaker.committee_file(), 'logs/')
+                c.put(PathMaker.key_file(i), 'logs/')
+                c.put(PathMaker.parameters_file(), 'logs/')
 
         return committee
 
