@@ -93,7 +93,7 @@ class Bench:
         assert isinstance(hosts, list)
         assert isinstance(delete_logs, bool)
         hosts = hosts if hosts else self.manager.hosts(flat=True)
-        delete_logs = CommandMaker.clean_logs() if delete_logs else 'true'
+        delete_logs = CommandMaker.clean_run_logs() if delete_logs else 'true'
         # Defensive cleanup: normal kill (tmux kill-server) + force-kill
         # any lingering processes that might have escaped tmux.
         force_kill = '(pkill -9 -f "^node$" || true) ; (pkill -9 -f "^benchmark_client$" || true)'

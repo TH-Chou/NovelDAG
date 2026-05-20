@@ -17,6 +17,14 @@ class CommandMaker:
         return f'rm -r {PathMaker.logs_path()} ; mkdir -p {PathMaker.logs_path()}'
 
     @staticmethod
+    def clean_run_logs():
+        return (
+            f'mkdir -p {PathMaker.logs_path()} ; '
+            f'rm -f {PathMaker.logs_path()}/*.log ; '
+            f'rm -rf {PathMaker.logs_path()}/.db-*'
+        )
+
+    @staticmethod
     def compile():
         return 'cargo build --quiet --release --features benchmark'
 
