@@ -772,9 +772,9 @@ def compare_dag_protocols(
 
             # Parse result files produced by Bench.run()
             for run_i in range(1, int(runs) + 1):
-                result_path = PathMaker.result_file(
+                result_path = PathMaker.run_result_file(
                     int(faults), int(nodes), int(workers), True,
-                    int(rate), int(tx_size), proto
+                    int(rate), int(tx_size), run_i, proto
                 )
                 try:
                     with open(result_path, 'r') as f:
@@ -863,9 +863,9 @@ def sweep_dag_rates(
             for r in rates:
                 for run_i in range(1, int(runs) + 1):
                     current += 1
-                    result_path = PathMaker.result_file(
+                    result_path = PathMaker.run_result_file(
                         int(faults), int(nodes), int(workers), True,
-                        r, int(tx_size), proto
+                        r, int(tx_size), run_i, proto
                     )
                     try:
                         with open(result_path, 'r') as f:
@@ -1146,10 +1146,10 @@ def _run_dag_sweep(
         for r in rate_values:
             for run_i in range(1, bench_params['runs'] + 1):
                 current += 1
-                result_path = PathMaker.result_file(
+                result_path = PathMaker.run_result_file(
                     bench_params['faults'], n_nodes, bench_params['workers'],
                     bench_params['collocate'],
-                    r, bench_params['tx_size'], proto,
+                    r, bench_params['tx_size'], run_i, proto,
                 )
                 try:
                     with open(result_path, 'r') as f:

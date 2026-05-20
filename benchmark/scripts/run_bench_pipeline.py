@@ -431,15 +431,28 @@ def _read_result_file(
     # Result files follow PathMaker.result_file() naming
     from benchmark.utils import PathMaker
 
-    result_path = PathMaker.result_file(
-        point["faults"],
-        point["bench"]["nodes"],
-        point["bench"]["workers"],
-        True,  # collocate
-        point["rate"],
-        point["bench"]["tx_size"],
-        point["protocol"],
-    )
+    run_index = int(point.get("run_index", 0) or 0)
+    if run_index:
+        result_path = Path(PathMaker.run_result_file(
+            point["faults"],
+            point["bench"]["nodes"],
+            point["bench"]["workers"],
+            True,  # collocate
+            point["rate"],
+            point["bench"]["tx_size"],
+            run_index,
+            point["protocol"],
+        ))
+    else:
+        result_path = Path(PathMaker.result_file(
+            point["faults"],
+            point["bench"]["nodes"],
+            point["bench"]["workers"],
+            True,  # collocate
+            point["rate"],
+            point["bench"]["tx_size"],
+            point["protocol"],
+        ))
     full = logs_path / result_path.name if not result_path.is_absolute() else result_path
     alt = logs_path / "results" / result_path.name
 

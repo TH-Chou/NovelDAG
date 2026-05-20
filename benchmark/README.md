@@ -40,13 +40,37 @@ fab stop
 The settings loader also accepts `benchmark/scripts/settings.json` for
 backward compatibility, but `benchmark/settings.json` is the canonical file.
 
+For 10/20/50-node experiments across the default five AWS regions, create or
+start enough machines per region:
+
+```bash
+fab create --nodes=10     # 10 per region = 50 total
+fab start --max=10        # start up to 10 stopped machines per region
+fab info
+```
+
+The remote runner selects nodes round-robin across regions. If fewer than the
+requested number of running machines are available, it stops before uploading
+configs instead of silently running a smaller committee.
+
+Paper-style 10/20/50 runs use the Fabric paper tasks:
+
+```bash
+fab paper-fig1-fig2 --nodes=10,20,50 --faults=0 --runs=2 --duration=30
+fab paper-fig3 --nodes=10 --faults=0,1,3 --runs=2 --duration=30
+```
+
+Each run is archived separately under remote `batch_logs/` and downloaded to
+per-rate/per-run local directories, so repeated runs do not overwrite one
+another.
+
 ## Unified CLI
 
 The matrix runner lives under `benchmark/scripts`:
 
 ```bash
-python benchmark/scripts/run_bench.py --mode local run --config benchmark/scripts/configs/smoke.yaml
-python benchmark/scripts/run_bench.py --mode aws --settings benchmark/settings.json run --config benchmark/scripts/configs/smoke.yaml
+python benchmark/scripts/run_bench.py --mode local run --config scripts/configs/smoke.yaml
+python benchmark/scripts/run_bench.py --mode aws --settings settings.json run --config scripts/configs/smoke.yaml
 ```
 
 For `argparse`, global flags such as `--mode` and `--settings` must appear

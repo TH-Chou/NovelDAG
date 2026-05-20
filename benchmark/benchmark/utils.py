@@ -14,7 +14,7 @@ class BenchError(Exception):
 class PathMaker:
     @staticmethod
     def benchmark_root():
-        return Path(__file__).resolve().parent
+        return Path(__file__).resolve().parent.parent
 
     @staticmethod
     def workspace_root():
@@ -79,6 +79,15 @@ class PathMaker:
         return join(
             PathMaker.results_path(),
             f'bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}{protocol_part}.txt'
+        )
+
+    @staticmethod
+    def run_result_file(faults, nodes, workers, collocate, rate, tx_size, run, dag_protocol=None):
+        protocol_part = f'-{dag_protocol}' if dag_protocol else ''
+        return join(
+            PathMaker.results_path(),
+            f'bench-{faults}-{nodes}-{workers}-{collocate}-{rate}-{tx_size}'
+            f'{protocol_part}-run{run}.txt'
         )
 
     @staticmethod

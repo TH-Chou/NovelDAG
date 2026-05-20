@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,22 @@ def _comma_ints(s: str) -> list[int]:
 
 def _comma_strs(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _absolutize_existing_paths(args: argparse.Namespace) -> None:
+    """Preserve caller-relative paths before switching to benchmark root.
+
+    Defaults like settings.json intentionally remain relative so they resolve
+    against benchmark/. Explicit paths that already exist from the caller's cwd
+    are made absolute to keep older commands working.
+    """
+    for attr in ("settings", "config", "logs_dir", "output_csv", "csv"):
+        value = getattr(args, attr, None)
+        if not value:
+            continue
+        path = Path(value).expanduser()
+        if path.exists():
+            setattr(args, attr, str(path.resolve()))
 
 
 def main() -> None:
@@ -151,6 +168,8 @@ def main() -> None:
     full_p.add_argument("--batch-id", type=str, default="default")
 
     args = parser.parse_args()
+    _absolutize_existing_paths(args)
+    os.chdir(_BENCH_DIR)
 
     # ── Dispatch ────────────────────────────────────────────
     try:

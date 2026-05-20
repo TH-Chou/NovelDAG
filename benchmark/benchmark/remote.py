@@ -138,10 +138,24 @@ class Bench:
             if sum(len(x) for x in hosts.values()) < nodes:
                 return []
 
-            # Select the hosts in different data centers.
-            ordered = zip(*hosts.values())
-            ordered = [x for y in ordered for x in y]
-            return ordered[:nodes]
+            # Select hosts round-robin across regions. Do not use zip(*hosts):
+            # it truncates to the smallest region and can silently return fewer
+            # than nodes when AWS has an uneven region distribution.
+            per_region = [list(ips) for ips in hosts.values()]
+            ordered = []
+            index = 0
+            while len(ordered) < nodes:
+                progressed = False
+                for ips in per_region:
+                    if index < len(ips):
+                        ordered.append(ips[index])
+                        progressed = True
+                        if len(ordered) == nodes:
+                            break
+                if not progressed:
+                    break
+                index += 1
+            return ordered if len(ordered) == nodes else []
 
         # Spawn the primary and each worker on a different machine. Each
         # authority runs in a single data center.
@@ -455,9 +469,10 @@ class Bench:
                 )
                 if not result.stdout.strip():
                     continue
-                local_dir = join(PathMaker.logs_path(), f'rate-{r}')
-                Path(local_dir).mkdir(parents=True, exist_ok=True)
                 for log_file in result.stdout.strip().split('\n'):
+                    run_dir = Path(log_file).parent.name
+                    local_dir = join(PathMaker.logs_path(), f'rate-{r}', run_dir)
+                    Path(local_dir).mkdir(parents=True, exist_ok=True)
                     log_name = basename(log_file)
                     tasks.append((host, log_file, join(local_dir, log_name)))
 
@@ -628,7 +643,6 @@ class Bench:
             raise BenchError('Failed to configure nodes', e)
 
         # Run benchmarks: execute each rate then checkpoint logs on remote.
-        first_rate = True
         for n in bench_parameters.nodes:
             committee_copy = deepcopy(committee)
             committee_copy.remove_nodes(committee.size() - n)
@@ -641,9 +655,8 @@ class Bench:
                     try:
                         self._run_single(
                             r, committee_copy, bench_parameters, debug,
-                            clean_logs=first_rate,
+                            clean_logs=True,
                         )
-                        first_rate = False
 
                         checkpoint_id = f'r{r}-run{i+1}'
                         self._checkpoint_logs(
@@ -673,13 +686,34 @@ class Bench:
                 if not Path(rate_logs_dir).exists():
                     Print.warn(f'No logs found for rate={r}')
                     continue
-                logger = LogParser.process(rate_logs_dir, faults=faults)
-                logger.print(PathMaker.result_file(
-                    faults,
-                    n,
-                    bench_parameters.workers,
-                    bench_parameters.collocate,
-                    r,
-                    bench_parameters.tx_size,
-                    node_parameters.json['dag_protocol'],
-                ))
+                run_dirs = sorted(
+                    x for x in Path(rate_logs_dir).iterdir()
+                    if x.is_dir() and x.name.startswith('run')
+                )
+                if not run_dirs:
+                    run_dirs = [Path(rate_logs_dir)]
+                for run_dir in run_dirs:
+                    logger = LogParser.process(str(run_dir), faults=faults)
+                    run_suffix = ''.join(ch for ch in run_dir.name if ch.isdigit())
+                    if run_suffix:
+                        output_file = PathMaker.run_result_file(
+                            faults,
+                            n,
+                            bench_parameters.workers,
+                            bench_parameters.collocate,
+                            r,
+                            bench_parameters.tx_size,
+                            int(run_suffix),
+                            node_parameters.json['dag_protocol'],
+                        )
+                    else:
+                        output_file = PathMaker.result_file(
+                            faults,
+                            n,
+                            bench_parameters.workers,
+                            bench_parameters.collocate,
+                            r,
+                            bench_parameters.tx_size,
+                            node_parameters.json['dag_protocol'],
+                        )
+                    logger.print(output_file)
