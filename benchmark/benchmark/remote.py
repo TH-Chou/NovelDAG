@@ -14,6 +14,8 @@ from shutil import rmtree
 import subprocess
 import threading
 import re
+import socket
+import time
 
 from benchmark.config import Committee, Key, NodeParameters, BenchParameters, ConfigError
 from benchmark.utils import BenchError, Print, PathMaker, progress_bar
@@ -38,6 +40,9 @@ class ExecutionError(Exception):
 class Bench:
     SSH_RETRIES = 5
     SSH_RETRY_DELAY_SECONDS = 3
+    PRIMARY_READY_TIMEOUT_SECONDS = 60
+    PRIMARY_READY_POLL_SECONDS = 1
+    PRIMARY_READY_CONNECT_TIMEOUT_SECONDS = 1
 
     def __init__(self, ctx, settings_file='settings.json'):
         self.manager = InstanceManager.make(settings_file)
@@ -129,6 +134,64 @@ class Bench:
             except Exception:
                 dead += 1
         return len(hosts) - dead
+
+    @staticmethod
+    def _split_host_port(address):
+        host, port = address.rsplit(':', 1)
+        return host, int(port)
+
+    def _can_connect(self, address):
+        host, port = self._split_host_port(address)
+        try:
+            with socket.create_connection(
+                (host, port),
+                timeout=self.PRIMARY_READY_CONNECT_TIMEOUT_SECONDS,
+            ):
+                return True
+        except OSError:
+            return False
+
+    def _wait_for_primary_ports(self, addresses):
+        """Block until every active primary-to-primary port accepts TCP.
+
+        Primaries are launched in parallel, but on a multi-region testbed the
+        first node can start proposing while some peers are still binding their
+        sockets. This barrier narrows that startup skew before clients are
+        released and makes early-round NovelDAG parent collection less fragile.
+        """
+        assert isinstance(addresses, list)
+        if not addresses:
+            raise ExecutionError('No active primary ports to wait for')
+
+        deadline = time.monotonic() + self.PRIMARY_READY_TIMEOUT_SECONDS
+        pending = set(addresses)
+        Print.info(f'Waiting for {len(pending)} active primary ports...')
+
+        while pending:
+            with ThreadPoolExecutor(max_workers=min(32, len(pending))) as pool:
+                futures = {
+                    pool.submit(self._can_connect, address): address
+                    for address in pending
+                }
+                ready = {
+                    futures[future]
+                    for future in as_completed(futures)
+                    if future.result()
+                }
+
+            pending -= ready
+            if not pending:
+                Print.info('All active primary ports are reachable')
+                return
+
+            if time.monotonic() >= deadline:
+                missing = ', '.join(sorted(pending))
+                raise ExecutionError(
+                    'Primary ready barrier timed out; '
+                    f'unreachable primary ports: {missing}'
+                )
+
+            sleep(self.PRIMARY_READY_POLL_SECONDS)
 
     def _select_hosts(self, bench_parameters):
         # Collocate the primary and its workers on the same machine.
@@ -350,8 +413,9 @@ class Bench:
                 worker_jobs.append((host, cmd, PathMaker.worker_log_file(i, id)))
         self._background_run_many(worker_jobs, 'workers')
 
+        primary_addresses = committee.primary_addresses(faults)
         primary_jobs = []
-        for i, address in enumerate(committee.primary_addresses(faults)):
+        for i, address in enumerate(primary_addresses):
             host = Committee.ip(address)
             cmd = CommandMaker.run_primary(
                 PathMaker.key_file(i),
@@ -362,6 +426,7 @@ class Bench:
             )
             primary_jobs.append((host, cmd, PathMaker.primary_log_file(i)))
         self._background_run_many(primary_jobs, 'primaries')
+        self._wait_for_primary_ports(primary_addresses)
 
         # Delay before starting clients (let the P2P mesh stabilize).
         if bench_parameters.benchmark_delay > 0:
