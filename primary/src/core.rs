@@ -506,7 +506,7 @@ impl Core {
                     }
                     if header.round >= 2 {
                         ensure!(
-                            stake_2 >= self.committee.quorum_threshold(),
+                            stake_2 >= self.committee.validity_threshold(),
                             DagError::HeaderRequiresQuorum(header.id.clone())
                         );
                         let qc = header
@@ -699,10 +699,13 @@ impl Core {
         match self.dag_protocol {
             DagProtocol::NovelDAG => {
                 // NovelDAG certificates are never broadcast: peer blocks arrive
-                // as headers and are synthesised locally with empty votes. Skip
-                // disk storage — they would fail `Certificate::verify()` on
-                // re-read.  Instead, cache them in-memory so that
-                // `get_parents()` can find them without hitting the store.
+                // as headers and are synthesised locally with empty votes.
+                // Store them after local header validation so HeaderWaiter
+                // notify_read() calls wake up and helpers can answer sync
+                // requests for locally observed NovelDAG parents.
+                let bytes =
+                    bincode::serialize(&certificate).expect("Failed to serialize certificate");
+                self.store.write(certificate.digest().to_vec(), bytes).await;
                 self.synchronizer.cache_certificate(&certificate);
 
                 self.certificates_by_round

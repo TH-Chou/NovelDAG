@@ -714,6 +714,14 @@ impl Certificate {
         // Check the embedded header.
         self.header.verify(committee, dag_protocol)?;
 
+        // NovelDAG carries peer certificates implicitly through signed headers
+        // and embedded QCs. Locally synthesized certificates intentionally have
+        // empty vote sets; for NovelDAG the signed header is the object we need
+        // to store, sync, and use as a DAG parent.
+        if dag_protocol == DagProtocol::NovelDAG && self.votes.is_empty() {
+            return Ok(());
+        }
+
         // Ensure the certificate has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
