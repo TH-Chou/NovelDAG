@@ -37,8 +37,8 @@ fab kill
 fab stop
 ```
 
-The settings loader also accepts `benchmark/scripts/settings.json` for
-backward compatibility, but `benchmark/settings.json` is the canonical file.
+`benchmark/settings.json` is the canonical cloud configuration. The legacy
+`benchmark/scripts/settings.json` copy has been removed to avoid drift.
 
 For 10/20/50-node experiments across the default five AWS regions, create or
 start enough machines per region:

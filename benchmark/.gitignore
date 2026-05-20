@@ -4,6 +4,14 @@ logs/
 paper/
 results/
 plots/
+.venv/
+.DS_Store
+
+# Binary aliases created by local/remote benchmark setup
+node
+benchmark_client
+scripts/node
+scripts/benchmark_client
 
 # Benchmark runtime artifacts
 .db-*
