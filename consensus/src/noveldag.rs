@@ -6,7 +6,7 @@ use crate::Consensus;
 use crate::State;
 use crypto::{Digest, PublicKey};
 use crypto::Hash as _;
-use log::{debug, info, log_enabled, warn};
+use log::{debug, info, warn};
 use primary::{Certificate,  Round};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "benchmark")]
@@ -198,22 +198,14 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             sequence.len(),
         );
 
-        for x in sequence.iter() {
-            state.update(x, consensus.gc_depth);
-        }
-
-        // 日志：每节点最新提交轮次。
-        if log_enabled!(log::Level::Debug) {
-            for (name, round) in &state.last_committed {
-                debug!("最新提交 {}: Round {}", name, round);
-            }
-        }
-
-        // ── 输出提交序列 ──
         #[cfg(feature = "benchmark")]
         let leader_id = b3.header.id.clone();
         #[cfg(feature = "benchmark")]
         let leader_round_log = b3.round();
+
+        for x in sequence.iter() {
+            state.update(x, consensus.gc_depth);
+        }
 
         for certificate in sequence {
             #[cfg(feature = "benchmark")]
