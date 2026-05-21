@@ -584,7 +584,7 @@ def remote(
     tx_size=512,
     duration=300,
     runs=2,
-    benchmark_delay=0,
+    benchmark_delay=20,
     max_header_delay=1000,
 ):
     ''' Run benchmarks on AWS '''
@@ -635,7 +635,7 @@ def remote_run_batch(
     tx_size=512,
     duration=300,
     runs=2,
-    benchmark_delay=0,
+    benchmark_delay=20,
     max_header_delay=1000,
 ):
     ''' Run benchmarks on AWS and keep logs on remote machines for later collection '''
@@ -738,6 +738,7 @@ def compare_dag_protocols(
     tx_size=512,
     runs=2,
     consensus='round_robin',
+    benchmark_delay=20,
     output_csv='csv_plots/dag_protocol_comparison.csv',
 ):
     ''' Compare narwhal, bullshark, noveldag on remote testbed at fixed rate '''
@@ -753,6 +754,7 @@ def compare_dag_protocols(
         'tx_size': int(tx_size),
         'duration': int(duration),
         'runs': int(runs),
+        'benchmark_delay': int(benchmark_delay),
     }
 
     rows = []
@@ -822,6 +824,7 @@ def sweep_dag_rates(
     rate_end=300_000,
     protocols='narwhal,bullshark,noveldag',
     consensus='round_robin',
+    benchmark_delay=20,
     output_csv='csv_plots/remote_dag_sweep.csv',
 ):
     ''' Rate sweep across all three DAG protocols on remote testbed '''
@@ -839,6 +842,7 @@ def sweep_dag_rates(
         'tx_size': int(tx_size),
         'duration': int(duration),
         'runs': int(runs),
+        'benchmark_delay': int(benchmark_delay),
     }
 
     all_rows = []
@@ -1219,6 +1223,7 @@ def paper_fig1_fig2(
     rate_end=300_000,
     protocols='noveldag,narwhal,wahoo',
     consensus='round_robin',
+    benchmark_delay=20,
     output_csv='csv_plots/paper_fig1_fig2.csv',
 ):
     ''' Figure 1 & 2: Rate sweep across node counts (10, 20, 50), faults=0.
@@ -1260,6 +1265,7 @@ def paper_fig1_fig2(
             'tx_size': int(tx_size),
             'duration': int(duration),
             'runs': int(runs),
+            'benchmark_delay': int(benchmark_delay),
         }
         _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
                         partial_csv, debug)
@@ -1310,6 +1316,7 @@ def paper_fig3(
     rate_end=300_000,
     protocols='noveldag,narwhal,wahoo',
     consensus='round_robin',
+    benchmark_delay=20,
     output_csv='csv_plots/paper_fig3.csv',
 ):
     ''' Figure 3: Rate sweep across crash faults (0, 1, 3), nodes=10.
@@ -1350,6 +1357,7 @@ def paper_fig3(
             'tx_size': int(tx_size),
             'duration': int(duration),
             'runs': int(runs),
+            'benchmark_delay': int(benchmark_delay),
         }
         _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
                         partial_csv, debug)
