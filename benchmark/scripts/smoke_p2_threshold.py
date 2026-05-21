@@ -56,7 +56,7 @@ from benchmark.local import LocalBench
 import json
 bench = {{'faults': 0, 'nodes': 10, 'workers': 1,
          'rate': {rate}, 'tx_size': 512, 'duration': {duration}}}
-node = {{'header_size': 1000, 'max_header_delay': 200, 'gc_depth': 50,
+node = {{'header_size': 1000, 'max_header_delay': 2000, 'gc_depth': 50,
         'sync_retry_delay': 10000, 'sync_retry_nodes': 3,
         'batch_size': 500000, 'max_batch_delay': 200,
         'consensus_protocol': 'round_robin', 'dag_protocol': '{proto}'}}

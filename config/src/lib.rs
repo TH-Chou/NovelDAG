@@ -140,7 +140,7 @@ impl Default for Parameters {
     fn default() -> Self {
         Self {
             header_size: 1_000,
-            max_header_delay: 100,
+            max_header_delay: 2_000,
             gc_depth: 50,
             sync_retry_delay: 5_000,
             sync_retry_nodes: 3,
