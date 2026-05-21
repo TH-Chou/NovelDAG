@@ -26,7 +26,7 @@ DEFAULT_BENCH: dict[str, Any] = {
 
 DEFAULT_NODE: dict[str, Any] = {
     "header_size": 1000,
-    "max_header_delay": 2000,
+    "max_header_delay": 1000,
     "gc_depth": 50,
     "sync_retry_delay": 10000,
     "sync_retry_nodes": 3,

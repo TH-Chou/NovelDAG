@@ -19,7 +19,7 @@ BENCH = {
 }
 NODE = {
     "header_size": 1_000,
-    "max_header_delay": 2000,
+    "max_header_delay": 1000,
     "gc_depth": 50,
     "sync_retry_delay": 10_000,
     "sync_retry_nodes": 3,

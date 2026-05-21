@@ -278,10 +278,10 @@ def build_inline_config(mode: str) -> dict[str, Any] | None:
     # Max header delay
     mhd_str = questionary.text(
         "max_header_delay (ms):",
-        default="2000",
+        default="1000",
         style=STYLE,
     ).ask()
-    max_header_delay = int(mhd_str or 2000)
+    max_header_delay = int(mhd_str or 1000)
 
     # Outlier rejection
     print("\n  ── 离群值剔除 ──\n")

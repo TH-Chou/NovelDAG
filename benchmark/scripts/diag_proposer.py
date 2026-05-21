@@ -11,7 +11,7 @@ def kill_all():
     subprocess.run(["tmux", "kill-server"], stderr=subprocess.DEVNULL)
     time.sleep(2)
 
-def run(rate, header_delay=2000, proto='noveldag'):
+def run(rate, header_delay=1000, proto='noveldag'):
     code = f"""
 from benchmark.local import LocalBench
 import json

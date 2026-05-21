@@ -338,7 +338,7 @@ impl Header {
                     );
                 } else if self.round == 1 {
                     ensure!(
-                        self.parents_2.is_empty(),
+                        self.parents_2.is_empty() && self.qc.is_none(),
                         DagError::MalformedHeader(self.id.clone())
                     );
                 } else {
@@ -817,6 +817,60 @@ impl PartialEq for Certificate {
 // structural validation. Uses the existing `tests::common::{keys, committee}`
 // fixture (n=4, f=1).
 // =============================================================================
+#[cfg(test)]
+mod novel_verify_tests {
+    use super::*;
+    use crate::common::{committee, keys};
+
+    #[test]
+    fn noveldag_round_1_rejects_embedded_qc() {
+        let committee = committee();
+        let (author, secret) = keys().pop().unwrap();
+        let genesis = Certificate::genesis(&committee)
+            .into_iter()
+            .find(|certificate| certificate.origin() == author)
+            .unwrap();
+
+        let votes = keys()
+            .into_iter()
+            .map(|(voter, voter_secret)| {
+                let vote = Vote {
+                    id: genesis.header.id.clone(),
+                    round: 0,
+                    voter_round: 0,
+                    origin: author,
+                    author: voter,
+                    wahoo_phase: None,
+                    signature: Signature::default(),
+                };
+                Vote {
+                    signature: Signature::new(&vote.digest(), &voter_secret),
+                    ..vote
+                }
+            })
+            .collect();
+
+        let mut header = Header {
+            author,
+            round: 1,
+            parents: Certificate::genesis(&committee)
+                .iter()
+                .map(|certificate| certificate.digest())
+                .collect(),
+            qc: Some(EmbeddedQc {
+                target: genesis.header.id,
+                round: 0,
+                votes,
+            }),
+            ..Header::default()
+        };
+        header.id = header.digest();
+        header.signature = Signature::new(&header.id, &secret);
+
+        assert!(header.verify(&committee, DagProtocol::NovelDAG).is_err());
+    }
+}
+
 #[cfg(test)]
 mod wahoo_verify_tests {
     use super::*;

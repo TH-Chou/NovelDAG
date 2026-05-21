@@ -520,7 +520,10 @@ impl Core {
                         ensure!(
                             parents_1
                                 .iter()
-                                .any(|certificate| certificate.header.id == qc.target),
+                                .any(|certificate| {
+                                    certificate.header.id == qc.target
+                                        && certificate.origin() == header.author
+                                }),
                             DagError::MalformedHeader(header.id.clone())
                         );
                     }

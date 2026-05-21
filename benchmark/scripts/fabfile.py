@@ -31,7 +31,7 @@ def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag', rate
     }
     node_params = {
         'header_size': 1_000,  # bytes
-        'max_header_delay': 2000,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -60,7 +60,7 @@ def compare_consensus(ctx, duration=60, debug=True):
     }
     node_params = {
         'header_size': 1_000,  # bytes
-        'max_header_delay': 2000,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -112,7 +112,7 @@ def compare_consensus_groups(
     ''' Compare protocols on grouped faults with 16 nodes (faults=0,1,2,3,4,5), averaged over rounds '''
     node_params = {
         'header_size': 1_000,  # bytes
-        'max_header_delay': 2000,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -260,7 +260,7 @@ def compare_consensus_rates_zero_fault(
     ''' Compare consensus TPS vs injection rate at faults=0 for round_robin and common_coin '''
     node_params = {
         'header_size': 1_000,  # bytes
-        'max_header_delay': 2000,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 3,  # number of nodes
@@ -585,7 +585,7 @@ def remote(
     duration=300,
     runs=2,
     benchmark_delay=0,
-    max_header_delay=2000,
+    max_header_delay=1000,
 ):
     ''' Run benchmarks on AWS '''
     from benchmark.remote import Bench
@@ -636,7 +636,7 @@ def remote_run_batch(
     duration=300,
     runs=2,
     benchmark_delay=0,
-    max_header_delay=2000,
+    max_header_delay=1000,
 ):
     ''' Run benchmarks on AWS and keep logs on remote machines for later collection '''
     from benchmark.remote import Bench
@@ -764,7 +764,7 @@ def compare_dag_protocols(
             )
             node_params = {
                 'header_size': 1_000,
-                'max_header_delay': 2000,
+                'max_header_delay': 1000,
                 'gc_depth': 50,
                 'sync_retry_delay': 10_000,
                 'sync_retry_nodes': 3,
@@ -853,7 +853,7 @@ def sweep_dag_rates(
             )
             node_params = {
                 'header_size': 1_000,
-                'max_header_delay': 2000,
+                'max_header_delay': 1000,
                 'gc_depth': 50,
                 'sync_retry_delay': 10_000,
                 'sync_retry_nodes': 3,
@@ -1237,7 +1237,7 @@ def paper_fig1_fig2(
 
     node_params = {
         'header_size': 1_000,
-        'max_header_delay': 2000,
+        'max_header_delay': 1000,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
@@ -1328,7 +1328,7 @@ def paper_fig3(
 
     node_params = {
         'header_size': 1_000,
-        'max_header_delay': 2000,
+        'max_header_delay': 1000,
         'gc_depth': 50,
         'sync_retry_delay': 10_000,
         'sync_retry_nodes': 3,
