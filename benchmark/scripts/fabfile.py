@@ -1460,15 +1460,17 @@ def paper_plot_fig1(
     ''' Figure 1: Throughput-latency scatter per node count.
 
     One panel per node count (10, 20, 50). Each panel overlays
-    NovelDAG, Narwhal, Wahoo with rate annotations. '''
+    Shortfin, Narwhal, Wahoo with rate annotations. '''
     import matplotlib.pyplot as plt
 
     rows = _read_paper_csv(csv_path)
-    protocols = sorted({r['protocol'] for r in rows})
+    protocol_order = ['narwhal', 'wahoo', 'noveldag']
+    protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
 
     markers = {'narwhal': 's', 'noveldag': 'o', 'wahoo': '^'}
-    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+    colors = {'narwhal': '#0072B2', 'noveldag': '#E69F00', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'noveldag': 'Shortfin'}
 
     fig, axes = plt.subplots(1, len(node_list), figsize=(6 * len(node_list), 5.5))
     if len(node_list) == 1:
@@ -1477,13 +1479,17 @@ def paper_plot_fig1(
     for ax, n in zip(axes, node_list):
         subset = [r for r in rows if int(r['nodes']) == n]
         for proto in protocols:
-            pts = [r for r in subset if r['protocol'] == proto]
+            pts = sorted(
+                [r for r in subset if r['protocol'] == proto],
+                key=lambda r: float(r['rate']),
+            )
             if not pts:
                 continue
             xs = [float(r['end_to_end_tps']) for r in pts]
             ys = [float(r['consensus_latency_ms']) for r in pts]
             ax.plot(xs, ys, color=colors.get(proto), marker=markers.get(proto),
-                    markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+                    markersize=6, linewidth=2.0, linestyle='-',
+                    label=labels.get(proto, proto), zorder=3)
             for r_pt in pts:
                 ax.annotate(f'{int(r_pt["rate"])//1000}k',
                             (float(r_pt['end_to_end_tps']),
@@ -1511,35 +1517,43 @@ def paper_plot_fig2(
     ctx,
     csv_path='csv_plots/paper_fig1_fig2.csv',
     out_dir='results',
-    max_latency_ms=5_000,
+    max_latency_ms=6_000,
+    output_name='paper_fig2_max_tps.png',
 ):
-    ''' Figure 2: Maximum throughput per protocol keeping latency < 5s.
+    ''' Maximum consensus throughput at a target end-to-end latency.
 
-    Bar chart grouped by node count (10, 20, 50). '''
+    The throughput value is linearly interpolated from the two measured points
+    whose end-to-end latencies are closest to max_latency_ms. '''
     import matplotlib.pyplot as plt
 
     rows = _read_paper_csv(csv_path)
-    protocols = sorted({r['protocol'] for r in rows})
+    protocol_order = ['narwhal', 'wahoo', 'noveldag']
+    protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
 
-    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+    colors = {'narwhal': '#0072B2', 'noveldag': '#E69F00', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'noveldag': 'Shortfin'}
 
-    # For each (protocol, nodes), find max TPS where latency <= max_latency_ms
+    # For each (protocol, nodes), interpolate consensus TPS at max_latency_ms.
     best = {p: [] for p in protocols}
     for n in node_list:
         for proto in protocols:
             pts = [r for r in rows
-                   if int(r['nodes']) == n and r['protocol'] == proto
-                   and float(r['consensus_latency_ms']) <= max_latency_ms]
-            max_tps = max((float(r['end_to_end_tps']) for r in pts), default=0)
-            best[proto].append(max_tps)
+                   if int(r['nodes']) == n and r['protocol'] == proto]
+            tps_at_target = _interpolate_tps_at_latency(
+                pts,
+                target_latency_ms=float(max_latency_ms),
+                latency_field='end_to_end_latency_ms',
+                tps_field='consensus_tps',
+            )
+            best[proto].append(tps_at_target)
 
     fig, ax = plt.subplots(figsize=(10, 5))
     x = range(len(node_list))
     width = 0.25
     for i, proto in enumerate(protocols):
         bars = ax.bar([xi + i * width for xi in x], best[proto], width,
-                       label=proto.capitalize(),
+                       label=labels.get(proto, proto),
                        color=colors.get(proto, '#999'),
                        edgecolor='black', linewidth=0.5)
         for bar, val in zip(bars, best[proto]):
@@ -1550,16 +1564,39 @@ def paper_plot_fig2(
     ax.set_xticks([xi + width for xi in x])
     ax.set_xticklabels([str(n) for n in node_list])
     ax.set_xlabel('Committee Size')
-    ax.set_ylabel('Max End-to-End Throughput (tx/s)')
-    ax.set_title(f'Figure 2: Max Throughput (latency < {max_latency_ms // 1000}s, faults=0)')
+    ax.set_ylabel(
+        f'Consensus Throughput at {max_latency_ms / 1000:g}s '
+        'E2E Latency (tx/s)'
+    )
+    ax.set_title(
+        f'Max Consensus Throughput at {max_latency_ms / 1000:g}s '
+        'End-to-End Latency (faults=0)'
+    )
     ax.legend()
     ax.grid(axis='y', alpha=0.3)
 
     fig.tight_layout()
-    png = f'{out_dir}/paper_fig2_max_tps.png'
+    png = f'{out_dir}/{output_name}'
     fig.savefig(png, dpi=180)
     plt.close(fig)
     print(f'Saved: {png}')
+
+
+@task
+def paper_plot_fig5(
+    ctx,
+    csv_path='csv_plots/paper_fig1_fig2.csv',
+    out_dir='results',
+    max_latency_ms=6_000,
+):
+    ''' Figure 5: consensus throughput at 6s end-to-end latency. '''
+    paper_plot_fig2(
+        ctx,
+        csv_path=csv_path,
+        out_dir=out_dir,
+        max_latency_ms=max_latency_ms,
+        output_name='paper_fig5_max_consensus_tps_6s.png',
+    )
 
 
 @task
@@ -1574,11 +1611,13 @@ def paper_plot_fig3(
     import matplotlib.pyplot as plt
 
     rows = _read_paper_csv(csv_path)
-    protocols = sorted({r['protocol'] for r in rows})
+    protocol_order = ['narwhal', 'wahoo', 'noveldag']
+    protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     fault_list = sorted({int(r['faults']) for r in rows})
 
     markers = {'narwhal': 's', 'noveldag': 'o', 'wahoo': '^'}
-    colors = {'narwhal': '#2196F3', 'noveldag': '#FF9800', 'wahoo': '#4CAF50'}
+    colors = {'narwhal': '#0072B2', 'noveldag': '#E69F00', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'noveldag': 'Shortfin'}
 
     fig, axes = plt.subplots(1, len(fault_list), figsize=(6 * len(fault_list), 5.5))
     if len(fault_list) == 1:
@@ -1587,13 +1626,17 @@ def paper_plot_fig3(
     for ax, f in zip(axes, fault_list):
         subset = [r for r in rows if int(r['faults']) == f]
         for proto in protocols:
-            pts = [r for r in subset if r['protocol'] == proto]
+            pts = sorted(
+                [r for r in subset if r['protocol'] == proto],
+                key=lambda r: float(r['rate']),
+            )
             if not pts:
                 continue
             xs = [float(r['end_to_end_tps']) for r in pts]
             ys = [float(r['consensus_latency_ms']) for r in pts]
             ax.plot(xs, ys, color=colors.get(proto), marker=markers.get(proto),
-                    markersize=7, linewidth=1.8, label=proto.capitalize(), zorder=3)
+                    markersize=6, linewidth=2.0, linestyle='-',
+                    label=labels.get(proto, proto), zorder=3)
             for r_pt in pts:
                 ax.annotate(f'{int(r_pt["rate"])//1000}k',
                             (float(r_pt['end_to_end_tps']),
@@ -1632,3 +1675,43 @@ def _read_paper_csv(path):
         for row in csv.DictReader(f):
             rows.append(row)
     return rows
+
+
+def _interpolate_tps_at_latency(
+    rows,
+    *,
+    target_latency_ms,
+    latency_field,
+    tps_field,
+):
+    """Estimate TPS at target latency, preferring points that bracket it."""
+    points = []
+    for row in rows:
+        try:
+            latency = float(row[latency_field])
+            tps = float(row[tps_field])
+        except (KeyError, TypeError, ValueError):
+            continue
+        points.append((latency, tps))
+
+    if not points:
+        return 0
+    if len(points) == 1:
+        return points[0][1]
+
+    below = [p for p in points if p[0] <= target_latency_ms]
+    above = [p for p in points if p[0] >= target_latency_ms]
+    if below and above:
+        p1 = max(below, key=lambda p: p[0])
+        p2 = min(above, key=lambda p: p[0])
+    elif below:
+        return max(p[1] for p in below)
+    else:
+        p1, p2 = sorted(points, key=lambda p: abs(p[0] - target_latency_ms))[:2]
+
+    if p1[0] == p2[0]:
+        return max(p1[1], p2[1])
+
+    x1, y1 = p1
+    x2, y2 = p2
+    return y1 + (target_latency_ms - x1) * (y2 - y1) / (x2 - x1)
