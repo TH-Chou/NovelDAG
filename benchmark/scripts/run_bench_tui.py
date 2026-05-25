@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Interactive TUI benchmark launcher with cursor navigation.
+"""dagtest-TUI benchmark launcher.
 
-Usage: python run_bench_tui.py
+Usage:
+  python scripts/run_bench_tui.py
+  python scripts/run_bench_tui.py run --mode local --protocol noveldag --rates 60000 --faults 0 --delays 0 --runs 1
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -81,6 +84,10 @@ CONFIG_TEMPLATES = [
 
 
 def main():
+    if len(sys.argv) > 1:
+        run_from_cli(sys.argv[1:])
+        return
+
     print_header()
     try:
         while True:
@@ -106,6 +113,130 @@ def print_header():
     print("\n" + "=" * 62)
     print("  🧬  NovelDAG Benchmark  —  交互式测试控制台")
     print("=" * 62)
+
+
+def run_from_cli(argv: list[str]) -> None:
+    """Run dagtest-TUI in non-interactive mode."""
+    parser = argparse.ArgumentParser(
+        prog="dagtest-TUI",
+        description="NovelDAG benchmark TUI/CLI launcher",
+    )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="run",
+        choices=["run", "full", "collect", "parse", "plot"],
+        help="Action to execute (default: run)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["local", "aws", "gcp"],
+        default="local",
+        help="Run mode: local, aws, or gcp (default: local)",
+    )
+    parser.add_argument("--settings", default=None, help="Cloud settings file")
+    parser.add_argument("--config", help="YAML config file")
+    parser.add_argument("--group", help="Config group name")
+    parser.add_argument("--protocol", dest="protocols", help="DAG protocol(s), comma-separated")
+    parser.add_argument("--protocols", dest="protocols", help="DAG protocol(s), comma-separated")
+    parser.add_argument("--rates", help="Injection rates, comma-separated")
+    parser.add_argument("--rate", dest="rates", help="Injection rates, comma-separated")
+    parser.add_argument("--faults", help="Byzantine fault counts, comma-separated")
+    parser.add_argument("--byzantine", dest="faults", help="Byzantine fault counts, comma-separated")
+    parser.add_argument("--delays", help="One-way local RTT delays in ms, comma-separated")
+    parser.add_argument("--delay", dest="delays", help="One-way local RTT delays in ms, comma-separated")
+    parser.add_argument("--runs", type=int, help="Runs per config point")
+    parser.add_argument("--groups", type=int, dest="runs", help="Alias for --runs")
+    parser.add_argument("--duration", type=int, help="Benchmark duration per run in seconds")
+    parser.add_argument("--nodes", type=int, help="Number of nodes")
+    parser.add_argument("--header-size", type=int, help="Header size in bytes")
+    parser.add_argument("--max-header-delay", type=int, help="Max header delay in ms")
+    parser.add_argument("--batch-size", type=int, help="Max batch size in bytes")
+    parser.add_argument("--tx-size", type=int, help="Transaction size in bytes")
+    parser.add_argument("--outlier", choices=["none", "middle-N", "std-dev"], help="Outlier rejection method")
+    parser.add_argument("--middle-n", type=int, help="Keep middle N runs")
+    parser.add_argument("--std-dev", type=float, help="Std-dev rejection threshold")
+    parser.add_argument("--sudo-password", help="Sudo password for local dummynet")
+    parser.add_argument("--output-prefix", help="Local run CSV output prefix")
+    parser.add_argument("--logs-dir", default=None, help="Logs directory for parse/full")
+    parser.add_argument("--csv", default=None, help="CSV path for plot")
+    parser.add_argument("--chart-type", choices=["latency-vs-tps", "tps-vs-rate", "all"], default=None)
+    parser.add_argument("--batch-id", default=None, help="Cloud batch ID for collect/full")
+    parser.add_argument("--out-dir", default=None, help="Output directory for collect/plot")
+    parser.add_argument("--fresh", action="store_true", help="Clear checkpoints before run")
+    parser.add_argument("--dry-run", action="store_true", help="Print the resolved test matrix only")
+    parser.add_argument("--debug", action="store_true", help="Enable benchmark debug output")
+
+    args = parser.parse_args(argv)
+    cfg: dict[str, Any] = {}
+    if args.config:
+        cfg["config_file"] = normalize_path_arg(args.config)
+    if args.group:
+        cfg["group"] = args.group
+
+    inline: dict[str, Any] = {}
+    for key in (
+        "protocols",
+        "rates",
+        "faults",
+        "delays",
+        "runs",
+        "duration",
+        "nodes",
+        "header_size",
+        "max_header_delay",
+        "batch_size",
+        "tx_size",
+        "output_prefix",
+        "logs_dir",
+        "csv",
+        "chart_type",
+        "batch_id",
+        "out_dir",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            if key in ("logs_dir", "csv") and isinstance(value, str):
+                value = normalize_path_arg(value)
+            inline[key] = value
+    if inline:
+        cfg["inline"] = inline
+
+    outlier: dict[str, Any] = {}
+    if args.outlier:
+        outlier["method"] = args.outlier
+    if args.middle_n is not None:
+        outlier.setdefault("method", "middle-N")
+        outlier["middle_n"] = args.middle_n
+    if args.std_dev is not None:
+        outlier.setdefault("method", "std-dev")
+        outlier["std_dev_threshold"] = args.std_dev
+    if outlier:
+        cfg["outlier"] = outlier
+
+    if args.settings:
+        cfg["settings"] = normalize_path_arg(args.settings)
+    if args.sudo_password:
+        cfg["sudo_password"] = args.sudo_password
+    if args.fresh:
+        cfg["fresh"] = True
+    if args.dry_run:
+        cfg["dry_run"] = True
+    if args.debug:
+        cfg["debug"] = True
+
+    execute_action(args.mode, cfg, args.action)
+
+
+def normalize_path_arg(value: str) -> str:
+    """Keep caller-relative paths valid after running from benchmark/."""
+    path = Path(value).expanduser()
+    if path.exists():
+        return str(path.resolve())
+    bench_relative = BENCH_DIR / path
+    if bench_relative.exists():
+        return str(bench_relative.resolve())
+    return value
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -292,7 +423,7 @@ def build_inline_config(mode: str) -> dict[str, Any] | None:
     ).ask()
 
     outlier_cfg = {"method": outlier_method}
-    if outlier_method == "middle-n":
+    if outlier_method == "middle-N":
         n = questionary.text("保留中间N轮:", default="3", style=STYLE).ask()
         outlier_cfg["middle_n"] = int(n or 3)
     elif outlier_method == "std-dev":
@@ -329,57 +460,59 @@ def build_inline_config(mode: str) -> dict[str, Any] | None:
 
 def execute_action(mode: str, cfg: dict[str, Any], action: str) -> None:
     cmd = [sys.executable, str(SCRIPTS_DIR / "run_bench.py"), "--mode", mode]
+    if settings := cfg.get("settings"):
+        cmd += ["--settings", settings]
+    if cfg.get("sudo_password"):
+        cmd += ["--sudo-password", cfg["sudo_password"]]
+
+    cmd.append(action)
 
     # Config file
-    if config_file := cfg.get("config_file"):
+    if action in ("run", "full", "parse") and (config_file := cfg.get("config_file")):
         cmd += ["--config", config_file]
-        if group := cfg.get("group"):
+        if action in ("run", "full") and (group := cfg.get("group")):
             cmd += ["--group", group]
 
     # Inline params
     if inline := cfg.get("inline"):
-        cmd += [
-            "--protocols", ",".join(inline["protocols"]),
-            "--rates", ",".join(str(r) for r in inline["rates"]),
-            "--faults", ",".join(str(f) for f in inline["faults"]),
-            "--delays", ",".join(str(d) for d in inline["delays"]),
-            "--runs", str(inline["runs"]),
-            "--duration", str(inline["duration"]),
-            "--nodes", str(inline["nodes"]),
-            "--max-header-delay", str(inline["max_header_delay"]),
-        ]
+        append_inline_args(cmd, inline, action)
 
     # Outlier
-    if outlier := cfg.get("outlier"):
+    if action in ("full", "parse") and (outlier := cfg.get("outlier")):
         cmd += ["--outlier", outlier["method"]]
         if "middle_n" in outlier:
             cmd += ["--middle-n", str(outlier["middle_n"])]
         if "std_dev_threshold" in outlier:
             cmd += ["--std-dev", str(outlier["std_dev_threshold"])]
 
-    # Sudo password for local
-    if mode == "local":
-        sudo_pw = os.environ.get("SWEEP_SUDO_PASSWORD", "")
-        if sudo_pw:
-            cmd += ["--sudo-password", sudo_pw]
-
-    # Action
-    if action == "full":
-        cmd.append("full")
-    elif action == "run":
-        cmd.append("run")
+    if action == "run" and cfg.get("fresh", True):
         cmd.append("--fresh")
-    elif action == "collect":
-        cmd += ["collect", "--batch-id", "default"]
+    if action in ("run", "full") and cfg.get("dry_run"):
+        cmd.append("--dry-run")
+    if action in ("run", "full") and cfg.get("debug"):
+        cmd.append("--debug")
+
+    if action == "collect":
+        inline = cfg.get("inline", {})
+        cmd += ["--batch-id", str(inline.get("batch_id", "default"))]
+        if inline.get("out_dir"):
+            cmd += ["--out-dir", str(inline["out_dir"])]
     elif action == "parse":
-        cmd += ["parse", "--logs-dir", "logs"]
+        inline = cfg.get("inline", {})
+        cmd += ["--logs-dir", str(inline.get("logs_dir", "logs"))]
     elif action == "plot":
-        cmd += ["plot", "--csv", "csv_plots/bench_runs.csv"]
+        inline = cfg.get("inline", {})
+        cmd += ["--csv", str(inline.get("csv", "csv_plots/bench_runs.csv"))]
+        if inline.get("chart_type"):
+            cmd += ["--chart-type", str(inline["chart_type"])]
+        if inline.get("out_dir"):
+            cmd += ["--out-dir", str(inline["out_dir"])]
 
     # Show final command
     print("\n  ── 执行命令 ──")
     print(f"  {' '.join(cmd)}\n")
     print("═" * 62)
+    sys.stdout.flush()
 
     # Run
     try:
@@ -391,6 +524,9 @@ def execute_action(mode: str, cfg: dict[str, Any], action: str) -> None:
     print("\n" + "═" * 62)
     if result.returncode == 0:
         print("  执行成功！")
+        if action in ("run", "full") and cfg.get("dry_run"):
+            print("\n  dry-run 只解析并打印测试矩阵，没有执行 benchmark。")
+            return
 
         # Show output locations
         csv_dir = BENCH_DIR / "csv_plots"
@@ -430,6 +566,43 @@ def execute_action(mode: str, cfg: dict[str, Any], action: str) -> None:
         print("\n  提示: 你可以继续操作，比如选择 parse 或 plot 来处理结果。")
     else:
         print(f"  执行失败 (exit code: {result.returncode})")
+
+
+def append_inline_args(cmd: list[str], inline: dict[str, Any], action: str) -> None:
+    """Append subcommand-specific run matrix arguments."""
+    if action not in ("run", "full"):
+        return
+
+    list_args = {
+        "protocols": "--protocols",
+        "rates": "--rates",
+        "faults": "--faults",
+        "delays": "--delays",
+    }
+    scalar_args = {
+        "runs": "--runs",
+        "duration": "--duration",
+        "nodes": "--nodes",
+        "header_size": "--header-size",
+        "max_header_delay": "--max-header-delay",
+        "batch_size": "--batch-size",
+        "tx_size": "--tx-size",
+        "output_prefix": "--output-prefix",
+        "logs_dir": "--logs-dir",
+        "batch_id": "--batch-id",
+    }
+
+    for key, flag in list_args.items():
+        if key not in inline:
+            continue
+        value = inline[key]
+        if isinstance(value, list):
+            value = ",".join(str(x) for x in value)
+        cmd += [flag, str(value)]
+
+    for key, flag in scalar_args.items():
+        if key in inline:
+            cmd += [flag, str(inline[key])]
 
 
 if __name__ == "__main__":

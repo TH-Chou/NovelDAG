@@ -243,22 +243,46 @@ def run_remote(
         groups.setdefault(p["group"], []).append(p)
 
     for gname, gpoints in groups.items():
-        rates = sorted({p["rate"] for p in gpoints})
-        faults = sorted({p["faults"] for p in gpoints})[0]  # assume uniform per group
-        first = gpoints[0]
-        bench_params = {
-            "faults": faults,
-            "nodes": [first["bench"]["nodes"]],
-            "workers": first["bench"]["workers"],
-            "collocate": True,
-            "rate": rates,
-            "tx_size": first["bench"]["tx_size"],
-            "duration": first["bench"]["duration"],
-            "runs": first["bench"]["runs"],
-        }
-        node_params = first["node"]
-        print(f"  Running group '{gname}': rates={rates}, faults={faults}")
-        b.run(bench_params, node_params, debug)
+        by_shape: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for p in gpoints:
+            bench = p["bench"]
+            key = (
+                p["protocol"],
+                p["faults"],
+                bench["nodes"],
+                bench["workers"],
+                bench["tx_size"],
+                bench["duration"],
+                bench["runs"],
+            )
+            by_shape.setdefault(key, []).append(p)
+
+        for key, shape_points in sorted(by_shape.items()):
+            proto, faults, nodes, workers, tx_size, duration, runs = key
+            rates = sorted({p["rate"] for p in shape_points})
+            first = shape_points[0]
+            node_params = first["node"].copy()
+            node_params["dag_protocol"] = proto
+            if len({p["delay"] for p in shape_points}) > 1 or first["delay"] != 0:
+                print(
+                    "  [WARN] Cloud mode does not apply local dummynet delays; "
+                    f"ignoring delay labels for group '{gname}'."
+                )
+            bench_params = {
+                "faults": faults,
+                "nodes": [nodes],
+                "workers": workers,
+                "collocate": True,
+                "rate": rates,
+                "tx_size": tx_size,
+                "duration": duration,
+                "runs": runs,
+            }
+            print(
+                f"  Running group '{gname}': protocol={proto}, "
+                f"faults={faults}, rates={rates}"
+            )
+            b.run(bench_params, node_params, debug)
     print("Done.")
 
 

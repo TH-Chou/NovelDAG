@@ -158,6 +158,7 @@ def main() -> None:
     full_p.add_argument("--batch-size", type=int)
     full_p.add_argument("--tx-size", type=int)
     full_p.add_argument("--dag-protocol", type=str)
+    full_p.add_argument("--output-prefix", type=str, help="Output CSV prefix")
     full_p.add_argument("--fresh", action="store_true")
     full_p.add_argument("--dry-run", action="store_true")
     full_p.add_argument("--debug", action="store_true")
@@ -380,6 +381,8 @@ def _cmd_full(args: argparse.Namespace) -> None:
     """Full pipeline: run -> collect (cloud) -> parse -> plot."""
     # Reuse _cmd_run
     _cmd_run(args)
+    if args.dry_run:
+        return
 
     mode = args.mode
     if mode in ("aws", "gcp"):
@@ -391,6 +394,10 @@ def _cmd_full(args: argparse.Namespace) -> None:
     raw = load_config(args.config) if args.config else {}
     if args.outlier:
         raw.setdefault("outlier_rejection", {})["method"] = args.outlier
+    if args.middle_n != 3:
+        raw.setdefault("outlier_rejection", {})["middle_n"] = args.middle_n
+    if args.std_dev != 2.0:
+        raw.setdefault("outlier_rejection", {})["std_dev_threshold"] = args.std_dev
     output_cfg = get_output_config(raw)
     csv_path = Path(output_cfg["csv_dir"]) / "bench_runs.csv"
     parse_logs(logs_dir, faults=0, config_raw=raw, output_csv=csv_path)

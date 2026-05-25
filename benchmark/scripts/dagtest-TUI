@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Console entrypoint for the NovelDAG benchmark TUI/CLI."""
+
+from run_bench_tui import main
+
+
+if __name__ == "__main__":
+    main()
