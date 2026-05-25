@@ -205,6 +205,8 @@ class NodeParameters:
 
 
 class BenchParameters:
+    MAX_DURATION_SECONDS = 50
+
     def __init__(self, json):
         try:
             self.faults = int(json['faults'])
@@ -244,6 +246,12 @@ class BenchParameters:
 
         if min(self.nodes) <= self.faults:
             raise ConfigError('There should be more nodes than faults')
+        if self.duration <= 0:
+            raise ConfigError('Duration must be greater than 0')
+        if self.duration > self.MAX_DURATION_SECONDS:
+            raise ConfigError(
+                f'Duration must be at most {self.MAX_DURATION_SECONDS}s'
+            )
 
 
 class PlotParameters:

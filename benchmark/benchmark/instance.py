@@ -350,12 +350,13 @@ class AWSInstanceManager:
     def print_info(self):
         hosts = self.hosts()
         key = self.settings.key_path
+        user = self.settings.ssh_user
         text = ""
         for region, ips in hosts.items():
             text += f"\n Region: {region.upper()}\n"
             for i, ip in enumerate(ips):
                 new_line = "\n" if (i + 1) % 6 == 0 else ""
-                text += f"{new_line} {i}\tssh -i {key} ubuntu@{ip}\n"
+                text += f"{new_line} {i}\tssh -i {key} {user}@{ip}\n"
         print(
             "\n"
             "----------------------------------------------------------------\n"
@@ -368,12 +369,17 @@ class AWSInstanceManager:
 
 
 class GCPInstanceManager:
-    INSTANCE_NAME = 'dag-node'
-    FIREWALL_RULE_NAME = 'dag'
-
     def __init__(self, settings):
         assert isinstance(settings, Settings)
         self.settings = settings
+
+    @property
+    def instance_name(self):
+        return self.settings.gcp_instance_name
+
+    @property
+    def firewall_rule_name(self):
+        return self.settings.gcp_firewall_rule
 
     def _gcloud(self, args, check=True):
         cmd = ['gcloud'] + args
@@ -404,12 +410,70 @@ class GCPInstanceManager:
 
     def _zones(self):
         zones = list(self.settings.gcp_zones or [])
-        if not zones:
+        if zones:
+            return zones
+
+        regions = list(self.settings.gcp_regions or [])
+        if not regions:
             raise BenchError(
                 'Missing GCP zones in settings',
-                RuntimeError('Set instances.zones in settings.json'),
+                RuntimeError('Set instances.zones or gcp.regions in settings.json'),
             )
-        return zones
+
+        self._ensure_gcloud_cli()
+        self._ensure_project()
+        resolved = []
+        for region in regions:
+            proc = self._gcloud(
+                [
+                    'compute',
+                    'zones',
+                    'list',
+                    '--project',
+                    self.settings.gcp_project,
+                    '--filter',
+                    f'name~"^{region}-" AND status=UP',
+                    '--format',
+                    'value(name)',
+                ]
+            )
+            candidates = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
+            if not candidates:
+                raise BenchError(
+                    f'No UP GCP zones found for region {region}',
+                    RuntimeError('Use an explicit instances.zones list instead'),
+                )
+            resolved.append(candidates[0])
+        Print.info(
+            'Resolved GCP regions to zones: '
+            + ', '.join(f'{r}->{z}' for r, z in zip(regions, resolved))
+        )
+        return resolved
+
+    @staticmethod
+    def _region_from_zone(zone):
+        parts = str(zone).rsplit('-', 1)
+        return parts[0] if len(parts) == 2 else str(zone)
+
+    def _candidate_zones(self, preferred_zone):
+        region = self._region_from_zone(preferred_zone)
+        proc = self._gcloud(
+            [
+                'compute',
+                'zones',
+                'list',
+                '--project',
+                self.settings.gcp_project,
+                '--filter',
+                f'name~"^{region}-" AND status=UP',
+                '--format',
+                'value(name)',
+            ]
+        )
+        zones = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
+        ordered = [preferred_zone]
+        ordered.extend(x for x in zones if x != preferred_zone)
+        return ordered
 
     def _read_public_key(self):
         key_path = Path(self.settings.key_path).expanduser()
@@ -429,7 +493,7 @@ class GCPInstanceManager:
                 '--project',
                 self.settings.gcp_project,
                 '--filter',
-                f'labels.name={self.INSTANCE_NAME}',
+                f'labels.name={self.instance_name}',
                 '--format',
                 'json(name,id,zone,status,networkInterfaces[0].accessConfigs[0].natIP)',
             ]
@@ -460,6 +524,18 @@ class GCPInstanceManager:
                     ips[zone].append(str(access_cfgs[0]['natIP']))
         return ids, ips
 
+    def _active_count_by_region(self):
+        counts = defaultdict(int)
+        for item in self._list_instances():
+            status = str(item.get('status', '')).upper()
+            if status not in {'PROVISIONING', 'STAGING', 'RUNNING'}:
+                continue
+            zone_uri = str(item.get('zone', ''))
+            zone = zone_uri.split('/')[-1] if zone_uri else ''
+            if zone:
+                counts[self._region_from_zone(zone)] += 1
+        return counts
+
     def _wait_until_absent(self, states):
         target = {x.upper() for x in states}
         while True:
@@ -474,7 +550,7 @@ class GCPInstanceManager:
                 'compute',
                 'firewall-rules',
                 'describe',
-                self.FIREWALL_RULE_NAME,
+                self.firewall_rule_name,
                 '--project',
                 self.settings.gcp_project,
             ],
@@ -488,7 +564,7 @@ class GCPInstanceManager:
                 'compute',
                 'firewall-rules',
                 'create',
-                self.FIREWALL_RULE_NAME,
+                self.firewall_rule_name,
                 '--project',
                 self.settings.gcp_project,
                 '--network',
@@ -498,9 +574,85 @@ class GCPInstanceManager:
                 '--source-ranges',
                 '0.0.0.0/0',
                 '--target-tags',
-                self.FIREWALL_RULE_NAME,
+                self.firewall_rule_name,
             ]
         )
+
+    def _create_instance_in_zone(self, zone, index, ssh_key):
+        safe_prefix = self.instance_name
+        name = f'{safe_prefix}-{zone}-{int(time.time())}-{index}'
+        cmd = [
+            'compute',
+            'instances',
+            'create',
+            name,
+            '--project',
+            self.settings.gcp_project,
+            '--zone',
+            zone,
+            '--machine-type',
+            self.settings.instance_type,
+            '--network',
+            self.settings.gcp_network,
+            '--tags',
+            self.firewall_rule_name,
+            '--labels',
+            f'name={self.instance_name}',
+            '--image-project',
+            self.settings.gcp_image_project,
+            '--image-family',
+            self.settings.gcp_image_family,
+            '--boot-disk-size',
+            f'{self.settings.gcp_disk_size_gb}GB',
+            '--boot-disk-type',
+            'pd-ssd',
+        ]
+        if self.settings.gcp_subnetwork:
+            cmd.extend(['--subnet', self.settings.gcp_subnetwork])
+        if ssh_key:
+            cmd.extend([
+                '--metadata',
+                f'enable-oslogin=FALSE,ssh-keys={self.settings.ssh_user}:{ssh_key}',
+            ])
+        return self._gcloud(cmd, check=False)
+
+    @staticmethod
+    def _is_capacity_error(proc):
+        output = f'{proc.stdout}\n{proc.stderr}'
+        return 'ZONE_RESOURCE_POOL_EXHAUSTED' in output or 'resource_availability' in output
+
+    def _create_instance_with_zone_fallback(self, preferred_zone, index, ssh_key):
+        last = None
+        for zone in self._candidate_zones(preferred_zone):
+            proc = self._create_instance_in_zone(zone, index, ssh_key)
+            if proc.returncode == 0:
+                if zone != preferred_zone:
+                    Print.warn(
+                        f'{preferred_zone} has no capacity; created instance in {zone}'
+                    )
+                return zone
+
+            last = proc
+            if self._is_capacity_error(proc):
+                Print.warn(
+                    f'{zone} has no {self.settings.instance_type} capacity; trying next zone'
+                )
+                continue
+
+            message = (
+                f"gcloud command failed with exit={proc.returncode}\n"
+                f"STDOUT:\n{proc.stdout}\n"
+                f"STDERR:\n{proc.stderr}"
+            )
+            raise BenchError('Failed to execute gcloud command', RuntimeError(message))
+
+        message = (
+            f'No zone in {self._region_from_zone(preferred_zone)} has '
+            f'{self.settings.instance_type} capacity\n'
+            f'Last STDOUT:\n{last.stdout if last else ""}\n'
+            f'Last STDERR:\n{last.stderr if last else ""}'
+        )
+        raise BenchError('Failed to create GCP instance', RuntimeError(message))
 
     def create_instances(self, instances):
         assert isinstance(instances, int) and instances > 0
@@ -510,46 +662,28 @@ class GCPInstanceManager:
         self._ensure_firewall_rule()
 
         ssh_key = self._read_public_key()
-        size = instances * len(zones)
-        progress = progress_bar(zones, prefix=f'Creating {size} instances')
+        active_by_region = self._active_count_by_region()
+        missing = []
+        for zone in zones:
+            region = self._region_from_zone(zone)
+            count = active_by_region.get(region, 0)
+            for i in range(max(0, instances - count)):
+                missing.append((zone, i))
+
+        if not missing:
+            Print.heading(
+                f'Testbed already has at least {instances} instance(s) per configured GCP region'
+            )
+            return
+
+        progress = progress_bar(missing, prefix=f'Creating {len(missing)} instances')
         for zone in progress:
-            for i in range(instances):
-                name = f'{self.INSTANCE_NAME}-{zone}-{int(time.time())}-{i}'
-                cmd = [
-                    'compute',
-                    'instances',
-                    'create',
-                    name,
-                    '--project',
-                    self.settings.gcp_project,
-                    '--zone',
-                    zone,
-                    '--machine-type',
-                    self.settings.instance_type,
-                    '--network',
-                    self.settings.gcp_network,
-                    '--tags',
-                    self.FIREWALL_RULE_NAME,
-                    '--labels',
-                    f'name={self.INSTANCE_NAME}',
-                    '--image-project',
-                    self.settings.gcp_image_project,
-                    '--image-family',
-                    self.settings.gcp_image_family,
-                    '--boot-disk-size',
-                    f'{self.settings.gcp_disk_size_gb}GB',
-                    '--boot-disk-type',
-                    'pd-ssd',
-                ]
-                if self.settings.gcp_subnetwork:
-                    cmd.extend(['--subnet', self.settings.gcp_subnetwork])
-                if ssh_key:
-                    cmd.extend(['--metadata', f'ssh-keys=ubuntu:{ssh_key}'])
-                self._gcloud(cmd)
+            preferred_zone, index = zone
+            self._create_instance_with_zone_fallback(preferred_zone, index, ssh_key)
 
         Print.info('Waiting for all instances to boot...')
         self._wait_until_absent(['PROVISIONING', 'STAGING'])
-        Print.heading(f'Successfully created {size} new instances')
+        Print.heading(f'Successfully created {len(missing)} new instances')
 
     def terminate_instances(self):
         self._ensure_gcloud_cli()
@@ -627,12 +761,13 @@ class GCPInstanceManager:
     def print_info(self):
         hosts = self.hosts()
         key = self.settings.key_path
+        user = self.settings.ssh_user
         text = ''
         for zone, ips in hosts.items():
             text += f"\n Zone: {zone}\n"
             for i, ip in enumerate(ips):
                 new_line = '\n' if (i + 1) % 6 == 0 else ''
-                text += f"{new_line} {i}\tssh -i {key} ubuntu@{ip}\n"
+                text += f"{new_line} {i}\tssh -i {key} {user}@{ip}\n"
         print(
             '\n'
             '----------------------------------------------------------------\n'

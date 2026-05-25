@@ -14,7 +14,15 @@ class CommandMaker:
 
     @staticmethod
     def clean_logs():
-        return f'rm -r {PathMaker.logs_path()} ; mkdir -p {PathMaker.logs_path()}'
+        return (
+            f'mkdir -p {PathMaker.logs_path()} {PathMaker.results_path()} ; '
+            f'rm -f {PathMaker.logs_path()}/*.log ; '
+            f'rm -f {PathMaker.logs_path()}/.committee.json '
+            f'{PathMaker.logs_path()}/.parameters.json '
+            f'{PathMaker.logs_path()}/.node-*.json ; '
+            f'rm -rf {PathMaker.logs_path()}/.db-* '
+            f'{PathMaker.logs_path()}/rate-*'
+        )
 
     @staticmethod
     def clean_run_logs():

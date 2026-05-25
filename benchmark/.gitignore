@@ -5,6 +5,7 @@ paper/
 results/
 plots/
 .venv/
+data/
 .DS_Store
 
 # Binary aliases created by local/remote benchmark setup

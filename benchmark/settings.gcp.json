@@ -1,0 +1,33 @@
+{
+  "provider": "gcp",
+  "key": {
+    "name": "google_compute_engine",
+    "path": "/Users/apple/.ssh/google_compute_engine",
+    "user": "ubuntu"
+  },
+  "port": 5000,
+  "repo": {
+    "name": "NovelDAG",
+    "url": "https://github.com/TH-Chou/NovelDAG.git",
+    "branch": "unify-three-protocols"
+  },
+  "instances": {
+    "name": "noveldag-node",
+    "type": "n2-standard-2",
+    "project": "noveldag-496906",
+    "zones": [
+      "asia-east1-a",
+      "asia-southeast1-a",
+      "us-east1-b",
+      "us-west1-a",
+      "europe-west1-b"
+    ],
+    "network": "default",
+    "subnetwork": "",
+    "firewall_rule": "noveldag-benchmark",
+    "image_project": "ubuntu-os-cloud",
+    "image_family": "ubuntu-2204-lts",
+    "disk_size_gb": 100,
+    "ssh_user": "ubuntu"
+  }
+}

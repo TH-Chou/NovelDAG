@@ -3,6 +3,6 @@ target/
 .claude/
 benchmark/benchmark_client
 benchmark/node
-
+paper/
 # Per-test RocksDB scratch dirs created by `cargo test` in workspace crates.
 **/.db_test_*

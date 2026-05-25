@@ -1,5 +1,6 @@
 # Copyright(C) Facebook, Inc. and its affiliates.
 from json import load, JSONDecodeError
+import os
 from pathlib import Path
 
 
@@ -12,7 +13,9 @@ class Settings:
                  branch, instance_type, aws_regions, cloud_provider='aws',
                  gcp_project='', gcp_zones=None, gcp_network='default',
                  gcp_subnetwork='', gcp_image_project='ubuntu-os-cloud',
-                 gcp_image_family='ubuntu-2204-lts', gcp_disk_size_gb=200):
+                 gcp_image_family='ubuntu-2204-lts', gcp_disk_size_gb=200,
+                 ssh_user='ubuntu', gcp_regions=None,
+                 gcp_instance_name='dag-node', gcp_firewall_rule='dag'):
         inputs_str = [
             key_name, key_path, repo_name, repo_url, branch, instance_type
         ]
@@ -31,16 +34,24 @@ class Settings:
         ok &= isinstance(gcp_image_project, str)
         ok &= isinstance(gcp_image_family, str)
         ok &= isinstance(gcp_disk_size_gb, int) and gcp_disk_size_gb > 0
+        ok &= isinstance(ssh_user, str) and bool(ssh_user)
+        ok &= isinstance(gcp_instance_name, str) and bool(gcp_instance_name)
+        ok &= isinstance(gcp_firewall_rule, str) and bool(gcp_firewall_rule)
 
         if gcp_zones is None:
             gcp_zones = []
+        if gcp_regions is None:
+            gcp_regions = []
         ok &= isinstance(gcp_zones, list)
         ok &= all(isinstance(x, str) for x in gcp_zones)
+        ok &= isinstance(gcp_regions, list)
+        ok &= all(isinstance(x, str) for x in gcp_regions)
         if not ok:
             raise SettingsError('Invalid settings types')
 
         self.key_name = key_name
         self.key_path = key_path
+        self.ssh_user = ssh_user
 
         self.base_port = base_port
 
@@ -53,37 +64,48 @@ class Settings:
         self.cloud_provider = cloud_provider
 
         self.gcp_project = gcp_project
+        self.gcp_regions = gcp_regions
         self.gcp_zones = gcp_zones
         self.gcp_network = gcp_network or 'default'
         self.gcp_subnetwork = gcp_subnetwork
         self.gcp_image_project = gcp_image_project or 'ubuntu-os-cloud'
         self.gcp_image_family = gcp_image_family or 'ubuntu-2204-lts'
         self.gcp_disk_size_gb = gcp_disk_size_gb
+        self.gcp_instance_name = gcp_instance_name
+        self.gcp_firewall_rule = gcp_firewall_rule
 
-        self.cloud_locations = self.aws_regions if cloud_provider == 'aws' else self.gcp_zones
+        self.cloud_locations = self.aws_regions if cloud_provider == 'aws' else (self.gcp_zones or self.gcp_regions)
 
     @classmethod
     def load(cls, filename):
         try:
-            path = cls.resolve_path(filename)
+            path = cls.resolve_path(os.environ.get('BENCHMARK_SETTINGS', filename))
             with open(path, 'r') as f:
                 data = load(f)
 
             provider = str(data.get('provider', 'aws')).strip().lower()
             instances = data['instances']
+            key = data['key']
 
             gcp = data.get('gcp', {}) if isinstance(data.get('gcp', {}), dict) else {}
+            ssh_user = str(instances.get('ssh_user', key.get('user', gcp.get('ssh_user', 'ubuntu'))))
             gcp_project = str(instances.get('project', gcp.get('project', '')))
-            gcp_zones = instances.get('zones', gcp.get('zones', instances.get('regions', [])))
+            gcp_regions = instances.get(
+                'gcp_regions',
+                gcp.get('regions', instances.get('regions', []) if provider == 'gcp' else []),
+            )
+            gcp_zones = instances.get('zones', gcp.get('zones', []))
             gcp_network = str(instances.get('network', gcp.get('network', 'default')))
             gcp_subnetwork = str(instances.get('subnetwork', gcp.get('subnetwork', '')))
             gcp_image_project = str(instances.get('image_project', gcp.get('image_project', 'ubuntu-os-cloud')))
             gcp_image_family = str(instances.get('image_family', gcp.get('image_family', 'ubuntu-2204-lts')))
             gcp_disk_size_gb = int(instances.get('disk_size_gb', gcp.get('disk_size_gb', 200)))
+            gcp_instance_name = str(instances.get('name', gcp.get('instance_name', 'dag-node')))
+            gcp_firewall_rule = str(instances.get('firewall_rule', gcp.get('firewall_rule', 'dag')))
 
             return cls(
-                data['key']['name'],
-                data['key']['path'],
+                key['name'],
+                key['path'],
                 data['port'],
                 data['repo']['name'],
                 data['repo']['url'],
@@ -98,6 +120,10 @@ class Settings:
                 gcp_image_project,
                 gcp_image_family,
                 gcp_disk_size_gb,
+                ssh_user,
+                gcp_regions,
+                gcp_instance_name,
+                gcp_firewall_rule,
             )
         except (OSError, JSONDecodeError) as e:
             raise SettingsError(str(e))

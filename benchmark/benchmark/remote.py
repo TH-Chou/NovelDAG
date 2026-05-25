@@ -16,6 +16,7 @@ import threading
 import re
 import socket
 import time
+import importlib.util
 
 from benchmark.config import Committee, Key, NodeParameters, BenchParameters, ConfigError
 from benchmark.utils import BenchError, Print, PathMaker, progress_bar
@@ -81,7 +82,7 @@ class Bench:
         hosts = self.manager.hosts(flat=True)
         for attempt in range(1, self.SSH_RETRIES + 1):
             try:
-                g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
+                g = Group(*hosts, user=self.settings.ssh_user, connect_kwargs=self.connect)
                 g.run(' && '.join(cmd), hide=True)
                 Print.heading(f'Initialized testbed of {len(hosts)} nodes')
                 return
@@ -107,7 +108,7 @@ class Bench:
         cmd = [delete_logs, f'({CommandMaker.kill()} || true)', force_kill]
         for attempt in range(1, self.SSH_RETRIES + 1):
             try:
-                g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
+                g = Group(*hosts, user=self.settings.ssh_user, connect_kwargs=self.connect)
                 g.run(' && '.join(cmd), hide=True)
                 return
             except GroupException as e:
@@ -126,7 +127,7 @@ class Bench:
         dead = 0
         for host in hosts:
             try:
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
                 result = c.run('pgrep -c "^node$" || true', hide=True)
                 count = int(result.stdout.strip() or '0')
                 if count == 0:
@@ -248,7 +249,7 @@ class Bench:
         last_error = None
         for attempt in range(1, self.SSH_RETRIES + 1):
             try:
-                c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
                 output = c.run(cmd, hide=True)
                 self._check_stderr(output)
                 return
@@ -326,7 +327,7 @@ class Bench:
             'test -x ./node',
             'test -x ./benchmark_client',
         ]
-        g = Group(*ips, user='ubuntu', connect_kwargs=self.connect)
+        g = Group(*ips, user=self.settings.ssh_user, connect_kwargs=self.connect)
         g.run(' && '.join(cmd), hide=True)
 
     def _config(self, hosts, node_parameters, bench_parameters):
@@ -373,7 +374,7 @@ class Bench:
         progress = progress_bar(names, prefix='Uploading config files:')
         for i, name in enumerate(progress):
             for ip in committee.ips(name):
-                c = Connection(ip, user='ubuntu', connect_kwargs=self.connect)
+                c = Connection(ip, user=self.settings.ssh_user, connect_kwargs=self.connect)
                 c.run(f'{CommandMaker.cleanup()} || true', hide=True)
                 c.put(PathMaker.committee_file(), '.')
                 c.put(PathMaker.key_file(i), '.')
@@ -382,7 +383,14 @@ class Bench:
 
         return committee
 
-    def _run_single(self, rate, committee, bench_parameters, debug=False, clean_logs=True):
+    def _run_single(
+        self,
+        rate,
+        committee,
+        bench_parameters,
+        debug=False,
+        clean_logs=True,
+    ):
         faults = bench_parameters.faults
 
         # Kill any potentially unfinished run and (optionally) delete logs.
@@ -436,6 +444,7 @@ class Bench:
         # Run the clients last. They still wait for workers to be ready, but at
         # this point the consensus mesh has already had a chance to connect.
         client_jobs = []
+        client_timeout = bench_parameters.duration
         for i, addresses in enumerate(workers_addresses):
             for (id, address) in addresses:
                 host = Committee.ip(address)
@@ -445,26 +454,22 @@ class Bench:
                     rate_share,
                     [x for y in workers_addresses for _, x in y]
                 )
+                cmd = f'timeout --kill-after=5s {client_timeout}s {cmd}'
                 client_jobs.append((host, cmd, PathMaker.client_log_file(i, id)))
         self._background_run_many(client_jobs, 'clients')
 
-        # Wait for all transactions to be processed.
+        # Wait for the configured wall-clock duration. Keep this progress bar
+        # time-based; SSH probes here can make short runs look much longer than
+        # the configured benchmark duration.
         duration = bench_parameters.duration
-        for step in progress_bar(range(20), prefix=f'Running benchmark ({duration} sec):'):
-            sleep(ceil(duration / 20))
-            # Periodic liveness check every 4th step (every ~60s for 300s runs).
-            # If all primaries have crashed, abort early to avoid wasting time.
-            if step > 0 and step % 4 == 0:
-                alive = self._count_alive(hosts)
-                if alive == 0:
-                    raise ExecutionError(
-                        'All primary processes died mid-benchmark -- aborting run'
-                    )
-                elif alive < len(hosts) * 0.5:
-                    Print.warn(
-                        f'Only {alive}/{len(hosts)} nodes alive -- '
-                        'possible partial failure'
-                    )
+        deadline = time.monotonic() + duration
+        progress_steps = max(1, duration)
+        prefix = f'Running benchmark ({duration} sec):'
+        for step in progress_bar(range(progress_steps), prefix=prefix):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sleep(min(1, remaining))
         self.kill(hosts=hosts, delete_logs=False)
 
     def _logs(self, committee, faults):
@@ -499,7 +504,7 @@ class Bench:
         def _download_one(host, remote, local):
             for attempt in range(1, self.SSH_RETRIES + 1):
                 try:
-                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
                     c.get(remote, local=local)
                     with lock:
                         results['done'] += 1
@@ -542,7 +547,7 @@ class Bench:
             f'mkdir -p "{remote_dir}"',
             f'for f in "{PathMaker.logs_path()}"/*.log; do [ -f "$f" ] || continue; cp "$f" "{remote_dir}/"; done',
         ]
-        g = Group(*hosts, user='ubuntu', connect_kwargs=self.connect)
+        g = Group(*hosts, user=self.settings.ssh_user, connect_kwargs=self.connect)
         g.run(' && '.join(cmd), hide=True)
 
     def _batch_download(self, hosts, protocol, rates):
@@ -562,13 +567,32 @@ class Bench:
         # Build download task list: (host, remote_path, local_path)
         tasks = []
         for host in flat_hosts:
-            c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
             for r in rates:
                 # Find all checkpoint dirs for this rate (handles multiple runs).
-                result = c.run(
-                    f'find batch_logs/{protocol} -path "*/r{r}-run*/*.log" 2>/dev/null || true',
-                    hide=True, warn=True,
-                )
+                result = None
+                for attempt in range(1, self.SSH_RETRIES + 1):
+                    try:
+                        c = Connection(
+                            host,
+                            user=self.settings.ssh_user,
+                            connect_kwargs=self.connect,
+                        )
+                        result = c.run(
+                            f'find batch_logs/{protocol} -path "*/r{r}-run*/*.log" 2>/dev/null || true',
+                            hide=True,
+                            warn=True,
+                        )
+                        break
+                    except Exception as e:
+                        if attempt == self.SSH_RETRIES:
+                            Print.warn(
+                                f'Failed to scan checkpoint logs on {host} '
+                                f'for rate={r}: {e}'
+                            )
+                        else:
+                            sleep(self.SSH_RETRY_DELAY_SECONDS)
+                if result is None:
+                    continue
                 if not result.stdout.strip():
                     continue
                 for log_file in result.stdout.strip().split('\n'):
@@ -589,7 +613,7 @@ class Bench:
         def _download_one(host, remote, local):
             for attempt in range(1, self.SSH_RETRIES + 1):
                 try:
-                    c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+                    c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
                     c.get(remote, local=local)
                     with lock:
                         results['done'] += 1
@@ -618,6 +642,60 @@ class Bench:
             f'Downloaded {results["done"]}/{len(tasks)} files'
             + (f' ({results["errors"]} errors)' if results["errors"] else '')
         )
+
+    @staticmethod
+    def _run_number_from_dir(run_dir):
+        run_match = re.search(r'run(\d+)$', run_dir.name)
+        return int(run_match.group(1)) if run_match else None
+
+    @staticmethod
+    def _load_fast_log_parser():
+        script_path = Path(__file__).resolve().parent.parent / 'scripts' / 'fast_parse_logs.py'
+        spec = importlib.util.spec_from_file_location('benchmark_fast_parse_logs', script_path)
+        if spec is None or spec.loader is None:
+            raise ParseError(f'Failed to load fast parser from {script_path}')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _result_output_file(self, faults, nodes, bench_parameters, rate, run_dir, protocol):
+        run_number = self._run_number_from_dir(run_dir)
+        if run_number is not None:
+            return PathMaker.run_result_file(
+                faults,
+                nodes,
+                bench_parameters.workers,
+                bench_parameters.collocate,
+                rate,
+                bench_parameters.tx_size,
+                run_number,
+                protocol,
+            )
+        return PathMaker.result_file(
+            faults,
+            nodes,
+            bench_parameters.workers,
+            bench_parameters.collocate,
+            rate,
+            bench_parameters.tx_size,
+            protocol,
+        )
+
+    def _parse_run_logs(self, run_dir, faults, nodes, bench_parameters, rate, protocol):
+        output_file = self._result_output_file(
+            faults, nodes, bench_parameters, rate, run_dir, protocol
+        )
+        if protocol == 'wahoo':
+            Print.info(f'Fast-parsing Wahoo logs in {run_dir}')
+            fast_parser = self._load_fast_log_parser()
+            parsed = fast_parser.parse_directory(Path(run_dir))
+            result = fast_parser.format_result(parsed, faults)
+            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_file).write_text(result)
+            return
+
+        logger = LogParser.process(str(run_dir), faults=faults)
+        logger.print(output_file)
 
     def run_batch(self, bench_parameters_dict, node_parameters_dict, batch_id, debug=False):
         assert isinstance(debug, bool)
@@ -660,7 +738,10 @@ class Bench:
                     Print.heading(f'Run {i+1}/{bench_parameters.runs} [{run_id}]')
                     try:
                         self._run_single(
-                            r, committee_copy, bench_parameters, debug
+                            r,
+                            committee_copy,
+                            bench_parameters,
+                            debug,
                         )
                         self._checkpoint_logs(
                             committee_copy.ips(),
@@ -697,7 +778,7 @@ class Bench:
             host_tag = host.replace('.', '-')
             remote_archive = f'/tmp/{batch_id}-{host_tag}.tar.gz'
             local_archive = output_path / f'{host_tag}.tar.gz'
-            c = Connection(host, user='ubuntu', connect_kwargs=self.connect)
+            c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
             result = c.run(
                 f'test -d batch_logs/{batch_id} && '
                 f'tar -czf {remote_archive} -C batch_logs {batch_id}',
@@ -756,7 +837,7 @@ class Bench:
                     flat_hosts.append(h)
             if flat_hosts:
                 protocol = node_parameters.json['dag_protocol']
-                Group(*flat_hosts, user='ubuntu', connect_kwargs=self.connect).run(
+                Group(*flat_hosts, user=self.settings.ssh_user, connect_kwargs=self.connect).run(
                     f'rm -rf batch_logs/{protocol}',
                     hide=True,
                     warn=True,
@@ -775,6 +856,18 @@ class Bench:
                 for i in range(bench_parameters.runs):
                     Print.heading(f'Run {i+1}/{bench_parameters.runs}')
                     try:
+                        Path(
+                            PathMaker.run_result_file(
+                                bench_parameters.faults,
+                                n,
+                                bench_parameters.workers,
+                                bench_parameters.collocate,
+                                r,
+                                bench_parameters.tx_size,
+                                i + 1,
+                                node_parameters.json['dag_protocol'],
+                            )
+                        ).unlink(missing_ok=True)
                         self._run_single(
                             r, committee_copy, bench_parameters, debug,
                             clean_logs=True,
@@ -802,6 +895,7 @@ class Bench:
 
         # Parse each rate's logs and write result files.
         faults = bench_parameters.faults
+        protocol = node_parameters.json['dag_protocol']
         for n in bench_parameters.nodes:
             for r in bench_parameters.rate:
                 rate_logs_dir = join(PathMaker.logs_path(), f'rate-{r}')
@@ -815,27 +909,6 @@ class Bench:
                 if not run_dirs:
                     run_dirs = [Path(rate_logs_dir)]
                 for run_dir in run_dirs:
-                    logger = LogParser.process(str(run_dir), faults=faults)
-                    run_match = re.search(r'run(\d+)$', run_dir.name)
-                    if run_match:
-                        output_file = PathMaker.run_result_file(
-                            faults,
-                            n,
-                            bench_parameters.workers,
-                            bench_parameters.collocate,
-                            r,
-                            bench_parameters.tx_size,
-                            int(run_match.group(1)),
-                            node_parameters.json['dag_protocol'],
-                        )
-                    else:
-                        output_file = PathMaker.result_file(
-                            faults,
-                            n,
-                            bench_parameters.workers,
-                            bench_parameters.collocate,
-                            r,
-                            bench_parameters.tx_size,
-                            node_parameters.json['dag_protocol'],
-                        )
-                    logger.print(output_file)
+                    self._parse_run_logs(
+                        run_dir, faults, n, bench_parameters, r, protocol
+                    )

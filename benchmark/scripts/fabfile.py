@@ -3,6 +3,7 @@ import csv
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 # Ensure benchmark package is importable regardless of CWD
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -48,7 +49,7 @@ def local(ctx, debug=True, protocol='round_robin', dag_protocol='noveldag', rate
 
 
 @task
-def compare_consensus(ctx, duration=60, debug=True):
+def compare_consensus(ctx, duration=50, debug=True):
     ''' Compare round_robin vs common_coin on localhost '''
     bench_params = {
         'faults': 0,
@@ -102,7 +103,7 @@ def compare_consensus(ctx, duration=60, debug=True):
 @task
 def compare_consensus_groups(
     ctx,
-    duration=60,
+    duration=50,
     debug=True,
     rate=120_000,
     rounds=10,
@@ -506,67 +507,67 @@ def plot_consensus_rates_zero_fault(
 
 
 @task
-def create(ctx, nodes=2):
+def create(ctx, nodes=2, settings='settings.json'):
     ''' Create a testbed'''
     from benchmark.instance import InstanceManager
 
     try:
-        InstanceManager.make().create_instances(nodes)
+        InstanceManager.make(settings).create_instances(nodes)
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def destroy(ctx):
+def destroy(ctx, settings='settings.json'):
     ''' Destroy the testbed '''
     from benchmark.instance import InstanceManager
 
     try:
-        InstanceManager.make().terminate_instances()
+        InstanceManager.make(settings).terminate_instances()
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def start(ctx, max=2):
+def start(ctx, max=2, settings='settings.json'):
     ''' Start at most `max` machines per data center '''
     from benchmark.instance import InstanceManager
 
     try:
-        InstanceManager.make().start_instances(max)
+        InstanceManager.make(settings).start_instances(max)
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def stop(ctx):
+def stop(ctx, settings='settings.json'):
     ''' Stop all machines '''
     from benchmark.instance import InstanceManager
 
     try:
-        InstanceManager.make().stop_instances()
+        InstanceManager.make(settings).stop_instances()
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def info(ctx):
+def info(ctx, settings='settings.json'):
     ''' Display connect information about all the available machines '''
     from benchmark.instance import InstanceManager
 
     try:
-        InstanceManager.make().print_info()
+        InstanceManager.make(settings).print_info()
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def install(ctx):
+def install(ctx, settings='settings.json'):
     ''' Install the codebase on all machines '''
     from benchmark.remote import Bench
 
     try:
-        Bench(ctx).install()
+        Bench(ctx, settings).install()
     except BenchError as e:
         Print.error(e)
 
@@ -582,12 +583,13 @@ def remote(
     workers=1,
     rate=10_000,
     tx_size=512,
-    duration=300,
+    duration=50,
     runs=2,
     benchmark_delay=20,
     max_header_delay=1000,
+    settings='settings.json',
 ):
-    ''' Run benchmarks on AWS '''
+    ''' Run benchmarks on a remote cloud testbed '''
     from benchmark.remote import Bench
 
     if protocol not in ('round_robin', 'common_coin'):
@@ -616,7 +618,7 @@ def remote(
         'dag_protocol': dag_protocol,
     }
     try:
-        Bench(ctx).run(bench_params, node_params, debug)
+        Bench(ctx, settings).run(bench_params, node_params, debug)
     except BenchError as e:
         Print.error(e)
 
@@ -633,12 +635,13 @@ def remote_run_batch(
     workers=1,
     rates='10000',
     tx_size=512,
-    duration=300,
+    duration=50,
     runs=2,
     benchmark_delay=20,
     max_header_delay=1000,
+    settings='settings.json',
 ):
-    ''' Run benchmarks on AWS and keep logs on remote machines for later collection '''
+    ''' Run benchmarks remotely and keep logs on machines for later collection '''
     from benchmark.remote import Bench
 
     if protocol not in ('round_robin', 'common_coin'):
@@ -671,18 +674,71 @@ def remote_run_batch(
         'dag_protocol': dag_protocol,
     }
     try:
-        Bench(ctx).run_batch(bench_params, node_params, str(batch_id), debug)
+        Bench(ctx, settings).run_batch(bench_params, node_params, str(batch_id), debug)
     except BenchError as e:
         Print.error(e)
 
 
 @task
-def remote_collect_batch(ctx, batch_id='default', out_dir='batch_downloads'):
-    ''' Download archived batch logs from all AWS machines in one shot '''
+def remote_collect_batch(ctx, batch_id='default', out_dir='batch_downloads', settings='settings.json'):
+    ''' Download archived batch logs from remote machines in one shot '''
     from benchmark.remote import Bench
 
     try:
-        Bench(ctx).collect_batch(str(batch_id), str(out_dir))
+        Bench(ctx, settings).collect_batch(str(batch_id), str(out_dir))
+    except BenchError as e:
+        Print.error(e)
+
+
+@task
+def remote_collect_rates(
+    ctx,
+    protocol='wahoo',
+    rates='30000,60000,90000',
+    faults=0,
+    nodes=10,
+    workers=1,
+    tx_size=512,
+    collocate=True,
+    settings='settings.json',
+):
+    ''' Download checkpointed logs for selected rates and parse result files '''
+    from benchmark.remote import Bench
+
+    try:
+        rate_values = [int(x.strip()) for x in str(rates).split(',') if x.strip()]
+        if not rate_values:
+            raise BenchError('Invalid rates: provide comma-separated integers')
+
+        bench = Bench(ctx, settings)
+        hosts = bench.manager.hosts(flat=True)
+        if not hosts:
+            raise BenchError('There are no instances available to collect logs from')
+
+        bench._batch_download(hosts, str(protocol), rate_values)
+
+        bench_params = SimpleNamespace(
+            workers=int(workers),
+            collocate=bool(collocate),
+            tx_size=int(tx_size),
+        )
+        for rate in rate_values:
+            rate_logs_dir = Path(PathMaker.logs_path()) / f'rate-{rate}'
+            if not rate_logs_dir.exists():
+                Print.warn(f'No logs found for rate={rate}')
+                continue
+            run_dirs = sorted(x for x in rate_logs_dir.iterdir() if x.is_dir())
+            if not run_dirs:
+                run_dirs = [rate_logs_dir]
+            for run_dir in run_dirs:
+                bench._parse_run_logs(
+                    run_dir,
+                    int(faults),
+                    int(nodes),
+                    bench_params,
+                    rate,
+                    str(protocol),
+                )
     except BenchError as e:
         Print.error(e)
 
@@ -707,12 +763,12 @@ def plot(ctx):
 
 
 @task
-def kill(ctx):
+def kill(ctx, settings='settings.json'):
     ''' Stop execution on all machines '''
     from benchmark.remote import Bench
 
     try:
-        Bench(ctx).kill()
+        Bench(ctx, settings).kill()
     except BenchError as e:
         Print.error(e)
 
@@ -729,7 +785,7 @@ def logs(ctx):
 @task
 def compare_dag_protocols(
     ctx,
-    duration=60,
+    duration=50,
     debug=True,
     faults=0,
     nodes=10,
@@ -740,6 +796,7 @@ def compare_dag_protocols(
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/dag_protocol_comparison.csv',
+    settings='settings.json',
 ):
     ''' Compare narwhal, bullshark, noveldag on remote testbed at fixed rate '''
     from benchmark.remote import Bench
@@ -775,7 +832,7 @@ def compare_dag_protocols(
                 'consensus_protocol': consensus,
                 'dag_protocol': proto,
             }
-            bench = Bench(ctx)
+            bench = Bench(ctx, settings)
             bench.run(bench_params, node_params, debug)
 
             # Parse result files produced by Bench.run()
@@ -819,13 +876,14 @@ def sweep_dag_rates(
     workers=1,
     tx_size=512,
     runs=2,
-    rate_start=60_000,
+    rate_start=30_000,
     rate_step=30_000,
-    rate_end=300_000,
+    rate_end=240_000,
     protocols='narwhal,bullshark,noveldag',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/remote_dag_sweep.csv',
+    settings='settings.json',
 ):
     ''' Rate sweep across all three DAG protocols on remote testbed '''
     from benchmark.remote import Bench
@@ -866,7 +924,7 @@ def sweep_dag_rates(
                 'consensus_protocol': consensus,
                 'dag_protocol': proto,
             }
-            bench = Bench(ctx)
+            bench = Bench(ctx, settings)
             bench.run(bench_params, node_params, debug)
 
             # Collect results from individual result files
@@ -998,13 +1056,14 @@ def full_dag_bench(
     workers=1,
     tx_size=512,
     runs=2,
-    rate_start=60_000,
+    rate_start=30_000,
     rate_step=30_000,
-    rate_end=300_000,
+    rate_end=240_000,
     protocols='narwhal,bullshark,noveldag',
     consensus='round_robin',
     output_csv='csv_plots/remote_dag_sweep.csv',
     debug=True,
+    settings='settings.json',
 ):
     ''' All-in-one: sweep all three DAG protocols on cloud, then generate charts '''
     Print.heading('=== Phase 1/2: Rate Sweep ===')
@@ -1023,6 +1082,7 @@ def full_dag_bench(
         protocols=protocols,
         consensus=consensus,
         output_csv=output_csv,
+        settings=settings,
     )
 
     Print.heading('=== Phase 2/2: Generate Charts ===')
@@ -1125,6 +1185,7 @@ def _run_dag_sweep(
     protocol_list,
     output_csv,
     debug,
+    settings='settings.json',
 ):
     """Run a rate sweep across DAG protocols for a single (nodes, faults)."""
     from benchmark.remote import Bench
@@ -1148,7 +1209,7 @@ def _run_dag_sweep(
         )
         current_node = dict(node_params)
         current_node['dag_protocol'] = proto
-        bench = Bench(ctx)
+        bench = Bench(ctx, settings)
         bench.run(bench_params, current_node, debug)
 
         # Collect results from individual result files
@@ -1218,18 +1279,19 @@ def paper_fig1_fig2(
     workers=1,
     tx_size=512,
     runs=2,
-    rate_start=60_000,
+    rate_start=30_000,
     rate_step=30_000,
-    rate_end=300_000,
+    rate_end=240_000,
     protocols='noveldag,narwhal,wahoo',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/paper_fig1_fig2.csv',
+    settings='settings.json',
 ):
     ''' Figure 1 & 2: Rate sweep across node counts (10, 20, 50), faults=0.
 
     Compares NovelDAG, Narwhal (Tusk), and Wahoo.
-    - WAN measurements (AWS remote testbed)
+    - WAN measurements (remote cloud testbed)
     - 500KB max block size, 512B transaction size
     '''
     node_list = [int(x.strip()) for x in str(nodes).split(',') if x.strip()]
@@ -1268,7 +1330,7 @@ def paper_fig1_fig2(
             'benchmark_delay': int(benchmark_delay),
         }
         _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
-                        partial_csv, debug)
+                        partial_csv, debug, settings)
 
         try:
             with open(partial_csv, newline='') as f:
@@ -1311,18 +1373,19 @@ def paper_fig3(
     workers=1,
     tx_size=512,
     runs=2,
-    rate_start=60_000,
+    rate_start=30_000,
     rate_step=30_000,
-    rate_end=300_000,
+    rate_end=240_000,
     protocols='noveldag,narwhal,wahoo',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/paper_fig3.csv',
+    settings='settings.json',
 ):
     ''' Figure 3: Rate sweep across crash faults (0, 1, 3), nodes=10.
 
     Compares NovelDAG, Narwhal (Tusk), and Wahoo.
-    - WAN measurements (AWS remote testbed)
+    - WAN measurements (remote cloud testbed)
     - 500KB max block size, 512B transaction size
     '''
     fault_list = [int(x.strip()) for x in str(faults).split(',') if x.strip()]
@@ -1360,7 +1423,7 @@ def paper_fig3(
             'benchmark_delay': int(benchmark_delay),
         }
         _run_dag_sweep(ctx, bench_params, node_params, protocol_list,
-                        partial_csv, debug)
+                        partial_csv, debug, settings)
 
         try:
             with open(partial_csv, newline='') as fh:
