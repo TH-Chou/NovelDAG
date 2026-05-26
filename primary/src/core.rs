@@ -260,7 +260,7 @@ impl Core {
                     previous_round,
                     _parents_2_authorities,
                     _parents_2_weight,
-                    self.committee.validity_threshold(),
+                    self.committee.quorum_threshold(),
                     false,
                 );
                 break;
@@ -296,7 +296,7 @@ impl Core {
                     previous_round,
                     _parents_2_authorities,
                     _parents_2_weight,
-                    self.committee.validity_threshold(),
+                    self.committee.quorum_threshold(),
                     by_authority.contains_key(&self.name),
                 );
                 break;
@@ -329,7 +329,7 @@ impl Core {
                     previous_round,
                     _parents_2_authorities,
                     _parents_2_weight,
-                    self.committee.validity_threshold(),
+                    self.committee.quorum_threshold(),
                     by_authority.contains_key(&self.name),
                 );
                 break;
@@ -351,11 +351,11 @@ impl Core {
                     )
                 })
                 .unwrap_or_default();
-            if round >= 2 && parents_2_weight < self.committee.validity_threshold() {
+            if round >= 2 && parents_2_weight < self.committee.quorum_threshold() {
                 #[cfg(feature = "benchmark")]
                 self.diag_signal_blocked(
                     round,
-                    "parents_2_weight_below_validity",
+                    "parents_2_weight_below_quorum",
                     by_authority.len(),
                     round_weight,
                     self.committee.quorum_threshold(),
@@ -363,7 +363,7 @@ impl Core {
                     previous_round,
                     _parents_2_authorities,
                     parents_2_weight,
-                    self.committee.validity_threshold(),
+                    self.committee.quorum_threshold(),
                     by_authority.contains_key(&self.name),
                 );
                 break;
@@ -387,7 +387,7 @@ impl Core {
                     previous_round,
                     _parents_2_authorities,
                     parents_2_weight,
-                    self.committee.validity_threshold(),
+                    self.committee.quorum_threshold(),
                     false,
                 );
                 break;
@@ -506,7 +506,7 @@ impl Core {
                     }
                     if header.round >= 2 {
                         ensure!(
-                            stake_2 >= self.committee.validity_threshold(),
+                            stake_2 >= self.committee.quorum_threshold(),
                             DagError::HeaderRequiresQuorum(header.id.clone())
                         );
                         let qc = header
