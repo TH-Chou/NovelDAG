@@ -1463,7 +1463,7 @@ def paper_plot_fig1(
     Shortfin, Narwhal, Wahoo with rate annotations. '''
     import matplotlib.pyplot as plt
 
-    rows = _read_paper_csv(csv_path)
+    rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
     protocol_order = ['narwhal', 'wahoo', 'noveldag']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
@@ -1501,6 +1501,7 @@ def paper_plot_fig1(
         if ax is axes[0]:
             ax.set_ylabel('Consensus Latency (ms)')
         ax.grid(True, alpha=0.3)
+        ax.set_ylim(bottom=0)
         ax.legend(fontsize=8)
 
     fig.suptitle('Figure 1: Throughput--Latency under WAN (faults=0)',
@@ -1526,7 +1527,7 @@ def paper_plot_fig2(
     whose end-to-end latencies are closest to max_latency_ms. '''
     import matplotlib.pyplot as plt
 
-    rows = _read_paper_csv(csv_path)
+    rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
     protocol_order = ['narwhal', 'wahoo', 'noveldag']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
@@ -1610,7 +1611,7 @@ def paper_plot_fig3(
     One panel per fault count. Each panel overlays the three protocols. '''
     import matplotlib.pyplot as plt
 
-    rows = _read_paper_csv(csv_path)
+    rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
     protocol_order = ['narwhal', 'wahoo', 'noveldag']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     fault_list = sorted({int(r['faults']) for r in rows})
@@ -1648,6 +1649,7 @@ def paper_plot_fig3(
         if ax is axes[0]:
             ax.set_ylabel('Consensus Latency (ms)')
         ax.grid(True, alpha=0.3)
+        ax.set_ylim(bottom=0)
         ax.legend(fontsize=8)
 
     fig.suptitle('Figure 3: Throughput--Latency under Crash Faults (n = 10)',
@@ -1675,6 +1677,23 @@ def _read_paper_csv(path):
         for row in csv.DictReader(f):
             rows.append(row)
     return rows
+
+
+def _filter_paper_plot_outliers(rows):
+    """Drop known WAN plotting outliers before drawing paper figures."""
+    filtered = []
+    for row in rows:
+        try:
+            is_outlier = (
+                row.get('protocol') == 'narwhal'
+                and int(float(row.get('faults', 0))) == 0
+                and int(float(row.get('rate', 0))) == 240_000
+            )
+        except (TypeError, ValueError):
+            is_outlier = False
+        if not is_outlier:
+            filtered.append(row)
+    return filtered
 
 
 def _interpolate_tps_at_latency(
