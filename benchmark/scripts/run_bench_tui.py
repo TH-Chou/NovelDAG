@@ -3,7 +3,7 @@
 
 Usage:
   python scripts/run_bench_tui.py
-  python scripts/run_bench_tui.py run --mode local --protocol noveldag --rates 60000 --faults 0 --delays 0 --runs 1
+  python scripts/run_bench_tui.py run --mode local --protocol shortfin --rates 60000 --faults 0 --delays 0 --runs 1
 """
 
 from __future__ import annotations
@@ -47,7 +47,8 @@ MODES = [
 
 PROTOCOLS = [
     questionary.Choice("narwhal   — 经典 Narwhal DAG", value="narwhal"),
-    questionary.Choice("noveldag  — NovelDAG (优化版)", value="noveldag"),
+    questionary.Choice("shortfin  — Shortfin (优化版)", value="shortfin"),
+    questionary.Choice("sailfin   — Sailfin experimental", value="sailfin"),
     questionary.Choice("wahoo     — Wahoo 双路径", value="wahoo"),
 ]
 
@@ -111,7 +112,7 @@ def main():
 
 def print_header():
     print("\n" + "=" * 62)
-    print("  🧬  NovelDAG Benchmark  —  交互式测试控制台")
+    print("  🧬  Shortfin Benchmark  —  交互式测试控制台")
     print("=" * 62)
 
 
@@ -119,7 +120,7 @@ def run_from_cli(argv: list[str]) -> None:
     """Run dagtest-TUI in non-interactive mode."""
     parser = argparse.ArgumentParser(
         prog="dagtest-TUI",
-        description="NovelDAG benchmark TUI/CLI launcher",
+        description="Shortfin benchmark TUI/CLI launcher",
     )
     parser.add_argument(
         "action",

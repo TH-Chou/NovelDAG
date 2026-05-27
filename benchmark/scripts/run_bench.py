@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified NovelDAG benchmark CLI.
+"""Unified Shortfin benchmark CLI.
 
 Usage:
   python run_bench.py --mode local run [--config configs/smoke.yaml] [--group smoke]
@@ -59,7 +59,7 @@ def _absolutize_existing_paths(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Unified NovelDAG benchmark CLI",
+        description="Unified Shortfin benchmark CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ def main() -> None:
     run_p.add_argument("--batch-size", type=int, help="Max batch size (bytes)")
     run_p.add_argument("--tx-size", type=int, help="Transaction size (bytes)")
     run_p.add_argument(
-        "--dag-protocol", type=str, help="DAG protocol (narwhal/noveldag/wahoo)"
+        "--dag-protocol", type=str, help="DAG protocol (narwhal/shortfin/sailfin/wahoo)"
     )
     run_p.add_argument("--output-prefix", type=str, help="Output CSV prefix")
     run_p.add_argument(
@@ -245,7 +245,7 @@ def _resolve_config_and_points(
 
     # No config — build minimal points from CLI flags
     cli_overrides = _build_cli_overrides(args)
-    protocols = cli_overrides.get("protocols", ["noveldag"])
+    protocols = cli_overrides.get("protocols", ["shortfin"])
     rates = cli_overrides.get("rates", [60000])
     faults = cli_overrides.get("faults", [0])
     delays = cli_overrides.get("delays", [0])

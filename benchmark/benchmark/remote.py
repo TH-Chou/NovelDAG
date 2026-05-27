@@ -158,7 +158,7 @@ class Bench:
         Primaries are launched in parallel, but on a multi-region testbed the
         first node can start proposing while some peers are still binding their
         sockets. This barrier narrows that startup skew before clients are
-        released and makes early-round NovelDAG parent collection less fragile.
+        released and makes early-round Shortfin parent collection less fragile.
         """
         assert isinstance(addresses, list)
         if not addresses:

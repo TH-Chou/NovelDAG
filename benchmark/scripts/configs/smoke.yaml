@@ -11,7 +11,7 @@ outlier_rejection:
 
 groups:
   smoke:
-    protocols: [noveldag]
+    protocols: [shortfin]
     rates: [60000]
     faults: [0]
     bench:
@@ -19,4 +19,4 @@ groups:
       duration: 15
       runs: 1
     node:
-      dag_protocol: noveldag
+      dag_protocol: shortfin

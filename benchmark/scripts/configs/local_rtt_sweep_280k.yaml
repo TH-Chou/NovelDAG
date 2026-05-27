@@ -30,7 +30,7 @@ outlier_rejection:
 
 groups:
   local_rtt_280k:
-    protocols: [narwhal, noveldag, wahoo]
+    protocols: [narwhal, shortfin, wahoo]
     rates: [280000]
     faults: [0, 1, 3]
     local:

@@ -5,7 +5,7 @@
 [![python](https://img.shields.io/badge/python-3.9-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-390/)
 [![license](https://img.shields.io/badge/license-Apache-blue.svg?style=flat-square)](LICENSE)
 
-Research-oriented DAG consensus codebase derived from Narwhal/Tusk, adapted for protocol experimentation. **Four DAG consensus protocols — Narwhal, Bullshark, NovelDAG, and Wahoo — unified in a single workspace**, selected at runtime via configuration.
+Research-oriented DAG consensus codebase derived from Narwhal/Tusk, adapted for protocol experimentation. **Five DAG consensus protocols — Narwhal, Bullshark, Shortfin, Sailfin, and Wahoo — unified in a single workspace**, selected at runtime via configuration.
 
 - **Language:** Rust (consensus), Python + Fabric (benchmarks)
 - **License:** Apache 2.0
@@ -20,7 +20,8 @@ NovelDAG/
   primary/           # Primary state machine: proposer, synchronizer, certificate waiter
     src/wahoo/       # Wahoo protocol state machine (full port from Go reference)
   consensus/         # Protocol consensus modules
-    src/noveldag.rs  # NovelDAG: 4-round wave, b3→b2→b1 leader chain, pipelined commits
+    src/shortfin.rs  # Shortfin: 4-round wave, b3→b2→b1 leader chain, pipelined commits
+    src/sailfin.rs   # Sailfin: experimental Shortfin-family variant
     src/narwhal.rs   # Narwhal: r-2 leader, f+1 support, linked-path ordering
     src/bullshark.rs # Bullshark: r leader, f+1 support, linked-path ordering
     src/wahoo.rs     # Wahoo passthrough (commit decisions made in primary)
@@ -47,7 +48,7 @@ NovelDAG/
 
 ---
 
-## Four Protocols, One Codebase
+## Five Protocols, One Codebase
 
 Protocol-specific logic is isolated in the consensus layer:
 
@@ -55,7 +56,8 @@ Protocol-specific logic is isolated in the consensus layer:
 | --- | --- | --- | --- |
 | Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
 | Bullshark | [consensus/src/bullshark.rs](consensus/src/bullshark.rs) | Elected at round `r` | f+1 support from `r+1` children, linked-path ordering |
-| NovelDAG | [consensus/src/noveldag.rs](consensus/src/noveldag.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
+| Shortfin | [consensus/src/shortfin.rs](consensus/src/shortfin.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
+| Sailfin | [consensus/src/sailfin.rs](consensus/src/sailfin.rs) | Experimental | Independent variant file for edge-voted fast-commit work |
 | Wahoo | [primary/src/wahoo/](primary/src/wahoo/) (state machine) + [consensus/src/wahoo.rs](consensus/src/wahoo.rs) (passthrough) | Even-round Elect: 2f+1 BLS partial sigs → coin for odd-round leader | `leader[r] ∧ done[r][leader] ∧ dag[r][leader]` at odd rounds, transitive ancestor commit. 1:1 port of [Go reference](Wahoo-main/wahoo/) |
 
 Leader election modes (`consensus_protocol`): **RoundRobin** or **CommonCoin** — selectable independently of the DAG protocol.
@@ -65,21 +67,21 @@ Leader election modes (`consensus_protocol`): **RoundRobin** or **CommonCoin** �
 In `parameters.json`:
 ```json
 {
-  "dag_protocol": "noveldag",
+  "dag_protocol": "shortfin",
   "consensus_protocol": "common_coin"
 }
 ```
 
-- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"noveldag"` | `"wahoo"` (default: `"noveldag"`)
+- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"shortfin"` | `"sailfin"` | `"wahoo"` (default: `"shortfin"`)
 - `consensus_protocol`: `"round_robin"` | `"common_coin"` (default: `"round_robin"`)
 
-The `Header`, `Certificate`, and `Vote` wire formats use NovelDAG's extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values.
+The `Header`, `Certificate`, and `Vote` wire formats use the Shortfin-family extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values.
 
 **Wahoo** deviates from the unified schema — it uses its own message types (`PrimaryMessage::Wahoo(WahooMessage)`) internally, with parity-dependent block tags, Ready/Done/Elect/ReVote messages, and fast-path odd rounds. See `primary/src/wahoo/messages.rs`.
 
 ---
 
-## NovelDAG Protocol
+## Shortfin Protocol
 
 ### System Model
 
@@ -175,7 +177,7 @@ cargo test -p primary               # Primary-specific
 ```bash
 cd benchmark
 pip install -r requirements.txt
-fab local --dag-protocol=noveldag --rate=50000 --duration=20
+fab local --dag-protocol=shortfin --rate=50000 --duration=20
 ```
 
 Runs `n=4` nodes on localhost via tmux. Config files generated in `benchmark/logs/`. See `benchmark/README.md` for full parameter reference.
@@ -184,7 +186,7 @@ Runs `n=4` nodes on localhost via tmux. Config files generated in `benchmark/log
 
 ```bash
 fab compare-consensus-groups --duration=30 --rounds=5 --rate=50000
-fab local --dag-protocol=noveldag --rate=50000
+fab local --dag-protocol=shortfin --rate=50000
 fab local --dag-protocol=narwhal --rate=50000
 ```
 
@@ -203,7 +205,7 @@ cd benchmark
 fab create --nodes=2
 fab info
 fab install
-fab remote --dag-protocol=noveldag --nodes=10 --faults=0 --rate=10000 --duration=20 --runs=1
+fab remote --dag-protocol=shortfin --nodes=10 --faults=0 --rate=10000 --duration=20 --runs=1
 fab kill
 fab destroy
 ```

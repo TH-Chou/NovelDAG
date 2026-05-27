@@ -34,14 +34,14 @@ outlier_rejection:
 groups:
   # ── Single-delay groups (run individually with --group) ──
   d0:
-    protocols: [narwhal, noveldag, wahoo]
+    protocols: [narwhal, shortfin, wahoo]
     rates: [60000, 130000, 200000, 270000, 340000]
     faults: [0, 1, 3]
     local:
       delays: [0]
 
   d100:
-    protocols: [narwhal, noveldag, wahoo]
+    protocols: [narwhal, shortfin, wahoo]
     rates: [60000, 130000, 200000, 270000]
     faults: [0, 1, 3]
     local:
@@ -49,7 +49,7 @@ groups:
 
   # ── Full RTT sweep ──
   rtt_sweep:
-    protocols: [narwhal, noveldag, wahoo]
+    protocols: [narwhal, shortfin, wahoo]
     rates: [60000, 130000, 200000, 270000]
     faults: [0, 1, 3]
     local:
@@ -57,7 +57,7 @@ groups:
 
   # ── Quick smoke for all protocols ──
   all_smoke:
-    protocols: [narwhal, noveldag, wahoo]
+    protocols: [narwhal, shortfin, wahoo]
     rates: [60000, 130000]
     faults: [0]
     bench:

@@ -33,7 +33,7 @@ DEFAULT_NODE: dict[str, Any] = {
     "batch_size": 500000,
     "max_batch_delay": 200,
     "consensus_protocol": "round_robin",
-    "dag_protocol": "noveldag",
+    "dag_protocol": "shortfin",
 }
 
 DEFAULT_LOCAL: dict[str, Any] = {

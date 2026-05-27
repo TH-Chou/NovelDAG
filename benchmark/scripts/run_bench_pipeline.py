@@ -604,8 +604,8 @@ def generate_plots(
         print("No data found in CSV.")
         return
 
-    markers = {"narwhal": "s", "bullshark": "^", "noveldag": "o", "wahoo": "D"}
-    colors = {"narwhal": "#FF5722", "bullshark": "#FF9800", "noveldag": "#2196F3", "wahoo": "#9C27B0"}
+    markers = {"narwhal": "s", "bullshark": "^", "shortfin": "o", "sailfin": "P", "wahoo": "D"}
+    colors = {"narwhal": "#FF5722", "bullshark": "#FF9800", "shortfin": "#2196F3", "sailfin": "#E69F00", "wahoo": "#9C27B0"}
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
 

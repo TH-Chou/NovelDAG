@@ -2,7 +2,7 @@
 """Fast streaming parser for large benchmark logs.
 
 The standard LogParser reads every log file into memory and then applies large
-regular expressions. That is fine for small Narwhal/NovelDAG runs, but Wahoo can
+regular expressions. That is fine for small Narwhal/Shortfin runs, but Wahoo can
 produce hundreds of MB of primary logs per sweep point. This parser scans files
 line by line and extracts only the fields needed for the paper CSV/results.
 """

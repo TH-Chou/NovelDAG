@@ -80,12 +80,12 @@ except Exception as exc:
     raise SystemExit(0)
 
 colors = {
-    "noveldag": "#4fb6b6",
+    "shortfin": "#4fb6b6",
     "narwhal": "#8fb7e8",
     "wahoo": "#e8a7bd",
 }
-markers = {"noveldag": "o", "narwhal": "s", "wahoo": "D"}
-protocols = ["noveldag", "narwhal", "wahoo"]
+markers = {"shortfin": "o", "narwhal": "s", "wahoo": "D"}
+protocols = ["shortfin", "narwhal", "wahoo"]
 
 with rtt_csv.open() as f:
     rtt_rows = list(csv.DictReader(f))

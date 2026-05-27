@@ -5,8 +5,8 @@
 ```bash
 cd benchmark
 pip install -r requirements.txt
-fab local --dag-protocol=noveldag --rate=50000 --duration=20
-fab remote --dag-protocol=noveldag --nodes=10 --faults=1 --rate=10000 --duration=20 --runs=1
+fab local --dag-protocol=shortfin --rate=50000 --duration=20
+fab remote --dag-protocol=shortfin --nodes=10 --faults=1 --rate=10000 --duration=20 --runs=1
 ```
 
 ## Entry Points
@@ -19,7 +19,7 @@ The stable entrypoint is `benchmark/fabfile.py`, which wraps `benchmark/scripts/
 
 ```bash
 # Local
-fab local --dag-protocol=noveldag --rate=50000 --duration=20
+fab local --dag-protocol=shortfin --rate=50000 --duration=20
 
 # Cloud
 fab create --nodes=2          # launch EC2 instances
@@ -50,7 +50,7 @@ fab paper-plot-all
 | `--tx-size` | 512 | Transaction size (bytes) |
 | `--duration` | 300 | Benchmark duration (seconds) |
 | `--runs` | 2 | Runs per config |
-| `--dag-protocol` | noveldag | narwhal / bullshark / noveldag / wahoo |
+| `--dag-protocol` | shortfin | narwhal / bullshark / shortfin / sailfin / wahoo |
 | `--protocol` | round_robin | round_robin / common_coin (leader election) |
 | `--benchmark-delay` | 0 | Delay before timed phase (seconds, for P2P warmup) |
 | `--max-header-delay` | 200 | Proposer timer interval (ms, increase for cross-region) |
@@ -60,8 +60,8 @@ fab paper-plot-all
 ```bash
 cd benchmark
 python scripts/dagtest-TUI
-python scripts/dagtest-TUI run --mode local --protocol noveldag --rates 60000 --faults 0 --delays 0 --runs 1
-python scripts/dagtest-TUI full --mode local --protocols narwhal,noveldag,wahoo --rates 60000,130000 --faults 0,1 --delays 0,100 --runs 3
+python scripts/dagtest-TUI run --mode local --protocol shortfin --rates 60000 --faults 0 --delays 0 --runs 1
+python scripts/dagtest-TUI full --mode local --protocols narwhal,shortfin,sailfin,wahoo --rates 60000,130000 --faults 0,1 --delays 0,100 --runs 3
 python scripts/dagtest-TUI run --mode aws --settings settings.json --config scripts/configs/full_sweep.yaml --group all_smoke
 ```
 
@@ -108,7 +108,7 @@ Config files live in `scripts/configs/`. The system performs a Cartesian product
 ```yaml
 groups:
   smoke:
-    protocols: [noveldag]
+    protocols: [shortfin]
     rates: [60000]
     faults: [0]
     runs: 1
