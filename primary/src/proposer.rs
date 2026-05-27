@@ -42,11 +42,11 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
-    /// Authorities used for threshold-coin shares (NovelDAG only).
+    /// Authorities used for threshold-coin shares (Shortfin-family only).
     coin_authorities: Vec<PublicKey>,
-    /// Threshold used for threshold-coin shares (NovelDAG only).
+    /// Threshold used for threshold-coin shares (Shortfin-family only).
     coin_threshold: usize,
-    /// Threshold for parents_2 (dual-hop) references. NovelDAG requires
+    /// Threshold for parents_2 (dual-hop) references. Shortfin-family protocols require
     /// the second-hop references to cover a quorum from round r-2.
     parents_2_threshold: usize,
 
@@ -63,7 +63,7 @@ pub struct Proposer {
     parents_1: Vec<Digest>,
     /// Holds the second-hop parents (`r-2`) waiting to be included in the next header.
     parents_2: Vec<Digest>,
-    /// Holds the QC of our previous-round block (NovelDAG only).
+    /// Holds the QC of our previous-round block (Shortfin-family only).
     last_qc: Option<EmbeddedQc>,
     /// Holds full certificates for parents_1 (Bullshark only).
     last_parent_certs: Vec<Certificate>,
@@ -100,13 +100,13 @@ impl Proposer {
         let committee = committee.clone();
 
         tokio::spawn(async move {
-            // Bullshark starts at round 0; Narwhal/NovelDAG start at round 1.
+            // Bullshark starts at round 0; Narwhal/Shortfin-family protocols start at round 1.
             let initial_round = if dag_protocol == DagProtocol::Bullshark {
                 0
             } else {
                 1
             };
-            // Bullshark stores genesis certificates; Narwhal/NovelDAG store digests.
+            // Bullshark stores genesis certificates; Narwhal/Shortfin-family protocols store digests.
             let initial_parent_certs = if dag_protocol == DagProtocol::Bullshark {
                 genesis_certs
             } else {
@@ -142,7 +142,7 @@ impl Proposer {
     }
 
     async fn make_header(&mut self) {
-        let coin_share = if self.dag_protocol == DagProtocol::NovelDAG {
+        let coin_share = if self.dag_protocol.is_shortfin_family() {
             make_coin_share(
                 &self.coin_authorities,
                 self.coin_threshold,
@@ -160,12 +160,12 @@ impl Proposer {
             self.round,
             self.digests.drain(..).collect(),
             self.parents_1.drain(..).collect::<BTreeSet<_>>(),
-            if self.dag_protocol == DagProtocol::NovelDAG {
+            if self.dag_protocol.is_shortfin_family() {
                 self.parents_2.drain(..).collect::<BTreeSet<_>>()
             } else {
                 BTreeSet::new()
             },
-            if self.dag_protocol == DagProtocol::NovelDAG {
+            if self.dag_protocol.is_shortfin_family() {
                 self.last_qc.clone()
             } else {
                 None
@@ -237,9 +237,7 @@ impl Proposer {
     /// Update the last leader (Bullshark even-round logic).
     fn update_leader(&mut self) -> bool {
         let leader_name = match self.consensus_protocol {
-            ConsensusProtocol::RoundRobin => {
-                self.committee.leader(self.round as usize)
-            }
+            ConsensusProtocol::RoundRobin => self.committee.leader(self.round as usize),
             ConsensusProtocol::CommonCoin => {
                 let mut keys: Vec<_> = self
                     .last_parent_certs
@@ -326,7 +324,7 @@ impl Proposer {
         #[cfg(feature = "benchmark")]
         let mut diag_headers_created = 0u64;
 
-        // Per-round gate timing for critical-path analysis (NovelDAG).
+        // Per-round gate timing for critical-path analysis (Shortfin-family protocols).
         // Reset whenever signal.round advances; captures the first moment
         // each gate became satisfied within the current round.
         #[cfg(feature = "benchmark")]
@@ -362,7 +360,7 @@ impl Proposer {
 
         loop {
             match self.dag_protocol {
-                DagProtocol::NovelDAG => {
+                DagProtocol::Shortfin | DagProtocol::Sailfin => {
                     // Check if we can propose a new header. We propose a new header when one of
                     // the following conditions is met:
                     // 1. We have a quorum of certificates from the previous round and enough
@@ -431,13 +429,19 @@ impl Proposer {
                             let now = Instant::now();
                             if let Some(round_start) = diag_round_started_at {
                                 let p1_wait = diag_parents_1_ready_at
-                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .map(|t| {
+                                        t.saturating_duration_since(round_start).as_millis() as u64
+                                    })
                                     .unwrap_or(0);
                                 let p2_wait = diag_parents_2_ready_at
-                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .map(|t| {
+                                        t.saturating_duration_since(round_start).as_millis() as u64
+                                    })
                                     .unwrap_or(0);
                                 let qc_wait = diag_qc_ready_at
-                                    .map(|t| t.saturating_duration_since(round_start).as_millis() as u64)
+                                    .map(|t| {
+                                        t.saturating_duration_since(round_start).as_millis() as u64
+                                    })
                                     .unwrap_or(0);
                                 diag_sum_parents_1_wait_ms += p1_wait;
                                 diag_sum_parents_2_wait_ms += p2_wait;
@@ -562,7 +566,7 @@ impl Proposer {
             tokio::select! {
                 Some(signal) = self.rx_core.recv() => {
                     match self.dag_protocol {
-                        DagProtocol::NovelDAG => {
+                        DagProtocol::Shortfin | DagProtocol::Sailfin => {
                             if signal.round < self.round {
                                 continue;
                             }

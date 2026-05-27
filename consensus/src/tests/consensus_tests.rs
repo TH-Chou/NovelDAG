@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use config::{Authority, PrimaryAddresses};
+use config::{Authority, ConsensusProtocol, DagProtocol, PrimaryAddresses};
 use crypto::{generate_keypair, SecretKey};
 use primary::{EmbeddedQc, Header, Vote};
 use rand::rngs::StdRng;
@@ -114,7 +114,7 @@ fn make_certificates(
     (certificates, next_parents)
 }
 
-// NovelDAG wave = 4. Running rounds 1..=4 with a full DAG reaches the first wave
+// Shortfin wave = 4. Running rounds 1..=4 with a full DAG reaches the first wave
 // boundary at r=4; the Section-6 rule then commits the leader at r-3 = 1.
 #[tokio::test]
 async fn commit_one() {
@@ -151,6 +151,49 @@ async fn commit_one() {
         .expect("commit timed out")
         .expect("consensus output closed");
     assert_eq!(committed.round(), 1);
+}
+
+// Sailfin's opt path commits a leader at round r as soon as round r+1 carries
+// 2f+1 direct edge-votes for it, without waiting for Shortfin's r+4 wave
+// boundary. With this fixture, every round-2 certificate cites every round-1
+// certificate, so leader@r1 is fast-certified after round 2 reaches quorum.
+#[tokio::test]
+async fn sailfin_fast_commit_before_wave_boundary() {
+    let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
+    keys.sort();
+    let genesis = Certificate::genesis(&mock_committee())
+        .iter()
+        .map(|x| x.digest())
+        .collect::<BTreeSet<_>>();
+    let (mut certificates, _) = make_certificates(1, 2, &genesis, &keys);
+
+    let (tx_waiter, rx_waiter) = channel(1);
+    let (tx_primary, mut rx_primary) = channel(1);
+    let (tx_output, mut rx_output) = channel(1);
+    Consensus::spawn_with_protocol(
+        keys[0],
+        mock_committee(),
+        /* gc_depth */ 50,
+        DagProtocol::Sailfin,
+        ConsensusProtocol::RoundRobin,
+        rx_waiter,
+        tx_primary,
+        tx_output,
+    );
+    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
+
+    tokio::spawn(async move {
+        while let Some(certificate) = certificates.pop_front() {
+            tx_waiter.send(certificate).await.unwrap();
+        }
+    });
+
+    let committed = timeout(Duration::from_secs(1), rx_output.recv())
+        .await
+        .expect("fast commit timed out")
+        .expect("consensus output closed");
+    assert_eq!(committed.round(), 1);
+    assert_eq!(committed.origin(), keys[0]);
 }
 
 // Rounds 1..=8 with one dead non-leader node. Two wave boundaries fire:
@@ -370,8 +413,6 @@ async fn reject_commit_when_qc_vote_round_not_less_than_commit_round() {
     match no_commit {
         Err(_) => {}
         Ok(None) => {}
-        Ok(Some(_)) => panic!(
-            "unexpected commit when qc vote round is not less than commit round"
-        ),
+        Ok(Some(_)) => panic!("unexpected commit when qc vote round is not less than commit round"),
     }
 }

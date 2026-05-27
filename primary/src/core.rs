@@ -10,9 +10,9 @@ use bytes::Bytes;
 use config::{Committee, DagProtocol};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
-use log::{debug, error, warn};
 #[cfg(feature = "benchmark")]
 use log::info;
+use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender, SimpleSender};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -77,7 +77,7 @@ pub struct Core {
     next_round_to_signal: Round,
     /// Rounds for which we sent a proposer signal without QC (own cert not yet ready).
     pending_qc_signals: HashSet<Round>,
-    /// Low-frequency diagnostics for NovelDAG proposer signal stalls.
+    /// Low-frequency diagnostics for Shortfin-family proposer signal stalls.
     #[cfg(feature = "benchmark")]
     diag_signal_blocked_round: Option<Round>,
     #[cfg(feature = "benchmark")]
@@ -188,7 +188,7 @@ impl Core {
         parents_2_threshold: u32,
         own_qc: bool,
     ) {
-        if self.dag_protocol != DagProtocol::NovelDAG {
+        if !self.dag_protocol.is_shortfin_family() {
             return;
         }
 
@@ -480,7 +480,7 @@ impl Core {
             // Genesis/initialization headers have no parent quorum requirements.
         } else {
             match self.dag_protocol {
-                DagProtocol::NovelDAG => {
+                DagProtocol::Shortfin | DagProtocol::Sailfin => {
                     // Check first-hop parents (`r-1`).
                     let mut stake_1 = 0;
                     for x in &parents_1 {
@@ -518,12 +518,10 @@ impl Core {
                             DagError::MalformedHeader(header.id.clone())
                         );
                         ensure!(
-                            parents_1
-                                .iter()
-                                .any(|certificate| {
-                                    certificate.header.id == qc.target
-                                        && certificate.origin() == header.author
-                                }),
+                            parents_1.iter().any(|certificate| {
+                                certificate.header.id == qc.target
+                                    && certificate.origin() == header.author
+                            }),
                             DagError::MalformedHeader(header.id.clone())
                         );
                     }
@@ -568,10 +566,10 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            // NovelDAG 流水线设计：使用 header.round 而非投票者当前轮次。
+            // Shortfin-family 流水线设计：使用 header.round 而非投票者当前轮次。
             //
             // 设计文档将 voter_round 定义为"投票者当前所处轮次"，但在
-            // NovelDAG 流水线中，投票者投票时可能已推进到更高轮次（例如
+            // Shortfin-family 流水线中，投票者投票时可能已推进到更高轮次（例如
             // 对 r-3 轮 Leader 投票时，投票者已处于 r-1 轮）。若使用实际
             // 轮次，voter_round 可能 ≥ commit_round，导致 Section 6 QC
             // 链检查拒绝有效 QC，阻塞提交。
@@ -610,7 +608,7 @@ impl Core {
         Ok(())
     }
 
-    /// NovelDAG: peer blocks never arrive as independent Certificates — the
+    /// Shortfin-family protocols: peer blocks never arrive as independent Certificates — the
     /// author's QC is piggybacked inside the next round's header.qc field.
     /// To keep the downstream DAG-tracking logic uniform, we synthesize a
     /// local empty-votes Certificate from every peer Header we successfully
@@ -621,7 +619,7 @@ impl Core {
     /// header-processing path, to avoid double-emitting a cert for the same
     /// block.
     async fn maybe_synthesize_peer_cert(&mut self, header: &Header) {
-        if self.dag_protocol != DagProtocol::NovelDAG || header.author == self.name {
+        if !self.dag_protocol.is_shortfin_family() || header.author == self.name {
             return;
         }
         let synthetic = Certificate {
@@ -645,10 +643,10 @@ impl Core {
             debug!("Assembled {:?}", certificate);
 
             // Broadcast the certificate (Narwhal/Bullshark: the cert itself
-            // is the 3rd network phase). NovelDAG skips this phase entirely:
+            // is the 3rd network phase). Shortfin-family protocols skip this phase entirely:
             // the QC is delivered by piggybacking inside the next round's
             // header.qc field, saving one delta of latency per round.
-            if self.dag_protocol != DagProtocol::NovelDAG {
+            if !self.dag_protocol.is_shortfin_family() {
                 let addresses = self
                     .committee
                     .others_primaries(&self.name)
@@ -700,12 +698,12 @@ impl Core {
         }
 
         match self.dag_protocol {
-            DagProtocol::NovelDAG => {
-                // NovelDAG certificates are never broadcast: peer blocks arrive
+            DagProtocol::Shortfin | DagProtocol::Sailfin => {
+                // Shortfin-family certificates are never broadcast: peer blocks arrive
                 // as headers and are synthesised locally with empty votes.
                 // Store them after local header validation so HeaderWaiter
                 // notify_read() calls wake up and helpers can answer sync
-                // requests for locally observed NovelDAG parents.
+                // requests for locally observed Shortfin-family parents.
                 let bytes =
                     bincode::serialize(&certificate).expect("Failed to serialize certificate");
                 self.store.write(certificate.digest().to_vec(), bytes).await;

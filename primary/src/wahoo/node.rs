@@ -1,6 +1,5 @@
-
-use crate::primary::Round;
 use crate::messages::{LeaderLink, LeaderProof, RecpMessage, WahooTag};
+use crate::primary::Round;
 use crate::wahoo::messages::{
     SignedWahoo, WahooBlock, WahooDone, WahooElect, WahooMessage, WahooReady,
 };
@@ -14,7 +13,6 @@ use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use tokio::sync::mpsc::{Receiver, Sender};
-
 
 /// `wahoo/node.go::Chain` (lines 13-16). The Go version stores committed
 /// blocks keyed by hash-string; we keep the same shape for exact fidelity
@@ -66,7 +64,7 @@ pub struct Node {
     /// silently discard it (see `network::reliable_sender::Connection`,
     /// where `handler.is_closed()` is checked before flushing the
     /// buffer). Mirrors the pattern used by `Core::cancel_handlers` /
-    /// `Proposer::cancel_handlers` in the rest of NovelDAG.
+    /// `Proposer::cancel_handlers` in the rest of Shortfin-family.
     cancel_handlers: Vec<CancelHandler>,
 
     // ---- DAG state ----
@@ -225,7 +223,7 @@ impl Node {
     }
 
     /// Drive the protocol forever. Mirrors `node.go::RunLoop` minus the
-    /// bounded `roundNumber` termination — NovelDAG processes are
+    /// bounded `roundNumber` termination — Shortfin-family processes are
     /// long-running and rely on workspace lifecycle for shutdown.
     pub async fn run(mut self) {
         // Start round 1.
@@ -239,10 +237,7 @@ impl Node {
             .rx_workers
             .take()
             .expect("workers receiver already taken");
-        let mut rx_recp = self
-            .rx_recp
-            .take()
-            .expect("recp receiver already taken");
+        let mut rx_recp = self.rx_recp.take().expect("recp receiver already taken");
         loop {
             tokio::select! {
                 Some(msg) = rx.recv() => {
@@ -469,8 +464,7 @@ impl Node {
             self.handle_recp(recp.clone());
             // Broadcast to peers.
             let hs =
-                msg_send::broadcast_recp(&mut self.sender, &self.committee, &self.name, recp)
-                    .await;
+                msg_send::broadcast_recp(&mut self.sender, &self.committee, &self.name, recp).await;
             self.cancel_handlers.extend(hs);
         }
     }
@@ -535,13 +529,8 @@ impl Node {
                         .signature_service
                         .request_signature(vote.digest())
                         .await;
-                    let h = msg_send::send_vote(
-                        &mut self.sender,
-                        &self.committee,
-                        &target,
-                        vote,
-                    )
-                    .await;
+                    let h =
+                        msg_send::send_vote(&mut self.sender, &self.committee, &target, vote).await;
                     self.cancel_handlers.push(h);
                 }
                 PbAction::BroadcastBlock2(block, _pbc_cert) => {
@@ -596,7 +585,10 @@ impl Node {
         if !self.block_send.contains(&(round + 1)) {
             self.send_ready(round, hash, sender).await;
         } else {
-            info!("Wahoo fast_block: skip Ready for round={} (already sent r+1)", round);
+            info!(
+                "Wahoo fast_block: skip Ready for round={} (already sent r+1)",
+                round
+            );
         }
     }
 
@@ -642,7 +634,7 @@ impl Node {
             // Benchmark log: emit one `Created B{round}({author}) -> {digest}`
             // line per batch digest carried by this block, exactly the
             // way `proposer.rs::make_header` does for
-            // Narwhal/Bullshark/NovelDAG. `consensus::wahoo::run` emits
+            // Narwhal/Bullshark/Shortfin-family. `consensus::wahoo::run` emits
             // a matching `Committed ...` line for each digest when the
             // block lands in the chain (its loop already iterates
             // `header.payload.keys()`), and the worker-side
@@ -742,16 +734,14 @@ impl Node {
         // Self-deliver.
         self.handle_elect(elect.clone()).await;
         let signed = self.sign_wahoo(WahooMessage::Elect(elect)).await;
-        let hs =
-            msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        let hs = msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
         self.cancel_handlers.extend(hs);
     }
 
     /// `msg_send.go::broadcastDone`.
     async fn broadcast_done(&mut self, done: WahooDone) {
         let signed = self.sign_wahoo(WahooMessage::Done(done)).await;
-        let hs =
-            msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
+        let hs = msg_send::broadcast(&mut self.sender, &self.committee, &self.name, signed).await;
         self.cancel_handlers.extend(hs);
     }
 
@@ -760,10 +750,7 @@ impl Node {
     // ============================================================
 
     fn store_done(&mut self, done: &WahooDone) {
-        let round_done = self
-            .done
-            .entry(done.round)
-            .or_insert_with(HashMap::new);
+        let round_done = self.done.entry(done.round).or_insert_with(HashMap::new);
         if !round_done.contains_key(&done.block_sender) {
             round_done.insert(done.block_sender, done.clone());
             *self.move_round.entry(done.round).or_insert(0) += 1;
@@ -896,10 +883,8 @@ impl Node {
         }
         self.leader_elect.insert(round);
 
-        let shares: Vec<(PublicKey, Vec<u8>)> = elects
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
+        let shares: Vec<(PublicKey, Vec<u8>)> =
+            elects.iter().map(|(k, v)| (*k, v.clone())).collect();
 
         let coin = crypto::recover_coin(
             &self.authorities_sorted,
@@ -995,10 +980,7 @@ impl Node {
         }
     }
 
-    fn try_to_next_round_boxed(
-        &mut self,
-        round: Round,
-    ) -> futures::future::BoxFuture<'_, ()> {
+    fn try_to_next_round_boxed(&mut self, round: Round) -> futures::future::BoxFuture<'_, ()> {
         Box::pin(async move { self.try_to_next_round(round).await })
     }
 
@@ -1150,10 +1132,7 @@ impl Node {
         valid
     }
 
-    fn commit_ancestor_blocks_box(
-        &mut self,
-        round: Round,
-    ) -> futures::future::BoxFuture<'_, ()> {
+    fn commit_ancestor_blocks_box(&mut self, round: Round) -> futures::future::BoxFuture<'_, ()> {
         Box::pin(async move { self.commit_ancestor_blocks(round).await })
     }
 
@@ -1223,18 +1202,13 @@ impl Node {
     //  Block construction — `node.go::NewBlock`
     // ============================================================
 
-    fn new_block(
-        &mut self,
-        round: Round,
-        parents: BTreeSet<Digest>,
-    ) -> WahooBlock {
+    fn new_block(&mut self, round: Round, parents: BTreeSet<Digest>) -> WahooBlock {
         // Pack as many pending worker-batch digests as we have. We do
         // not gate round advancement on payload size — Wahoo rounds are
         // driven by Done/Ready quorums, not by `header_size` like
         // `Proposer`. Empty blocks are legal and just have no Created/
         // Committed lines, which is fine for the benchmark.
-        let payload_digests: BTreeMap<Digest, WorkerId> =
-            self.pending_digests.drain(..).collect();
+        let payload_digests: BTreeMap<Digest, WorkerId> = self.pending_digests.drain(..).collect();
         // `txs` is left empty: the protocol never inspects it, and the
         // benchmark accounting now flows through `payload_digests` ->
         // worker-emitted `Batch ... contains ... B` lines, identical to
@@ -1301,13 +1275,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::net::SocketAddr;
 
-    fn make_test_committee(n: usize) -> (Vec<crypto::PublicKey>, Vec<crypto::SecretKey>, Committee) {
+    fn make_test_committee(
+        n: usize,
+    ) -> (Vec<crypto::PublicKey>, Vec<crypto::SecretKey>, Committee) {
         let mut publics = Vec::new();
         let mut secrets = Vec::new();
         let mut authorities = BTreeMap::new();
         for i in 0..n {
-            let mut rng =
-                rand::rngs::StdRng::from_seed([i as u8; 32]);
+            let mut rng = rand::rngs::StdRng::from_seed([i as u8; 32]);
             let (pk, sk) = generate_keypair(&mut rng);
             publics.push(pk);
             secrets.push(sk);
@@ -1370,7 +1345,14 @@ mod tests {
         let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
 
         let node = Node::new(
-            me, committee, sig_service, 4, rx_msg, rx_workers, rx_recp, tx_committed,
+            me,
+            committee,
+            sig_service,
+            4,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
         );
         assert_eq!(node.round, 1);
         assert_eq!(node.node_num, 4);
@@ -1423,7 +1405,8 @@ mod tests {
             b.id = crypto::Hash::digest(&b);
             b
         };
-        node.blocks_by_digest.insert(leader_block.digest(), leader_block.clone());
+        node.blocks_by_digest
+            .insert(leader_block.digest(), leader_block.clone());
         node.dag
             .entry(1)
             .or_insert_with(HashMap::new)
@@ -1532,10 +1515,7 @@ mod tests {
             author: publics[1],
             share: vec![4],
         });
-        assert_eq!(
-            node.recp_shares_for(round, &other_hash).unwrap().len(),
-            1
-        );
+        assert_eq!(node.recp_shares_for(round, &other_hash).unwrap().len(), 1);
         assert_eq!(
             node.recp_shares_for(round, &block_hash).unwrap().len(),
             3,

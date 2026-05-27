@@ -1,6 +1,6 @@
 // Port of `Wahoo-main/wahoo/tools.go` (lines 1-69).
 //
-// The Go reference encodes messages with `encoding/json`. NovelDAG uses
+// The Go reference encodes messages with `encoding/json`. Shortfin-family uses
 // `bincode` everywhere for efficiency; we keep `encode`/`decode` as the
 // idiomatic primitives so call sites read the same way as the Go source.
 //

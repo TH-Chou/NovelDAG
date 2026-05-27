@@ -1,6 +1,6 @@
 // Wahoo protocol port (F2 — full functional/logical fidelity with the Go
 // reference at `Wahoo-main/wahoo/`). Gated by `DagProtocol::Wahoo`; never
-// participates in Narwhal/Bullshark/NovelDAG paths.
+// participates in Narwhal/Bullshark/Shortfin-family paths.
 //
 // Go → Rust file mapping:
 //   wahoo/data_struct.go  → wahoo::messages

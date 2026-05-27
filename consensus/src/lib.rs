@@ -1,5 +1,5 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-// Unified consensus router: dispatches to narwhal, bullshark, or noveldag based on dag_protocol.
+// Unified consensus router: dispatches based on dag_protocol.
 use config::{Committee, ConsensusProtocol, DagProtocol, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
@@ -10,7 +10,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 mod bullshark;
 mod narwhal;
-mod noveldag;
+mod sailfin;
+mod shortfin;
 mod wahoo;
 
 #[cfg(test)]
@@ -74,7 +75,7 @@ pub struct Consensus {
     dag_protocol: DagProtocol,
     /// The consensus leader election mode.
     pub(crate) consensus_protocol: ConsensusProtocol,
-    /// The public key of this authority, used by NovelDAG for round-completion detection.
+    /// The public key of this authority, used by Shortfin-style round-completion detection.
     pub(crate) name: PublicKey,
 
     /// Receives new certificates from the primary. The primary should send us new certificates only
@@ -87,9 +88,6 @@ pub struct Consensus {
 
     /// The genesis certificates.
     pub(crate) genesis: Vec<Certificate>,
-    
-
-
 }
 
 impl Consensus {
@@ -105,7 +103,7 @@ impl Consensus {
             name,
             committee,
             gc_depth,
-            DagProtocol::NovelDAG,
+            DagProtocol::Shortfin,
             ConsensusProtocol::RoundRobin,
             rx_primary,
             tx_primary,
@@ -144,7 +142,8 @@ impl Consensus {
         match self.dag_protocol {
             DagProtocol::Narwhal => narwhal::run(self).await,
             DagProtocol::Bullshark => bullshark::run(self).await,
-            DagProtocol::NovelDAG => noveldag::run(self).await,
+            DagProtocol::Shortfin => shortfin::run(self).await,
+            DagProtocol::Sailfin => sailfin::run(self).await,
             DagProtocol::Wahoo => wahoo::run(self).await,
         }
     }
@@ -189,7 +188,7 @@ impl Consensus {
         Some(seed)
     }
 
-    /// NovelDAG threshold coin: combines BLS coin_shares embedded in headers at
+    /// Shortfin threshold coin: combines BLS coin_shares embedded in headers at
     /// `round`. Requires f+1 valid shares, which is guaranteed by the 2f+1
     /// quorum at `round`. Returns a deterministic u64 that all honest nodes
     /// will reproduce, regardless of which specific 2f+1 certificates they hold.
@@ -234,12 +233,14 @@ impl Consensus {
                 keys[coin as usize % self.committee.size()]
             }
             ConsensusProtocol::CommonCoin => {
-                let coin = if self.dag_protocol == DagProtocol::NovelDAG {
+                let coin = if matches!(
+                    self.dag_protocol,
+                    DagProtocol::Shortfin | DagProtocol::Sailfin
+                ) {
                     self.threshold_coin(coin_round, dag)
                         .unwrap_or_else(|| self.round_robin_coin(round))
                 } else {
-                    self
-                        .common_coin(coin_round, dag)
+                    self.common_coin(coin_round, dag)
                         .unwrap_or_else(|| self.round_robin_coin(round))
                 };
                 let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
@@ -292,8 +293,13 @@ impl Consensus {
             // 空投票的 QC 来自合成 peer 证书（maybe_synthesize_peer_cert）
             // 或测试夹具，此时跳过权重检查。
             debug_assert!(
-                qc.votes.is_empty() || qc.votes.iter().map(|v| self.committee.stake(&v.author)).sum::<Stake>()
-                    >= self.committee.quorum_threshold(),
+                qc.votes.is_empty()
+                    || qc
+                        .votes
+                        .iter()
+                        .map(|v| self.committee.stake(&v.author))
+                        .sum::<Stake>()
+                        >= self.committee.quorum_threshold(),
                 "embedded QC lacks quorum weight"
             );
         }

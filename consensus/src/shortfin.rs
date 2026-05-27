@@ -1,13 +1,13 @@
 // TJU BLOCKCHAIN RESEARCH
-// NovelDAG 共识协议：4 轮一波，r-3 轮 Leader，b3→b2→b1 内嵌 QC 链。
+// Shortfin baseline consensus: 4-round waves, r-3 leader, b3→b2→b1 embedded-QC chain.
 // 严格遵循设计文档 Section 5.1（轮结束条件）和 Section 6（提交规则）。
 
 use crate::Consensus;
 use crate::State;
-use crypto::{Digest, PublicKey};
 use crypto::Hash as _;
+use crypto::{Digest, PublicKey};
 use log::{debug, info, warn};
-use primary::{Certificate,  Round};
+use primary::{Certificate, Round};
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "benchmark")]
 use std::time::Instant;
@@ -70,7 +70,9 @@ mod diag {
 mod diag {
     pub struct Diag;
     impl Diag {
-        pub fn new() -> Self { Self }
+        pub fn new() -> Self {
+            Self
+        }
     }
 }
 
@@ -365,7 +367,10 @@ fn causal_reachability(
             continue;
         }
 
-        if last_committed.get(&cert.origin()).map_or(false, |r| *r >= cert.round()) {
+        if last_committed
+            .get(&cert.origin())
+            .map_or(false, |r| *r >= cert.round())
+        {
             continue;
         }
 

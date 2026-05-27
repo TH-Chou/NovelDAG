@@ -44,7 +44,10 @@ impl Synchronizer {
             .into_iter()
             .map(|x| (x.digest(), x))
             .collect();
-        let certificate_cache = genesis.iter().map(|(d, c)| (d.clone(), c.clone())).collect();
+        let certificate_cache = genesis
+            .iter()
+            .map(|(d, c)| (d.clone(), c.clone()))
+            .collect();
         Self {
             name,
             committee: committee.clone(),
@@ -143,8 +146,8 @@ impl Synchronizer {
             }
         }
 
-        // Second-hop parents are only required for NovelDAG.
-        if self.dag_protocol == DagProtocol::NovelDAG {
+        // Second-hop parents are only required for Shortfin-family protocols.
+        if self.dag_protocol.is_shortfin_family() {
             let mut read_parents_2 = Vec::new();
             for digest in &header.parents_2 {
                 if let Some(genesis) = self
@@ -164,7 +167,8 @@ impl Synchronizer {
 
                 let mut store = self.store.clone();
                 let digest = digest.clone();
-                read_parents_2.push(async move { (digest.clone(), store.read(digest.to_vec()).await) });
+                read_parents_2
+                    .push(async move { (digest.clone(), store.read(digest.to_vec()).await) });
             }
 
             for (digest, result) in join_all(read_parents_2).await {
@@ -212,8 +216,8 @@ impl Synchronizer {
             };
         }
 
-        // Second-hop parents are only required for NovelDAG.
-        if self.dag_protocol == DagProtocol::NovelDAG {
+        // Second-hop parents are only required for Shortfin-family protocols.
+        if self.dag_protocol.is_shortfin_family() {
             for digest in &certificate.header.parents_2 {
                 if self.genesis.iter().any(|(x, _)| x == digest) {
                     continue;
@@ -236,7 +240,7 @@ impl Synchronizer {
 
     /// Add a certificate to the in-memory cache so that subsequent `get_parents()`
     /// calls can find it without hitting the store (and thus without re-verification).
-    /// Used by NovelDAG to register synthetic peer certificates that carry empty
+    /// Used by Shortfin-family protocols to register synthetic peer certificates that carry empty
     /// votes and would fail `Certificate::verify()` if read back from disk.
     pub fn cache_certificate(&mut self, certificate: &Certificate) {
         self.certificate_cache

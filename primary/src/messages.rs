@@ -145,11 +145,7 @@ impl LeaderLink {
     /// * `NoCommit`: for each carried `RecpMessage`, ensures its `round`
     ///   field equals `attested_round` and that its `share` is a valid
     ///   BLS partial signature from `author` over its `block_hash`.
-    pub fn verify_with_crypto(
-        &self,
-        committee: &Committee,
-        attested_round: u64,
-    ) -> DagResult<()> {
+    pub fn verify_with_crypto(&self, committee: &Committee, attested_round: u64) -> DagResult<()> {
         // Structural checks first (variant pairing, share counts, stake).
         self.verify_structure(committee)?;
 
@@ -173,10 +169,7 @@ impl LeaderLink {
             }
             (None, LeaderProof::NoCommit(recps)) => {
                 for r in recps {
-                    ensure!(
-                        r.round == attested_round,
-                        DagError::InvalidLeaderLink
-                    );
+                    ensure!(r.round == attested_round, DagError::InvalidLeaderLink);
                     if !crypto::verify_recp_share(
                         &authorities_sorted,
                         threshold,
@@ -243,7 +236,7 @@ pub struct Header {
     pub qc: Option<EmbeddedQc>,
     pub coin_share: Vec<u8>,
     /// Wahoo-only: EPBC/PBC tier this header was delivered at. `None` for
-    /// Narwhal/Bullshark/NovelDAG headers. See `WahooTag`.
+    /// Narwhal/Bullshark/Shortfin-family headers. See `WahooTag`.
     #[serde(default)]
     pub wahoo_tag: Option<WahooTag>,
     /// Wahoo-only: leader-link carrying the previous wave's exclusive-commit
@@ -330,7 +323,7 @@ impl Header {
 
         // Structural rules vary by protocol.
         match dag_protocol {
-            DagProtocol::NovelDAG => {
+            DagProtocol::Shortfin | DagProtocol::Sailfin => {
                 if self.round == 0 {
                     ensure!(
                         self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
@@ -380,7 +373,7 @@ impl Header {
                 //   round even ≥ 2  : PBC phase of wave w = round/2
                 //                     wahoo_tag = Pbc
                 //                     coin_share carries the leader-election
-                //                     partial signature (same field NovelDAG
+                //                     partial signature (same field Shortfin-family protocols
                 //                     re-uses for its threshold coin)
                 //
                 // During the Phase B migration, tags may legitimately be `None`
@@ -464,14 +457,25 @@ impl Header {
 
             let mut weight = 0;
             let mut used = HashSet::new();
-            let mut sigs: Vec<(PublicKey, Signature)> =
-                Vec::with_capacity(qc.votes.len());
+            let mut sigs: Vec<(PublicKey, Signature)> = Vec::with_capacity(qc.votes.len());
             for vote in qc.votes.iter() {
-                ensure!(vote.id == qc.target, DagError::MalformedHeader(self.id.clone()));
-                ensure!(vote.round == qc.round, DagError::MalformedHeader(self.id.clone()));
-                ensure!(vote.origin == self.author, DagError::MalformedHeader(self.id.clone()));
+                ensure!(
+                    vote.id == qc.target,
+                    DagError::MalformedHeader(self.id.clone())
+                );
+                ensure!(
+                    vote.round == qc.round,
+                    DagError::MalformedHeader(self.id.clone())
+                );
+                ensure!(
+                    vote.origin == self.author,
+                    DagError::MalformedHeader(self.id.clone())
+                );
 
-                ensure!(!used.contains(&vote.author), DagError::AuthorityReuse(vote.author));
+                ensure!(
+                    !used.contains(&vote.author),
+                    DagError::AuthorityReuse(vote.author)
+                );
                 ensure!(
                     committee.stake(&vote.author) > 0,
                     DagError::UnknownAuthority(vote.author)
@@ -499,7 +503,11 @@ impl Header {
 
     /// Async variant that runs CPU-bound batch verification on the blocking
     /// thread pool so the async runtime stays responsive.
-    pub async fn verify_async(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
+    pub async fn verify_async(
+        &self,
+        committee: &Committee,
+        dag_protocol: DagProtocol,
+    ) -> DagResult<()> {
         let header = self.clone();
         let committee = committee.clone();
         tokio::task::spawn_blocking(move || header.verify(&committee, dag_protocol))
@@ -599,7 +607,7 @@ pub struct Vote {
     pub origin: PublicKey,
     pub author: PublicKey,
     /// Wahoo-only: which EPBC/PBC quorum this vote contributes to. `None` for
-    /// Narwhal/Bullshark/NovelDAG votes — those have only one quorum per
+    /// Narwhal/Bullshark/Shortfin-family votes — those have only one quorum per
     /// header, so the field is implicit. See `WahooVotePhase`.
     #[serde(default)]
     pub wahoo_phase: Option<WahooVotePhase>,
@@ -613,7 +621,14 @@ impl Vote {
         author: &PublicKey,
         signature_service: &mut SignatureService,
     ) -> Self {
-        Self::new_with_phase(header, voter_round, author, /* phase */ None, signature_service).await
+        Self::new_with_phase(
+            header,
+            voter_round,
+            author,
+            /* phase */ None,
+            signature_service,
+        )
+        .await
     }
 
     /// Wahoo-aware constructor; identical to `Vote::new` except it stamps the
@@ -714,23 +729,28 @@ impl Certificate {
         // Check the embedded header.
         self.header.verify(committee, dag_protocol)?;
 
-        // NovelDAG carries peer certificates implicitly through signed headers
+        // Shortfin-family protocols carry peer certificates implicitly through signed headers
         // and embedded QCs. Locally synthesized certificates intentionally have
-        // empty vote sets; for NovelDAG the signed header is the object we need
+        // empty vote sets; for Shortfin-family protocols the signed header is the object we need
         // to store, sync, and use as a DAG parent.
-        if dag_protocol == DagProtocol::NovelDAG && self.votes.is_empty() {
+        if dag_protocol.is_shortfin_family() && self.votes.is_empty() {
             return Ok(());
         }
 
         // Ensure the certificate has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
-        let mut sigs: Vec<(PublicKey, Signature)> =
-            Vec::with_capacity(self.votes.len());
+        let mut sigs: Vec<(PublicKey, Signature)> = Vec::with_capacity(self.votes.len());
         let vote_digest = self.votes.first().map(|v| v.digest());
         for vote in self.votes.iter() {
-            ensure!(vote.id == self.header.id, DagError::MalformedHeader(self.header.id.clone()));
-            ensure!(vote.round == self.round(), DagError::MalformedHeader(self.header.id.clone()));
+            ensure!(
+                vote.id == self.header.id,
+                DagError::MalformedHeader(self.header.id.clone())
+            );
+            ensure!(
+                vote.round == self.round(),
+                DagError::MalformedHeader(self.header.id.clone())
+            );
             ensure!(
                 vote.origin == self.origin(),
                 DagError::MalformedHeader(self.header.id.clone())
@@ -762,7 +782,11 @@ impl Certificate {
 
     /// Async variant that runs CPU-bound batch verification on the blocking
     /// thread pool so the async runtime stays responsive.
-    pub async fn verify_async(&self, committee: &Committee, dag_protocol: DagProtocol) -> DagResult<()> {
+    pub async fn verify_async(
+        &self,
+        committee: &Committee,
+        dag_protocol: DagProtocol,
+    ) -> DagResult<()> {
         let certificate = self.clone();
         let committee = committee.clone();
         tokio::task::spawn_blocking(move || certificate.verify(&committee, dag_protocol))
@@ -823,7 +847,7 @@ mod novel_verify_tests {
     use crate::common::{committee, keys};
 
     #[test]
-    fn noveldag_round_1_rejects_embedded_qc() {
+    fn shortfin_round_1_rejects_embedded_qc() {
         let committee = committee();
         let (author, secret) = keys().pop().unwrap();
         let genesis = Certificate::genesis(&committee)
@@ -867,7 +891,7 @@ mod novel_verify_tests {
         header.id = header.digest();
         header.signature = Signature::new(&header.id, &secret);
 
-        assert!(header.verify(&committee, DagProtocol::NovelDAG).is_err());
+        assert!(header.verify(&committee, DagProtocol::Shortfin).is_err());
     }
 }
 
@@ -917,7 +941,13 @@ mod wahoo_verify_tests {
         let h = make_wahoo_header(0, None, None, Vec::new(), BTreeSet::new());
         assert!(h.verify(&committee, DagProtocol::Wahoo).is_ok());
 
-        let h = make_wahoo_header(0, Some(WahooTag::EpbcTs1), None, Vec::new(), BTreeSet::new());
+        let h = make_wahoo_header(
+            0,
+            Some(WahooTag::EpbcTs1),
+            None,
+            Vec::new(),
+            BTreeSet::new(),
+        );
         assert!(h.verify(&committee, DagProtocol::Wahoo).is_err());
     }
 
@@ -969,7 +999,7 @@ mod wahoo_verify_tests {
     #[test]
     fn no_commit_link_requires_n_minus_f_recps() {
         let committee = committee(); // n=4, f=1, n-f=3
-        // Build n-f distinct shares from the fixture authorities.
+                                     // Build n-f distinct shares from the fixture authorities.
         let mut recps: Vec<RecpMessage> = keys()
             .into_iter()
             .take(3)
@@ -1049,7 +1079,13 @@ mod wahoo_verify_tests {
         let h = make_wahoo_header(1, Some(WahooTag::EpbcTs1), None, Vec::new(), one_parent());
         assert!(h.verify(&committee, DagProtocol::Narwhal).is_err());
 
-        let h = make_wahoo_header(1, None, Some(LeaderLink::default()), Vec::new(), one_parent());
+        let h = make_wahoo_header(
+            1,
+            None,
+            Some(LeaderLink::default()),
+            Vec::new(),
+            one_parent(),
+        );
         assert!(h.verify(&committee, DagProtocol::Narwhal).is_err());
     }
 }

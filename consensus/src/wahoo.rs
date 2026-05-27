@@ -7,7 +7,7 @@
 // the round/origin metadata — through `tx_consensus`. Our job here is
 // only to forward those committed certificates to `tx_output` so that
 // downstream consumers (workers, benchmark scripts) see them in the same
-// stream they would for Narwhal/Bullshark/NovelDAG.
+// stream they would for Narwhal/Bullshark/Shortfin-family.
 
 use crate::Consensus;
 use log::{info, warn};

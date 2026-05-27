@@ -8,7 +8,7 @@
 // preserved via `Header.wahoo_tag ∈ {Some(Pbc), Some(PbcVoteComplete)}`.
 //
 // `Sender` / `*Sender` fields in the Go version are `string` node names
-// (e.g. "node0"); NovelDAG identifies authorities by `crypto::PublicKey`,
+// (e.g. "node0"); Shortfin-family identifies authorities by `crypto::PublicKey`,
 // so every Go `string` sender field becomes a `PublicKey` here.
 // `[]byte` (Go) → `Vec<u8>` (Rust) for raw signature payloads.
 
@@ -202,8 +202,7 @@ mod tests {
         ];
         for original in cases {
             let bytes = bincode::serialize(&original).expect("serialize Wahoo message");
-            let _: WahooMessage =
-                bincode::deserialize(&bytes).expect("deserialize Wahoo message");
+            let _: WahooMessage = bincode::deserialize(&bytes).expect("deserialize Wahoo message");
         }
     }
 

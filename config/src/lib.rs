@@ -63,14 +63,16 @@ pub type WorkerId = u32;
 pub enum DagProtocol {
     Narwhal,
     Bullshark,
-    #[serde(rename = "noveldag")]
-    NovelDAG,
+    #[serde(rename = "shortfin")]
+    Shortfin,
+    #[serde(rename = "sailfin")]
+    Sailfin,
     Wahoo,
 }
 
 impl Default for DagProtocol {
     fn default() -> Self {
-        Self::NovelDAG
+        Self::Shortfin
     }
 }
 
@@ -79,9 +81,14 @@ impl DagProtocol {
         match self {
             Self::Narwhal => "narwhal",
             Self::Bullshark => "bullshark",
-            Self::NovelDAG => "noveldag",
+            Self::Shortfin => "shortfin",
+            Self::Sailfin => "sailfin",
             Self::Wahoo => "wahoo",
         }
+    }
+
+    pub fn is_shortfin_family(&self) -> bool {
+        matches!(self, Self::Shortfin | Self::Sailfin)
     }
 }
 
@@ -146,7 +153,7 @@ impl Default for Parameters {
             sync_retry_nodes: 3,
             batch_size: 500_000,
             max_batch_delay: 100,
-            dag_protocol: DagProtocol::NovelDAG,
+            dag_protocol: DagProtocol::Shortfin,
             consensus_protocol: ConsensusProtocol::RoundRobin,
         }
     }
