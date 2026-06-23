@@ -2,6 +2,14 @@
 
 This document records the benchmark data layout, metric definitions, and the latest local smoke comparison between Shortfin and Sailfin.
 
+The archived data files for this branch live under:
+
+```text
+results/icde_shortfin_archive/
+```
+
+That directory separates local CSV data from cloud/WAN summaries and includes its own README plus a SHA-256 manifest.
+
 ## Metrics
 
 The benchmark parser reports:
@@ -142,4 +150,3 @@ logs/results/*.txt
 csv_plots/*.csv
 plots/*.png or *.pdf
 ```
-

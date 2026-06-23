@@ -19,6 +19,12 @@ This branch archives the Shortfin-family implementation and benchmark workflow u
 | [Experiment Data Notes](experiment-data-notes.md) | Metrics, CSV layout, smoke-test results, and data interpretation. |
 | [Sailfin Rolling Discovery](sailfin-rolling-discovery.md) | Current Sailfin idea, code path, safety posture, and limits. |
 
+The result archive committed with this branch is:
+
+```text
+results/icde_shortfin_archive/
+```
+
 ## Current Branch Purpose
 
 The branch name used for this archive is:
@@ -66,4 +72,3 @@ python3 scripts/run_bench.py --mode local run \
 The local benchmark parser needs benchmark-level `info` logs. The local runner sets `RUST_LOG=info` for spawned `tmux` jobs so an inherited shell value such as `RUST_LOG=warn` does not hide client and primary log lines required by the parser.
 
 The matrix runner also sets Python multiprocessing to `fork` inside its local subprocess. This avoids Python 3.14 spawn-mode failures when `run_bench.py` launches benchmark jobs through `python -c`.
-
