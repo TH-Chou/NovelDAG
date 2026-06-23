@@ -6,3 +6,5 @@ benchmark/node
 paper/
 # Per-test RocksDB scratch dirs created by `cargo test` in workspace crates.
 **/.db_test_*
+benchmark/.checkpoints/
+benchmark/scripts/.checkpoints/

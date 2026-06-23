@@ -116,8 +116,13 @@ def _run_one_local(point: dict[str, Any]) -> dict[str, Any] | None:
         "duration": bench["duration"],
     }
     inner = f"""
+import multiprocessing
 from benchmark.local import LocalBench
 import json
+try:
+    multiprocessing.set_start_method("fork", force=True)
+except RuntimeError:
+    pass
 bench = {bench_code!r}
 node = {node!r}
 try:

@@ -153,19 +153,27 @@ async fn commit_one() {
     assert_eq!(committed.round(), 1);
 }
 
-// Sailfin's opt path commits a leader at round r as soon as round r+1 carries
-// 2f+1 direct edge-votes for it, without waiting for Shortfin's r+4 wave
-// boundary. With this fixture, every round-2 certificate cites every round-1
-// certificate, so leader@r1 is fast-certified after round 2 reaches quorum.
+// Sailfin no longer uses the old edge-voted fast path. Rounds 1..=2 may reveal
+// a candidate chain prefix, but nothing is output until the deterministic
+// Shortfin barrier at r=4 safely finalizes the anchor.
 #[tokio::test]
-async fn sailfin_fast_commit_before_wave_boundary() {
+async fn sailfin_waits_for_barrier_finalization() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
     keys.sort();
     let genesis = Certificate::genesis(&mock_committee())
         .iter()
         .map(|x| x.digest())
         .collect::<BTreeSet<_>>();
-    let (mut certificates, _) = make_certificates(1, 2, &genesis, &keys);
+    let (certificates, _) = make_certificates(1, 4, &genesis, &keys);
+    let mut early = certificates
+        .iter()
+        .filter(|certificate| certificate.round() <= 2)
+        .cloned()
+        .collect::<VecDeque<_>>();
+    let mut barrier = certificates
+        .into_iter()
+        .filter(|certificate| certificate.round() > 2)
+        .collect::<VecDeque<_>>();
 
     let (tx_waiter, rx_waiter) = channel(1);
     let (tx_primary, mut rx_primary) = channel(1);
@@ -182,15 +190,24 @@ async fn sailfin_fast_commit_before_wave_boundary() {
     );
     tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
 
-    tokio::spawn(async move {
-        while let Some(certificate) = certificates.pop_front() {
-            tx_waiter.send(certificate).await.unwrap();
-        }
-    });
+    while let Some(certificate) = early.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
+
+    let no_early_commit = timeout(Duration::from_millis(300), rx_output.recv()).await;
+    match no_early_commit {
+        Err(_) => {}
+        Ok(None) => panic!("consensus output closed before barrier"),
+        Ok(Some(certificate)) => panic!("unexpected pre-barrier commit: {}", certificate.header),
+    }
+
+    while let Some(certificate) = barrier.pop_front() {
+        tx_waiter.send(certificate).await.unwrap();
+    }
 
     let committed = timeout(Duration::from_secs(1), rx_output.recv())
         .await
-        .expect("fast commit timed out")
+        .expect("barrier commit timed out")
         .expect("consensus output closed");
     assert_eq!(committed.round(), 1);
     assert_eq!(committed.origin(), keys[0]);
