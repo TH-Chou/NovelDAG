@@ -1,6 +1,6 @@
 # Experiment Data Notes
 
-This document records the benchmark data layout, metric definitions, and the latest local smoke comparison between Shortfin and Sailfin.
+This document records the benchmark data layout and metric definitions for the Shortfin / historical NovelDAG result archive.
 
 The archived data files for this branch live under:
 
@@ -21,102 +21,77 @@ The benchmark parser reports:
 | `end_to_end_tps` | Throughput measured from client start time to final commit time. |
 | `end_to_end_latency_ms` | Client sampled transaction send time to commit time. |
 
-The CSV schema is:
+Most archived local CSV files use:
 
 ```text
 run,protocol,faults,delay_ms,rate,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms
 ```
 
-## Current Local Smoke Data
-
-Command:
-
-```bash
-cd benchmark
-python3 scripts/run_bench.py --mode local run \
-  --protocols shortfin,sailfin \
-  --rates 60000,150000,250000 \
-  --faults 0 \
-  --delays 0 \
-  --runs 1 \
-  --duration 12 \
-  --nodes 4 \
-  --output-prefix sailfin_smoke_compare2 \
-  --fresh
-```
-
-Output CSV:
+The normalized cloud summary uses:
 
 ```text
-benchmark/csv_plots/sailfin_smoke_compare2_runs.csv
+environment,source_file,protocol,raw_protocol,run,faults,nodes,workers,collocate,rate,input_rate,tx_size,execution_time_s,header_size,max_header_delay_ms,gc_depth_rounds,sync_retry_delay_ms,sync_retry_nodes,batch_size,max_batch_delay_ms,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,consensus_bps,end_to_end_bps
 ```
 
-Raw rows:
+## Local Data
 
-| run | protocol | faults | delay_ms | rate | consensus_tps | consensus_latency_ms | end_to_end_tps | end_to_end_latency_ms |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | shortfin | 0 | 0 | 60000 | 53239.624153 | 2641.594424 | 49555.592910 | 3188.050947 |
-| 1 | shortfin | 0 | 0 | 150000 | 136500.000603 | 2315.999986 | 125818.544272 | 2795.116857 |
-| 1 | shortfin | 0 | 0 | 250000 | 133947.252416 | 1962.782789 | 128039.656943 | 2417.294608 |
-| 1 | sailfin | 0 | 0 | 60000 | 51002.432871 | 2626.547326 | 49309.903548 | 3159.501325 |
-| 1 | sailfin | 0 | 0 | 150000 | 137054.278619 | 2148.326368 | 132300.534661 | 2603.275561 |
-| 1 | sailfin | 0 | 0 | 250000 | 146796.013221 | 2062.556170 | 138265.298285 | 2520.935814 |
-
-Relative Sailfin vs Shortfin:
-
-| rate | consensus TPS delta | consensus latency delta | end-to-end TPS delta | end-to-end latency delta |
-| ---: | ---: | ---: | ---: | ---: |
-| 60000 | -4.20% | -0.57% | -0.50% | -0.90% |
-| 150000 | +0.41% | -7.24% | +5.15% | -6.86% |
-| 250000 | +9.59% | +5.08% | +7.99% | +4.29% |
-
-## Interpretation
-
-This is a smoke test, not a publication-grade data point:
-
-- It uses only one run per point.
-- It runs locally with 4 nodes and no artificial RTT.
-- It is sensitive to local CPU scheduling, tmux process startup, and RocksDB/cache state.
-- It is useful as a sanity check that Sailfin still runs and does not obviously regress throughput.
-
-Initial observation:
-
-- Sailfin is close to Shortfin at low offered load.
-- At `150k`, Sailfin slightly improves throughput and latency in this single run.
-- At `250k`, Sailfin improves throughput but has slightly higher latency.
-
-For paper-quality data, use at least:
+Local CSV files are under:
 
 ```text
-10 or 20 nodes
-3 or more runs per point
-multiple offered loads around saturation
-WAN or controlled RTT settings
-outlier policy recorded in the config
+results/icde_shortfin_archive/local/csv/
 ```
 
-## Existing Data Files
+Important local files:
 
-Common generated data locations:
+| File | Meaning |
+| --- | --- |
+| `shortfin_smoke_runs.csv` | Shortfin-only smoke rows, 4 nodes, f=0, 60k/150k/250k offered load. |
+| `shortfin_f0_250k_runs.csv` | Shortfin-only f=0 250k multi-run data. |
+| `shortfin_f0_250k_after_fastlog_runs.csv` | Shortfin-only f=0 250k data after benchmark logging fixes. |
+| `shortfin_f0_330k_runs.csv` | Shortfin-only f=0 330k stress probe. |
+| `shortfin_f0_330k_d30_runs.csv` | Shortfin-only f=0 330k duration-30 stress probe. |
+| `local_rtt_sweep_280k_runs.csv` | Local RTT sweep at 280k offered load. Historical `noveldag` rows are Shortfin/NovelDAG. |
+| `local_rtt_sweep_280k_runs_with_rtt.csv` | Same RTT sweep with explicit RTT field. |
+| `rtt_sweep_results.csv` | Older local sweep format. Historical `noveldag` rows are Shortfin/NovelDAG. |
+
+Rows with all-zero metrics are failed or unparseable runs and should not be averaged as successful measurements.
+
+## Cloud/WAN Data
+
+Cloud summary files are under:
 
 ```text
-benchmark/csv_plots/
-benchmark/plots/
-benchmark/logs/results/
+results/icde_shortfin_archive/cloud/summaries/
 ```
 
-Examples currently used by the plotting workflow include:
+A parsed CSV is available at:
 
 ```text
-benchmark/csv_plots/local_rtt_sweep_280k_runs.csv
-benchmark/csv_plots/local_rtt_sweep_280k_runs_with_rtt.csv
-benchmark/csv_plots/shortfin_sailfin_f0_250k_after_fastlog_runs.csv
-benchmark/csv_plots/sailfin_smoke_compare2_runs.csv
+results/icde_shortfin_archive/cloud/cloud_wan_summary.csv
+```
+
+The historical cloud files use `noveldag` in filenames. In `cloud_wan_summary.csv`, those rows are normalized as:
+
+```text
+raw_protocol = noveldag
+protocol = shortfin
+```
+
+Archived cloud summary shape:
+
+```text
+faults = 1
+nodes = 10
+workers = 1
+tx_size = 512
+protocols = narwhal, shortfin, wahoo
+raw protocol labels = narwhal, noveldag, wahoo
+rates = 30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000
 ```
 
 ## Reproducibility Checklist
 
-Before running:
+Before running new experiments:
 
 ```bash
 git status --short
@@ -134,12 +109,6 @@ config YAML
 cloud settings file, if remote
 CSV output path
 plot output path
-```
-
-After running:
-
-```bash
-python3 scripts/run_bench.py plot --csv csv_plots/<file>.csv --chart-type all
 ```
 
 For cloud runs, also archive:

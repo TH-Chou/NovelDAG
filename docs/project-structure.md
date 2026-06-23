@@ -48,7 +48,6 @@ Supported values:
 narwhal
 bullshark
 shortfin
-sailfin
 wahoo
 ```
 
@@ -58,7 +57,6 @@ The selection is routed in `consensus/src/lib.rs`:
 DagProtocol::Narwhal   -> consensus/src/narwhal.rs
 DagProtocol::Bullshark -> consensus/src/bullshark.rs
 DagProtocol::Shortfin  -> consensus/src/shortfin.rs
-DagProtocol::Sailfin   -> consensus/src/sailfin.rs
 DagProtocol::Wahoo     -> consensus/src/wahoo.rs
 ```
 
@@ -109,7 +107,6 @@ Important fields:
 | `narwhal.rs` | Classic Narwhal/Tusk-style ordering over certified DAG certificates. |
 | `bullshark.rs` | Bullshark-style leader ordering. |
 | `shortfin.rs` | Baseline 4-round Shortfin wave with same-author embedded-QC leader chain. |
-| `sailfin.rs` | Experimental rolling-discovery Shortfin variant with barrier finalization. |
 | `wahoo.rs` | Passthrough for Wahoo primary-side decisions. |
 
 ## Shortfin Baseline
@@ -131,15 +128,3 @@ B2 at r-1 by leader L, carrying QC(B1)
 ```
 
 All QC votes must have `voter_round < commit_round`.
-
-## Sailfin Variant
-
-The current `sailfin.rs` no longer uses the older edge-voted fast commit path. It implements a conservative rolling-discovery approach:
-
-1. Every round can discover a same-author embedded-QC chain.
-2. The discovered anchor is stored as pending evidence.
-3. Pending anchors are not output directly.
-4. A deterministic Shortfin barrier finalizer performs safe output.
-
-See [Sailfin Rolling Discovery](sailfin-rolling-discovery.md).
-

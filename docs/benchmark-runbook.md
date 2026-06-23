@@ -42,14 +42,13 @@ There are three main entry points:
 ```bash
 cd benchmark
 fab local --dag-protocol=shortfin --rate=50000 --duration=20
-fab local --dag-protocol=sailfin --rate=50000 --duration=20
 ```
 
 Useful parameters:
 
 | Parameter | Meaning |
 | --- | --- |
-| `--dag-protocol` | `narwhal`, `bullshark`, `shortfin`, `sailfin`, or `wahoo`. |
+| `--dag-protocol` | `narwhal`, `bullshark`, `shortfin`, or `wahoo`. |
 | `--rate` | Offered load in transactions per second. |
 | `--duration` | Timed benchmark duration in seconds. |
 | `--faults` | Number of omitted/faulty nodes. |
@@ -63,7 +62,7 @@ Dry-run a matrix:
 ```bash
 cd benchmark
 python3 scripts/run_bench.py --mode local run \
-  --protocols shortfin,sailfin \
+  --protocols shortfin,narwhal,wahoo \
   --rates 60000,150000,250000 \
   --faults 0 \
   --delays 0 \
@@ -77,14 +76,14 @@ Run the matrix:
 
 ```bash
 python3 scripts/run_bench.py --mode local run \
-  --protocols shortfin,sailfin \
+  --protocols shortfin,narwhal,wahoo \
   --rates 60000,150000,250000 \
   --faults 0 \
   --delays 0 \
   --runs 1 \
   --duration 12 \
   --nodes 4 \
-  --output-prefix sailfin_smoke_compare \
+  --output-prefix shortfin_archive_smoke \
   --fresh
 ```
 
@@ -108,7 +107,7 @@ It can also be driven as a normal CLI:
 ```bash
 python3 scripts/dagtest-TUI run \
   --mode local \
-  --protocols shortfin,sailfin \
+  --protocols shortfin,narwhal,wahoo \
   --rates 60000,150000,250000 \
   --faults 0 \
   --delays 0 \
@@ -210,7 +209,6 @@ fab create --nodes=2
 fab info
 fab install
 fab remote --dag-protocol=shortfin --nodes=10 --faults=0 --rate=100000 --duration=60 --runs=1
-fab remote --dag-protocol=sailfin --nodes=10 --faults=0 --rate=100000 --duration=60 --runs=1
 fab kill
 fab stop
 fab start --max=10

@@ -5,10 +5,9 @@ This branch archives the Shortfin-family implementation and benchmark workflow u
 ## What Is Included
 
 - Shortfin baseline consensus in `consensus/src/shortfin.rs`.
-- Sailfin experimental variant in `consensus/src/sailfin.rs`.
 - Unified protocol selection through `dag_protocol` in `config/src/lib.rs`.
 - Local and cloud benchmark runners under `benchmark/`.
-- Smoke-test data and parser notes for Shortfin vs Sailfin.
+- Shortfin / historical NovelDAG result archive and parser notes.
 
 ## Documentation Map
 
@@ -17,7 +16,6 @@ This branch archives the Shortfin-family implementation and benchmark workflow u
 | [Project Structure](project-structure.md) | Crates, modules, protocol entry points, and data flow. |
 | [Benchmark Runbook](benchmark-runbook.md) | Build, local runs, RTT runs, cloud runs, TUI/CLI usage, outputs. |
 | [Experiment Data Notes](experiment-data-notes.md) | Metrics, CSV layout, smoke-test results, and data interpretation. |
-| [Sailfin Rolling Discovery](sailfin-rolling-discovery.md) | Current Sailfin idea, code path, safety posture, and limits. |
 
 The result archive committed with this branch is:
 
@@ -56,14 +54,14 @@ From `benchmark/`:
 
 ```bash
 python3 scripts/run_bench.py --mode local run \
-  --protocols shortfin,sailfin \
+  --protocols shortfin,narwhal,wahoo \
   --rates 60000,150000,250000 \
   --faults 0 \
   --delays 0 \
   --runs 1 \
   --duration 12 \
   --nodes 4 \
-  --output-prefix sailfin_smoke_compare \
+  --output-prefix shortfin_archive_smoke \
   --fresh
 ```
 

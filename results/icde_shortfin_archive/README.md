@@ -1,6 +1,8 @@
 # ICDE Shortfin Result Archive
 
-This directory stores lightweight experiment data for the `icde_shortfin_archive` branch. It intentionally keeps only CSV data and small text summaries. Full logs, RocksDB directories, checkpoints, plots, and tmux runtime artifacts are not archived here.
+This directory stores lightweight experiment data for the `icde_shortfin_archive` branch. It keeps only CSV data and compact text summaries. Full logs, RocksDB directories, checkpoints, plots, and tmux runtime artifacts are not archived here.
+
+The archive contains only Shortfin / historical NovelDAG experiment data.
 
 ## Layout
 
@@ -29,7 +31,7 @@ Use it to check which source files were archived and to verify that copied data 
 
 ## Local CSV Files
 
-Local files are copied from ignored benchmark output under:
+Local files are copied or filtered from ignored benchmark output under:
 
 ```text
 benchmark/csv_plots/
@@ -65,17 +67,16 @@ protocol,faults,delay_ms,rate,run,tps,latency_ms
 | File | Description |
 | --- | --- |
 | `bench_runs.csv` | Minimal single-run local parser output. It has metric columns only, so parameters must be inferred from the command history rather than the file itself. |
-| `runner_fix_probe_runs.csv` | Local smoke probe after fixing the benchmark runner; Shortfin, 4 nodes, f=0, rate 60k. |
-| `sailfin_smoke_compare2_runs.csv` | Local Shortfin vs Sailfin smoke matrix, 4 nodes, f=0, rates 60k/150k/250k, one run per point, duration 12s. |
+| `runner_fix_probe_runs.csv` | Local Shortfin smoke probe after fixing the benchmark runner; 4 nodes, f=0, rate 60k. |
+| `shortfin_smoke_runs.csv` | Shortfin-only rows from the local smoke matrix; 4 nodes, f=0, rates 60k/150k/250k, one run per point, duration 12s. |
 | `shortfin_f0_250k_supp_runs.csv` | Local Shortfin f=0 250k supplementary run. |
-| `sailfin_f0_250k_fastpath_probe_runs.csv` | Local Sailfin f=0 250k probe. The filename is historical; current `sailfin.rs` no longer uses the old edge-voted fast path. |
-| `shortfin_sailfin_f0_250k_runs.csv` | Local Shortfin/Sailfin f=0 250k comparison, multiple runs. |
-| `shortfin_sailfin_f0_250k_after_fastlog_runs.csv` | Local Shortfin/Sailfin f=0 250k comparison after benchmark logging fixes. |
-| `shortfin_sailfin_f0_330k_runs.csv` | Local Shortfin/Sailfin f=0 330k stress probe. Rows with all-zero metrics indicate failed or unparseable runs. |
-| `shortfin_sailfin_f0_330k_d30_runs.csv` | Local Shortfin/Sailfin f=0 330k duration-30 stress probe. All-zero rows indicate failed or unparseable runs. |
-| `local_rtt_sweep_280k_runs.csv` | Local RTT sweep at 280k offered load. `delay_ms` is one-way dummynet delay. |
-| `local_rtt_sweep_280k_runs_with_rtt.csv` | Same local RTT sweep with explicit `rtt_ms = 2 * one_way_delay_ms`. |
-| `rtt_sweep_results.csv` | Older local sweep format with `tps` and `latency_ms` columns. |
+| `shortfin_f0_250k_runs.csv` | Shortfin-only rows from the local f=0 250k multi-run comparison. |
+| `shortfin_f0_250k_after_fastlog_runs.csv` | Shortfin-only rows from the local f=0 250k run after benchmark logging fixes. |
+| `shortfin_f0_330k_runs.csv` | Shortfin-only rows from the local f=0 330k stress probe. All-zero rows indicate failed or unparseable runs. |
+| `shortfin_f0_330k_d30_runs.csv` | Shortfin-only local f=0 330k duration-30 stress probe. All-zero rows indicate failed or unparseable runs. |
+| `local_rtt_sweep_280k_runs.csv` | Local RTT sweep at 280k offered load. Historical `noveldag` rows correspond to the Shortfin/NovelDAG implementation. `delay_ms` is one-way dummynet delay. |
+| `local_rtt_sweep_280k_runs_with_rtt.csv` | Same local RTT sweep with explicit `rtt_ms = 2 * one_way_delay_ms`. Historical `noveldag` rows correspond to Shortfin/NovelDAG. |
+| `rtt_sweep_results.csv` | Older local sweep format with `tps` and `latency_ms` columns. Historical `noveldag` rows correspond to Shortfin/NovelDAG. |
 
 ## Cloud / WAN Data
 
@@ -119,12 +120,12 @@ results/icde_shortfin_archive/cloud/cloud_wan_summary.csv
 It extracts both parameters and metrics from the text summaries:
 
 ```text
-environment,source_file,protocol,run,faults,nodes,workers,collocate,rate,input_rate,tx_size,execution_time_s,header_size,max_header_delay_ms,gc_depth_rounds,sync_retry_delay_ms,sync_retry_nodes,batch_size,max_batch_delay_ms,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,consensus_bps,end_to_end_bps
+environment,source_file,protocol,raw_protocol,run,faults,nodes,workers,collocate,rate,input_rate,tx_size,execution_time_s,header_size,max_header_delay_ms,gc_depth_rounds,sync_retry_delay_ms,sync_retry_nodes,batch_size,max_batch_delay_ms,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,consensus_bps,end_to_end_bps
 ```
 
 ### Cloud Labels
 
-The historical cloud summaries use `noveldag` as a protocol label. In this archive, treat `noveldag` as the historical Shortfin/NovelDAG implementation label, not the current `sailfin` rolling-discovery variant.
+The historical cloud summaries use `noveldag` as a protocol label. In `cloud_wan_summary.csv`, `raw_protocol=noveldag` is normalized to `protocol=shortfin`.
 
 The archived cloud summaries currently contain:
 
@@ -133,7 +134,8 @@ faults = 1
 nodes = 10
 workers = 1
 tx_size = 512
-protocols = narwhal, noveldag, wahoo
+protocols = narwhal, shortfin, wahoo
+raw protocol labels = narwhal, noveldag, wahoo
 rates = 30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000
 ```
 
@@ -141,7 +143,7 @@ Only the combinations present in `cloud_wan_summary.csv` are archived.
 
 ## Notes On Interpretation
 
-- Local data is useful for smoke tests, runner validation, and rough Shortfin/Sailfin comparisons.
+- Local data is useful for smoke tests, runner validation, and rough Shortfin behavior checks.
 - Cloud/WAN summaries are closer to paper-style data, but this archive contains only compact summaries, not full raw logs.
 - All-zero metric rows in local CSV files indicate failed, overloaded, or unparseable runs and should not be averaged as successful measurements.
 - CSV headers should be considered authoritative when they include parameter columns.
@@ -155,5 +157,4 @@ See:
 docs/icde-shortfin-archive.md
 docs/benchmark-runbook.md
 docs/experiment-data-notes.md
-docs/sailfin-rolling-discovery.md
 ```
