@@ -1,10 +1,11 @@
 // TJU BLOCKCHAIN RESEARCH
-// Sailfin experimental variant baseline.
+// Sailfin experimental variant.
 //
-// This starts as an isolated copy of Shortfin's embedded-QC implementation.
-// Edge-voted fast commit logic will be added here without changing the
-// Shortfin baseline entry point.
-// 严格遵循设计文档 Section 5.1（轮结束条件）和 Section 6（提交规则）。
+// Rolling-discovery Shortfin: every round may discover certified same-author
+// embedded-QC chains, but output remains gated by a deterministic Shortfin
+// barrier finalizer. This intentionally replaces the earlier edge-voted fast
+// path; pending anchors are evidence only until a later certified frontier
+// causally covers them.
 
 use crate::Consensus;
 use crate::State;
@@ -20,6 +21,11 @@ use std::time::Instant;
 
 /// Wave 长度（设计文档 Section 6）。
 const WAVE: Round = 4;
+
+#[derive(Clone)]
+struct PendingAnchor {
+    anchor: Certificate,
+}
 
 // ── 诊断计数器 ──────────────────────────────────────────────
 //
@@ -90,11 +96,9 @@ pub(crate) async fn run(consensus: &mut Consensus) {
 
     // 已触发过提交检查的轮次（防重入）。
     let mut completed_rounds: HashSet<Round> = HashSet::new();
-    // Sailfin fast path emits early certificates before Shortfin's wave
-    // fallback advances State. Keep a digest-level guard so the fallback can
-    // still use the original State frontier without duplicating outputs.
-    let mut ordered_certificates: HashSet<Digest> = HashSet::new();
-    let mut next_fast_round: Round = 1;
+    // Rolling discovery records certified anchors before they are safe to
+    // output. Pending anchors never affect the committed prefix by themselves.
+    let mut pending_anchors: HashMap<Round, PendingAnchor> = HashMap::new();
     #[cfg(feature = "benchmark")]
     let mut diag = Diag::new();
     #[cfg(not(feature = "benchmark"))]
@@ -133,82 +137,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             .or_insert_with(HashMap::new)
             .insert(certificate.origin(), (certificate.digest(), certificate));
 
-        // ── Sailfin opt path: one-round edge-voted leader commit ──
-        //
-        // A leader at round r is fast-certified once 2f+1 certified round r+1
-        // vertices directly cite it in `parents`. The opt path emits only that
-        // leader, in round order; the fallback below absorbs the rest of the
-        // DAG using a protocol-fixed leader-first deterministic ordering.
-        while next_fast_round > 0 && next_fast_round + 1 <= round {
-            let Some(leader) = fast_certified_leader(consensus, next_fast_round, &state) else {
-                break;
-            };
-
-            #[cfg(feature = "benchmark")]
-            let leader_id = leader.header.id.clone();
-            #[cfg(feature = "benchmark")]
-            let leader_round = leader.round();
-            let sequence = collect_fast_leader(leader, &state, &ordered_certificates);
-            if sequence.is_empty() {
-                next_fast_round += 1;
-                continue;
-            }
-
-            #[cfg(feature = "benchmark")]
-            info!(
-                "DIAG_SAILFIN_FAST_COMMIT leader_round={} leader_author={} fast_blocks={}",
-                leader_round,
-                leader.origin(),
-                sequence.len()
-            );
-
-            for certificate in sequence {
-                if !ordered_certificates.insert(certificate.header.id.clone()) {
-                    continue;
-                }
-
-                #[cfg(feature = "benchmark")]
-                {
-                    let cert_age_ms = diag
-                        .cert_received_at
-                        .get(&certificate.header.id)
-                        .map(|t| t.elapsed().as_millis() as u64)
-                        .unwrap_or(0);
-                    diag.cert_age_sum_ms += cert_age_ms;
-                    diag.cert_age_samples += 1;
-                    info!(
-                        "DIAG_FAST_COMMIT_LATENCY round={} author={} cert_age_ms={} leader_round={}",
-                        certificate.round(),
-                        certificate.origin(),
-                        cert_age_ms,
-                        leader_round,
-                    );
-                }
-                #[cfg(feature = "benchmark")]
-                if certificate.header.id == leader_id {
-                    info!(
-                        "DIAG_FAST_LEADER_COMMIT committed_leader_round={} leader_author={}",
-                        leader_round,
-                        certificate.origin()
-                    );
-                }
-
-                #[cfg(not(feature = "benchmark"))]
-                info!("Fast committed {}", certificate.header);
-
-                consensus
-                    .tx_primary
-                    .send(certificate.clone())
-                    .await
-                    .expect("向 primary 发送 fast-path 证书失败");
-
-                if let Err(e) = consensus.tx_output.send(certificate).await {
-                    warn!("输出 fast-path 证书失败: {}", e);
-                }
-            }
-
-            next_fast_round += 1;
-        }
+        discover_pending_anchors(consensus, round, &state, &mut pending_anchors);
 
         // ── Wave 边界闸门 ──
         if round < WAVE || round % WAVE != 0 || completed_rounds.contains(&round) {
@@ -271,14 +200,25 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             commit_round.saturating_sub(b3.round())
         );
 
+        let finalized_pending =
+            finalized_pending_anchors(&pending_anchors, &[&b3, &b2, &b1], &state);
+
+        #[cfg(feature = "benchmark")]
+        if !finalized_pending.is_empty() {
+            info!(
+                "DIAG_SAILFIN_ROLLING_FINALIZE commit_round={} finalized_pending={}",
+                commit_round,
+                finalized_pending.len()
+            );
+        }
+
         // ── 收集并提交 wave 内所有安全区块 ──
-        let mut sequence = collect_wave(
+        let sequence = collect_wave(
             commit_round,
             &state,
             consensus.committee.validity_threshold() as usize,
             &[&b3, &b2, &b1],
         );
-        prioritize_round_leaders(consensus, &state, &mut sequence, commit_round);
 
         #[cfg(feature = "benchmark")]
         let leader_id = b3.header.id.clone();
@@ -292,15 +232,13 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             sequence.len(),
         );
 
-        let sequence: Vec<Certificate> = sequence
-            .into_iter()
-            .filter(|certificate| ordered_certificates.insert(certificate.header.id.clone()))
-            .collect();
-
         for x in sequence.iter() {
             state.update(x, consensus.gc_depth);
         }
-        next_fast_round = next_fast_round.max(state.last_committed_round + 1);
+        pending_anchors.retain(|slot_round, anchor| {
+            *slot_round + consensus.gc_depth >= state.last_committed_round
+                && !finalized_pending.contains(&anchor.anchor.header.id)
+        });
 
         for certificate in sequence {
             #[cfg(feature = "benchmark")]
@@ -374,82 +312,69 @@ fn round_ended(
     our_cert_exists && consensus.round_has_quorum(round, &state.dag)
 }
 
-// ── Sailfin opt path: edge-voted fast certificate ───────────
+// ── Sailfin rolling discovery ───────────────────────────────
 
-/// Return the round-`r` leader once it has a quorum of direct round-`r+1`
-/// edge-votes. Each counted voter is itself a certified DAG vertex, so the
-/// evidence is carried in-band by normal DAG dissemination.
-fn fast_certified_leader<'a>(
+/// Discover certified same-author anchor chains at every potential boundary.
+/// The discovered anchor is not emitted here; it only becomes useful once a
+/// deterministic barrier finalizer later causally covers it.
+fn discover_pending_anchors(
     consensus: &Consensus,
-    leader_round: Round,
-    state: &'a State,
-) -> Option<&'a Certificate> {
-    let vote_round = leader_round + 1;
-    if !consensus.round_has_quorum(vote_round, &state.dag) {
-        return None;
-    }
-
-    let (leader_digest, leader) = consensus.leader(leader_round, vote_round, &state.dag)?;
-    let support = state
-        .dag
-        .get(&vote_round)?
-        .values()
-        .filter(|(_, cert)| cert.header.parents.contains(leader_digest))
-        .map(|(_, cert)| consensus.committee.stake(&cert.origin()))
-        .sum::<u32>();
-
-    if support >= consensus.committee.quorum_threshold() {
-        Some(leader)
-    } else {
-        None
-    }
-}
-
-/// Collect only the fast-certified leader. Emitting a broader local causal past
-/// would make the early prefix depend on which ancestors a replica has already
-/// delivered; the wave fallback remains responsible for committing the rest of
-/// the DAG in a deterministic order.
-fn collect_fast_leader(
-    leader: &Certificate,
+    current_round: Round,
     state: &State,
-    already_ordered: &HashSet<Digest>,
-) -> Vec<Certificate> {
-    if already_ordered.contains(&leader.header.id)
-        || state
-            .last_committed
-            .get(&leader.origin())
-            .map_or(false, |last_r| *last_r >= leader.round())
-    {
-        Vec::new()
-    } else {
-        vec![leader.clone()]
-    }
-}
-
-/// Make fallback output agree with any opt-path prefix: all selected round
-/// leaders contained in the wave are placed first by leader round, and the
-/// remaining certificates keep Shortfin's `(round, digest)` order. This rule is
-/// independent of which fast certificates this replica has already observed.
-fn prioritize_round_leaders(
-    consensus: &Consensus,
-    state: &State,
-    sequence: &mut [Certificate],
-    commit_round: Round,
+    pending_anchors: &mut HashMap<Round, PendingAnchor>,
 ) {
-    let round_leaders: HashMap<Digest, Round> = (1..commit_round)
-        .filter_map(|round| {
-            consensus
-                .leader(round, round + 1, &state.dag)
-                .map(|(_, leader)| (leader.header.id.clone(), round))
-        })
-        .collect();
+    if current_round < WAVE {
+        return;
+    }
 
-    sequence.sort_by_key(|cert| {
-        round_leaders
-            .get(&cert.header.id)
-            .map(|leader_round| (0, *leader_round, cert.header.id.clone()))
-            .unwrap_or_else(|| (1, cert.round(), cert.header.id.clone()))
-    });
+    let first_round = state.last_committed_round.saturating_add(WAVE).max(WAVE);
+    for slot_round in first_round..=current_round {
+        if pending_anchors.contains_key(&slot_round)
+            || !consensus.round_has_quorum(slot_round, &state.dag)
+        {
+            continue;
+        }
+
+        let Ok((anchor, _link1, _link2)) = verify_leader_chain(consensus, slot_round, state) else {
+            continue;
+        };
+
+        pending_anchors.insert(
+            slot_round,
+            PendingAnchor {
+                anchor: anchor.clone(),
+            },
+        );
+
+        #[cfg(feature = "benchmark")]
+        info!(
+            "DIAG_SAILFIN_ROLLING_DISCOVER slot_round={} anchor_round={} anchor_author={} link_rounds={},{}",
+            slot_round,
+            anchor.round(),
+            anchor.origin(),
+            _link1.round(),
+            _link2.round()
+        );
+    }
+}
+
+fn finalized_pending_anchors(
+    pending_anchors: &HashMap<Round, PendingAnchor>,
+    finalizer_chain: &[&Certificate],
+    state: &State,
+) -> HashSet<Digest> {
+    let index: HashMap<Digest, &Certificate> = state
+        .dag
+        .iter()
+        .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| (cert.digest(), cert)))
+        .collect();
+    let reachable = causal_reachability(finalizer_chain, &index, &state.last_committed);
+
+    pending_anchors
+        .values()
+        .filter(|pending| reachable.contains(&pending.anchor.header.id))
+        .map(|pending| pending.anchor.header.id.clone())
+        .collect()
 }
 
 // ── Section 6: Leader 链验证 ─────────────────────────────────

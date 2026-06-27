@@ -57,7 +57,7 @@ Protocol-specific logic is isolated in the consensus layer:
 | Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
 | Bullshark | [consensus/src/bullshark.rs](consensus/src/bullshark.rs) | Elected at round `r` | f+1 support from `r+1` children, linked-path ordering |
 | Shortfin | [consensus/src/shortfin.rs](consensus/src/shortfin.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
-| Sailfin | [consensus/src/sailfin.rs](consensus/src/sailfin.rs) | Experimental | Independent variant file for edge-voted fast-commit work |
+| Sailfin | [consensus/src/sailfin.rs](consensus/src/sailfin.rs) | Experimental | Rolling-discovery Shortfin variant with conservative barrier finalization |
 | Wahoo | [primary/src/wahoo/](primary/src/wahoo/) (state machine) + [consensus/src/wahoo.rs](consensus/src/wahoo.rs) (passthrough) | Even-round Elect: 2f+1 BLS partial sigs → coin for odd-round leader | `leader[r] ∧ done[r][leader] ∧ dag[r][leader]` at odd rounds, transitive ancestor commit. 1:1 port of [Go reference](Wahoo-main/wahoo/) |
 
 Leader election modes (`consensus_protocol`): **RoundRobin** or **CommonCoin** — selectable independently of the DAG protocol.
@@ -238,6 +238,11 @@ fab paper-plot-all
 
 ## Docs
 
+- ICDE Shortfin archive index: [docs/icde-shortfin-archive.md](docs/icde-shortfin-archive.md)
+- Project structure: [docs/project-structure.md](docs/project-structure.md)
+- Benchmark runbook: [docs/benchmark-runbook.md](docs/benchmark-runbook.md)
+- Experiment data notes: [docs/experiment-data-notes.md](docs/experiment-data-notes.md)
+- Sailfin rolling discovery notes: [docs/sailfin-rolling-discovery.md](docs/sailfin-rolling-discovery.md)
 - **Benchmark guide:** [benchmark/README.md](benchmark/README.md) — full workflow, scripts, entry points, parameters, plotting
 - Primary module notes: [primary/README.md](primary/README.md)
 - Worker module notes: [worker/README.md](worker/README.md)

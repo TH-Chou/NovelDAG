@@ -1,0 +1,10 @@
+protocol,metric,count,mean_ms,p50_ms,p90_ms
+noveldag,client_to_batch,8058,39.82638371804418,53.0,64.0
+noveldag,round_produce_interval,393,1007.3002544529262,1006.0,1012.0
+noveldag,block_created_to_commit,5405,3652.899352451434,3108.0,6956.0
+noveldag,noveldag_cert_age,5417,3742.487908436404,3474.0,6902.0
+noveldag,noveldag_commit_gap_rounds,126,3.0,3.0,3.0
+noveldag,noveldag_wave_blocks,126,42.992063492063494,36.0,72.0
+wahoo,client_to_batch,8058,41.90531149168528,53.0,70.0
+wahoo,round_produce_interval,655,605.1511450381679,597.0,739.0
+wahoo,block_created_to_commit,5439,2008.3965802537232,2004.0,2775.0

@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Estimated ping latencies (in ms) between GCP regions. Values are averaged from Narwhal, NovelDAG, and Wahoo logs by matching sender-side and receiver-side TCP connection-establishment timestamps; region names are abbreviated in the header.}
+\label{tab:gcp-region-latency}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Destination* / Source & us-e1 & us-w1 & eu-w1 & as-e1 & as-se1 \\
+\midrule
+us-east1-b & 0.20 & 68.30 & 91.50 & 185.30 & 223.80 \\
+us-west1-a & 69.27 & 0.60 & 138.80 & 127.30 & 161.00 \\
+europe-west1-b & 92.40 & 139.00 & 0.20 & 268.10 & 302.00 \\
+asia-east1-a & 185.80 & 127.10 & 267.40 & 0.18 & 42.77 \\
+asia-southeast1-a & 221.20 & 162.40 & 298.80 & 41.33 & 0.55 \\
+\bottomrule
+\end{tabular}
+\vspace{0.3em}
+\footnotesize{* Abbreviations: us-e1=us-east1, us-w1=us-west1, eu-w1=europe-west1, as-e1=asia-east1, as-se1=asia-southeast1.}
+\end{table}

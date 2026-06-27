@@ -1,0 +1,6 @@
+source_region,source_zone,us-e1,us-w1,eu-w1,as-e1,as-se1
+us-e1,us-east1-b,0.20,68.30,91.50,185.30,223.80
+us-w1,us-west1-a,69.27,0.60,138.80,127.30,161.00
+eu-w1,europe-west1-b,92.40,139.00,0.20,268.10,302.00
+as-e1,asia-east1-a,185.80,127.10,267.40,0.18,42.77
+as-se1,asia-southeast1-a,221.20,162.40,298.80,41.33,0.55
