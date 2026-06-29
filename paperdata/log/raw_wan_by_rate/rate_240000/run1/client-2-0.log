@@ -1,0 +1,911 @@
+[2026-05-22T09:20:23.223Z INFO  benchmark_client] Node address: 34.81.252.209:5013
+[2026-05-22T09:20:23.223Z INFO  benchmark_client] Transactions size: 512 B
+[2026-05-22T09:20:23.223Z INFO  benchmark_client] Transactions rate: 26667 tx/s
+[2026-05-22T09:20:23.223Z INFO  benchmark_client] Waiting for all nodes to be online...
+[2026-05-22T09:20:23.491Z INFO  benchmark_client] Start sending transactions
+[2026-05-22T09:20:23.491Z INFO  benchmark_client] Sending sample transaction 0
+[2026-05-22T09:20:23.542Z INFO  benchmark_client] Sending sample transaction 1
+[2026-05-22T09:20:23.591Z INFO  benchmark_client] Sending sample transaction 2
+[2026-05-22T09:20:23.641Z INFO  benchmark_client] Sending sample transaction 3
+[2026-05-22T09:20:23.692Z INFO  benchmark_client] Sending sample transaction 4
+[2026-05-22T09:20:23.742Z INFO  benchmark_client] Sending sample transaction 5
+[2026-05-22T09:20:23.791Z INFO  benchmark_client] Sending sample transaction 6
+[2026-05-22T09:20:23.842Z INFO  benchmark_client] Sending sample transaction 7
+[2026-05-22T09:20:23.891Z INFO  benchmark_client] Sending sample transaction 8
+[2026-05-22T09:20:23.942Z INFO  benchmark_client] Sending sample transaction 9
+[2026-05-22T09:20:23.992Z INFO  benchmark_client] Sending sample transaction 10
+[2026-05-22T09:20:24.041Z INFO  benchmark_client] Sending sample transaction 11
+[2026-05-22T09:20:24.092Z INFO  benchmark_client] Sending sample transaction 12
+[2026-05-22T09:20:24.142Z INFO  benchmark_client] Sending sample transaction 13
+[2026-05-22T09:20:24.192Z INFO  benchmark_client] Sending sample transaction 14
+[2026-05-22T09:20:24.241Z INFO  benchmark_client] Sending sample transaction 15
+[2026-05-22T09:20:24.292Z INFO  benchmark_client] Sending sample transaction 16
+[2026-05-22T09:20:24.341Z INFO  benchmark_client] Sending sample transaction 17
+[2026-05-22T09:20:24.392Z INFO  benchmark_client] Sending sample transaction 18
+[2026-05-22T09:20:24.441Z INFO  benchmark_client] Sending sample transaction 19
+[2026-05-22T09:20:24.491Z INFO  benchmark_client] Sending sample transaction 20
+[2026-05-22T09:20:24.542Z INFO  benchmark_client] Sending sample transaction 21
+[2026-05-22T09:20:24.592Z INFO  benchmark_client] Sending sample transaction 22
+[2026-05-22T09:20:24.641Z INFO  benchmark_client] Sending sample transaction 23
+[2026-05-22T09:20:24.691Z INFO  benchmark_client] Sending sample transaction 24
+[2026-05-22T09:20:24.742Z INFO  benchmark_client] Sending sample transaction 25
+[2026-05-22T09:20:24.792Z INFO  benchmark_client] Sending sample transaction 26
+[2026-05-22T09:20:24.842Z INFO  benchmark_client] Sending sample transaction 27
+[2026-05-22T09:20:24.891Z INFO  benchmark_client] Sending sample transaction 28
+[2026-05-22T09:20:24.942Z INFO  benchmark_client] Sending sample transaction 29
+[2026-05-22T09:20:24.992Z INFO  benchmark_client] Sending sample transaction 30
+[2026-05-22T09:20:25.041Z INFO  benchmark_client] Sending sample transaction 31
+[2026-05-22T09:20:25.092Z INFO  benchmark_client] Sending sample transaction 32
+[2026-05-22T09:20:25.142Z INFO  benchmark_client] Sending sample transaction 33
+[2026-05-22T09:20:25.192Z INFO  benchmark_client] Sending sample transaction 34
+[2026-05-22T09:20:25.242Z INFO  benchmark_client] Sending sample transaction 35
+[2026-05-22T09:20:25.292Z INFO  benchmark_client] Sending sample transaction 36
+[2026-05-22T09:20:25.342Z INFO  benchmark_client] Sending sample transaction 37
+[2026-05-22T09:20:25.392Z INFO  benchmark_client] Sending sample transaction 38
+[2026-05-22T09:20:25.441Z INFO  benchmark_client] Sending sample transaction 39
+[2026-05-22T09:20:25.491Z INFO  benchmark_client] Sending sample transaction 40
+[2026-05-22T09:20:25.541Z INFO  benchmark_client] Sending sample transaction 41
+[2026-05-22T09:20:25.592Z INFO  benchmark_client] Sending sample transaction 42
+[2026-05-22T09:20:25.642Z INFO  benchmark_client] Sending sample transaction 43
+[2026-05-22T09:20:25.691Z INFO  benchmark_client] Sending sample transaction 44
+[2026-05-22T09:20:25.741Z INFO  benchmark_client] Sending sample transaction 45
+[2026-05-22T09:20:25.792Z INFO  benchmark_client] Sending sample transaction 46
+[2026-05-22T09:20:25.842Z INFO  benchmark_client] Sending sample transaction 47
+[2026-05-22T09:20:25.891Z INFO  benchmark_client] Sending sample transaction 48
+[2026-05-22T09:20:25.942Z INFO  benchmark_client] Sending sample transaction 49
+[2026-05-22T09:20:25.992Z INFO  benchmark_client] Sending sample transaction 50
+[2026-05-22T09:20:26.042Z INFO  benchmark_client] Sending sample transaction 51
+[2026-05-22T09:20:26.092Z INFO  benchmark_client] Sending sample transaction 52
+[2026-05-22T09:20:26.142Z INFO  benchmark_client] Sending sample transaction 53
+[2026-05-22T09:20:26.191Z INFO  benchmark_client] Sending sample transaction 54
+[2026-05-22T09:20:26.242Z INFO  benchmark_client] Sending sample transaction 55
+[2026-05-22T09:20:26.291Z INFO  benchmark_client] Sending sample transaction 56
+[2026-05-22T09:20:26.342Z INFO  benchmark_client] Sending sample transaction 57
+[2026-05-22T09:20:26.392Z INFO  benchmark_client] Sending sample transaction 58
+[2026-05-22T09:20:26.441Z INFO  benchmark_client] Sending sample transaction 59
+[2026-05-22T09:20:26.493Z INFO  benchmark_client] Sending sample transaction 60
+[2026-05-22T09:20:26.541Z INFO  benchmark_client] Sending sample transaction 61
+[2026-05-22T09:20:26.592Z INFO  benchmark_client] Sending sample transaction 62
+[2026-05-22T09:20:26.642Z INFO  benchmark_client] Sending sample transaction 63
+[2026-05-22T09:20:26.692Z INFO  benchmark_client] Sending sample transaction 64
+[2026-05-22T09:20:26.743Z INFO  benchmark_client] Sending sample transaction 65
+[2026-05-22T09:20:26.792Z INFO  benchmark_client] Sending sample transaction 66
+[2026-05-22T09:20:26.841Z INFO  benchmark_client] Sending sample transaction 67
+[2026-05-22T09:20:26.892Z INFO  benchmark_client] Sending sample transaction 68
+[2026-05-22T09:20:26.941Z INFO  benchmark_client] Sending sample transaction 69
+[2026-05-22T09:20:26.991Z INFO  benchmark_client] Sending sample transaction 70
+[2026-05-22T09:20:27.042Z INFO  benchmark_client] Sending sample transaction 71
+[2026-05-22T09:20:27.092Z INFO  benchmark_client] Sending sample transaction 72
+[2026-05-22T09:20:27.142Z INFO  benchmark_client] Sending sample transaction 73
+[2026-05-22T09:20:27.192Z INFO  benchmark_client] Sending sample transaction 74
+[2026-05-22T09:20:27.242Z INFO  benchmark_client] Sending sample transaction 75
+[2026-05-22T09:20:27.291Z INFO  benchmark_client] Sending sample transaction 76
+[2026-05-22T09:20:27.342Z INFO  benchmark_client] Sending sample transaction 77
+[2026-05-22T09:20:27.392Z INFO  benchmark_client] Sending sample transaction 78
+[2026-05-22T09:20:27.442Z INFO  benchmark_client] Sending sample transaction 79
+[2026-05-22T09:20:27.492Z INFO  benchmark_client] Sending sample transaction 80
+[2026-05-22T09:20:27.542Z INFO  benchmark_client] Sending sample transaction 81
+[2026-05-22T09:20:27.592Z INFO  benchmark_client] Sending sample transaction 82
+[2026-05-22T09:20:27.642Z INFO  benchmark_client] Sending sample transaction 83
+[2026-05-22T09:20:27.693Z INFO  benchmark_client] Sending sample transaction 84
+[2026-05-22T09:20:27.742Z INFO  benchmark_client] Sending sample transaction 85
+[2026-05-22T09:20:27.791Z INFO  benchmark_client] Sending sample transaction 86
+[2026-05-22T09:20:27.843Z INFO  benchmark_client] Sending sample transaction 87
+[2026-05-22T09:20:27.891Z INFO  benchmark_client] Sending sample transaction 88
+[2026-05-22T09:20:27.943Z INFO  benchmark_client] Sending sample transaction 89
+[2026-05-22T09:20:27.993Z INFO  benchmark_client] Sending sample transaction 90
+[2026-05-22T09:20:28.042Z INFO  benchmark_client] Sending sample transaction 91
+[2026-05-22T09:20:28.093Z INFO  benchmark_client] Sending sample transaction 92
+[2026-05-22T09:20:28.142Z INFO  benchmark_client] Sending sample transaction 93
+[2026-05-22T09:20:28.192Z INFO  benchmark_client] Sending sample transaction 94
+[2026-05-22T09:20:28.243Z INFO  benchmark_client] Sending sample transaction 95
+[2026-05-22T09:20:28.292Z INFO  benchmark_client] Sending sample transaction 96
+[2026-05-22T09:20:28.397Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:28.398Z INFO  benchmark_client] Sending sample transaction 97
+[2026-05-22T09:20:28.406Z INFO  benchmark_client] Sending sample transaction 98
+[2026-05-22T09:20:28.897Z INFO  benchmark_client] Sending sample transaction 99
+[2026-05-22T09:20:28.902Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:28.902Z INFO  benchmark_client] Sending sample transaction 100
+[2026-05-22T09:20:28.907Z INFO  benchmark_client] Sending sample transaction 101
+[2026-05-22T09:20:28.914Z INFO  benchmark_client] Sending sample transaction 102
+[2026-05-22T09:20:28.991Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:28.993Z INFO  benchmark_client] Sending sample transaction 103
+[2026-05-22T09:20:28.995Z INFO  benchmark_client] Sending sample transaction 104
+[2026-05-22T09:20:29.002Z INFO  benchmark_client] Sending sample transaction 105
+[2026-05-22T09:20:29.030Z INFO  benchmark_client] Sending sample transaction 106
+[2026-05-22T09:20:29.033Z INFO  benchmark_client] Sending sample transaction 107
+[2026-05-22T09:20:29.036Z INFO  benchmark_client] Sending sample transaction 108
+[2026-05-22T09:20:29.225Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:29.225Z INFO  benchmark_client] Sending sample transaction 109
+[2026-05-22T09:20:29.230Z INFO  benchmark_client] Sending sample transaction 110
+[2026-05-22T09:20:29.267Z INFO  benchmark_client] Sending sample transaction 111
+[2026-05-22T09:20:29.269Z INFO  benchmark_client] Sending sample transaction 112
+[2026-05-22T09:20:29.300Z INFO  benchmark_client] Sending sample transaction 113
+[2026-05-22T09:20:29.302Z INFO  benchmark_client] Sending sample transaction 114
+[2026-05-22T09:20:29.305Z INFO  benchmark_client] Sending sample transaction 115
+[2026-05-22T09:20:29.397Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:29.398Z INFO  benchmark_client] Sending sample transaction 116
+[2026-05-22T09:20:29.401Z INFO  benchmark_client] Sending sample transaction 117
+[2026-05-22T09:20:29.406Z INFO  benchmark_client] Sending sample transaction 118
+[2026-05-22T09:20:29.442Z INFO  benchmark_client] Sending sample transaction 119
+[2026-05-22T09:20:29.493Z INFO  benchmark_client] Sending sample transaction 120
+[2026-05-22T09:20:29.543Z INFO  benchmark_client] Sending sample transaction 121
+[2026-05-22T09:20:29.592Z INFO  benchmark_client] Sending sample transaction 122
+[2026-05-22T09:20:29.641Z INFO  benchmark_client] Sending sample transaction 123
+[2026-05-22T09:20:29.692Z INFO  benchmark_client] Sending sample transaction 124
+[2026-05-22T09:20:29.745Z INFO  benchmark_client] Sending sample transaction 125
+[2026-05-22T09:20:29.792Z INFO  benchmark_client] Sending sample transaction 126
+[2026-05-22T09:20:29.841Z INFO  benchmark_client] Sending sample transaction 127
+[2026-05-22T09:20:29.892Z INFO  benchmark_client] Sending sample transaction 128
+[2026-05-22T09:20:29.942Z INFO  benchmark_client] Sending sample transaction 129
+[2026-05-22T09:20:29.993Z INFO  benchmark_client] Sending sample transaction 130
+[2026-05-22T09:20:30.042Z INFO  benchmark_client] Sending sample transaction 131
+[2026-05-22T09:20:30.092Z INFO  benchmark_client] Sending sample transaction 132
+[2026-05-22T09:20:30.142Z INFO  benchmark_client] Sending sample transaction 133
+[2026-05-22T09:20:30.193Z INFO  benchmark_client] Sending sample transaction 134
+[2026-05-22T09:20:30.242Z INFO  benchmark_client] Sending sample transaction 135
+[2026-05-22T09:20:30.292Z INFO  benchmark_client] Sending sample transaction 136
+[2026-05-22T09:20:30.342Z INFO  benchmark_client] Sending sample transaction 137
+[2026-05-22T09:20:30.392Z INFO  benchmark_client] Sending sample transaction 138
+[2026-05-22T09:20:30.442Z INFO  benchmark_client] Sending sample transaction 139
+[2026-05-22T09:20:30.493Z INFO  benchmark_client] Sending sample transaction 140
+[2026-05-22T09:20:30.542Z INFO  benchmark_client] Sending sample transaction 141
+[2026-05-22T09:20:30.592Z INFO  benchmark_client] Sending sample transaction 142
+[2026-05-22T09:20:30.642Z INFO  benchmark_client] Sending sample transaction 143
+[2026-05-22T09:20:30.694Z INFO  benchmark_client] Sending sample transaction 144
+[2026-05-22T09:20:30.742Z INFO  benchmark_client] Sending sample transaction 145
+[2026-05-22T09:20:30.791Z INFO  benchmark_client] Sending sample transaction 146
+[2026-05-22T09:20:30.842Z INFO  benchmark_client] Sending sample transaction 147
+[2026-05-22T09:20:30.891Z INFO  benchmark_client] Sending sample transaction 148
+[2026-05-22T09:20:30.942Z INFO  benchmark_client] Sending sample transaction 149
+[2026-05-22T09:20:30.992Z INFO  benchmark_client] Sending sample transaction 150
+[2026-05-22T09:20:31.048Z INFO  benchmark_client] Sending sample transaction 151
+[2026-05-22T09:20:31.360Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:31.360Z INFO  benchmark_client] Sending sample transaction 152
+[2026-05-22T09:20:31.362Z INFO  benchmark_client] Sending sample transaction 153
+[2026-05-22T09:20:31.405Z INFO  benchmark_client] Sending sample transaction 154
+[2026-05-22T09:20:31.410Z INFO  benchmark_client] Sending sample transaction 155
+[2026-05-22T09:20:31.423Z INFO  benchmark_client] Sending sample transaction 156
+[2026-05-22T09:20:31.432Z INFO  benchmark_client] Sending sample transaction 157
+[2026-05-22T09:20:31.479Z INFO  benchmark_client] Sending sample transaction 158
+[2026-05-22T09:20:31.483Z INFO  benchmark_client] Sending sample transaction 159
+[2026-05-22T09:20:31.619Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:31.619Z INFO  benchmark_client] Sending sample transaction 160
+[2026-05-22T09:20:31.623Z INFO  benchmark_client] Sending sample transaction 161
+[2026-05-22T09:20:31.627Z INFO  benchmark_client] Sending sample transaction 162
+[2026-05-22T09:20:31.676Z INFO  benchmark_client] Sending sample transaction 163
+[2026-05-22T09:20:31.693Z INFO  benchmark_client] Sending sample transaction 164
+[2026-05-22T09:20:31.744Z INFO  benchmark_client] Sending sample transaction 165
+[2026-05-22T09:20:31.792Z INFO  benchmark_client] Sending sample transaction 166
+[2026-05-22T09:20:31.843Z INFO  benchmark_client] Sending sample transaction 167
+[2026-05-22T09:20:31.892Z INFO  benchmark_client] Sending sample transaction 168
+[2026-05-22T09:20:31.942Z INFO  benchmark_client] Sending sample transaction 169
+[2026-05-22T09:20:31.992Z INFO  benchmark_client] Sending sample transaction 170
+[2026-05-22T09:20:32.043Z INFO  benchmark_client] Sending sample transaction 171
+[2026-05-22T09:20:32.092Z INFO  benchmark_client] Sending sample transaction 172
+[2026-05-22T09:20:32.142Z INFO  benchmark_client] Sending sample transaction 173
+[2026-05-22T09:20:32.192Z INFO  benchmark_client] Sending sample transaction 174
+[2026-05-22T09:20:32.242Z INFO  benchmark_client] Sending sample transaction 175
+[2026-05-22T09:20:32.292Z INFO  benchmark_client] Sending sample transaction 176
+[2026-05-22T09:20:32.342Z INFO  benchmark_client] Sending sample transaction 177
+[2026-05-22T09:20:32.392Z INFO  benchmark_client] Sending sample transaction 178
+[2026-05-22T09:20:32.442Z INFO  benchmark_client] Sending sample transaction 179
+[2026-05-22T09:20:32.492Z INFO  benchmark_client] Sending sample transaction 180
+[2026-05-22T09:20:32.544Z INFO  benchmark_client] Sending sample transaction 181
+[2026-05-22T09:20:32.592Z INFO  benchmark_client] Sending sample transaction 182
+[2026-05-22T09:20:32.642Z INFO  benchmark_client] Sending sample transaction 183
+[2026-05-22T09:20:32.692Z INFO  benchmark_client] Sending sample transaction 184
+[2026-05-22T09:20:32.742Z INFO  benchmark_client] Sending sample transaction 185
+[2026-05-22T09:20:32.792Z INFO  benchmark_client] Sending sample transaction 186
+[2026-05-22T09:20:32.844Z INFO  benchmark_client] Sending sample transaction 187
+[2026-05-22T09:20:32.892Z INFO  benchmark_client] Sending sample transaction 188
+[2026-05-22T09:20:32.942Z INFO  benchmark_client] Sending sample transaction 189
+[2026-05-22T09:20:32.992Z INFO  benchmark_client] Sending sample transaction 190
+[2026-05-22T09:20:33.042Z INFO  benchmark_client] Sending sample transaction 191
+[2026-05-22T09:20:33.095Z INFO  benchmark_client] Sending sample transaction 192
+[2026-05-22T09:20:33.145Z INFO  benchmark_client] Sending sample transaction 193
+[2026-05-22T09:20:33.192Z INFO  benchmark_client] Sending sample transaction 194
+[2026-05-22T09:20:33.242Z INFO  benchmark_client] Sending sample transaction 195
+[2026-05-22T09:20:33.687Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:33.688Z INFO  benchmark_client] Sending sample transaction 196
+[2026-05-22T09:20:33.696Z INFO  benchmark_client] Sending sample transaction 197
+[2026-05-22T09:20:33.705Z INFO  benchmark_client] Sending sample transaction 198
+[2026-05-22T09:20:33.748Z INFO  benchmark_client] Sending sample transaction 199
+[2026-05-22T09:20:33.753Z INFO  benchmark_client] Sending sample transaction 200
+[2026-05-22T09:20:33.828Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:33.829Z INFO  benchmark_client] Sending sample transaction 201
+[2026-05-22T09:20:33.832Z INFO  benchmark_client] Sending sample transaction 202
+[2026-05-22T09:20:33.837Z INFO  benchmark_client] Sending sample transaction 203
+[2026-05-22T09:20:33.987Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:33.988Z INFO  benchmark_client] Sending sample transaction 204
+[2026-05-22T09:20:33.992Z INFO  benchmark_client] Sending sample transaction 205
+[2026-05-22T09:20:34.037Z INFO  benchmark_client] Sending sample transaction 206
+[2026-05-22T09:20:34.040Z INFO  benchmark_client] Sending sample transaction 207
+[2026-05-22T09:20:34.042Z INFO  benchmark_client] Sending sample transaction 208
+[2026-05-22T09:20:34.116Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:34.118Z INFO  benchmark_client] Sending sample transaction 209
+[2026-05-22T09:20:34.123Z INFO  benchmark_client] Sending sample transaction 210
+[2026-05-22T09:20:34.206Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:34.206Z INFO  benchmark_client] Sending sample transaction 211
+[2026-05-22T09:20:34.208Z INFO  benchmark_client] Sending sample transaction 212
+[2026-05-22T09:20:34.240Z INFO  benchmark_client] Sending sample transaction 213
+[2026-05-22T09:20:34.244Z INFO  benchmark_client] Sending sample transaction 214
+[2026-05-22T09:20:34.250Z INFO  benchmark_client] Sending sample transaction 215
+[2026-05-22T09:20:34.292Z INFO  benchmark_client] Sending sample transaction 216
+[2026-05-22T09:20:34.341Z INFO  benchmark_client] Sending sample transaction 217
+[2026-05-22T09:20:34.393Z INFO  benchmark_client] Sending sample transaction 218
+[2026-05-22T09:20:34.444Z INFO  benchmark_client] Sending sample transaction 219
+[2026-05-22T09:20:34.492Z INFO  benchmark_client] Sending sample transaction 220
+[2026-05-22T09:20:34.542Z INFO  benchmark_client] Sending sample transaction 221
+[2026-05-22T09:20:34.592Z INFO  benchmark_client] Sending sample transaction 222
+[2026-05-22T09:20:34.645Z INFO  benchmark_client] Sending sample transaction 223
+[2026-05-22T09:20:34.694Z INFO  benchmark_client] Sending sample transaction 224
+[2026-05-22T09:20:34.744Z INFO  benchmark_client] Sending sample transaction 225
+[2026-05-22T09:20:34.792Z INFO  benchmark_client] Sending sample transaction 226
+[2026-05-22T09:20:34.842Z INFO  benchmark_client] Sending sample transaction 227
+[2026-05-22T09:20:34.894Z INFO  benchmark_client] Sending sample transaction 228
+[2026-05-22T09:20:34.942Z INFO  benchmark_client] Sending sample transaction 229
+[2026-05-22T09:20:34.992Z INFO  benchmark_client] Sending sample transaction 230
+[2026-05-22T09:20:35.146Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:35.146Z INFO  benchmark_client] Sending sample transaction 231
+[2026-05-22T09:20:35.150Z INFO  benchmark_client] Sending sample transaction 232
+[2026-05-22T09:20:35.156Z INFO  benchmark_client] Sending sample transaction 233
+[2026-05-22T09:20:35.192Z INFO  benchmark_client] Sending sample transaction 234
+[2026-05-22T09:20:35.242Z INFO  benchmark_client] Sending sample transaction 235
+[2026-05-22T09:20:35.292Z INFO  benchmark_client] Sending sample transaction 236
+[2026-05-22T09:20:35.342Z INFO  benchmark_client] Sending sample transaction 237
+[2026-05-22T09:20:35.392Z INFO  benchmark_client] Sending sample transaction 238
+[2026-05-22T09:20:35.442Z INFO  benchmark_client] Sending sample transaction 239
+[2026-05-22T09:20:35.494Z INFO  benchmark_client] Sending sample transaction 240
+[2026-05-22T09:20:35.636Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:35.636Z INFO  benchmark_client] Sending sample transaction 241
+[2026-05-22T09:20:35.642Z INFO  benchmark_client] Sending sample transaction 242
+[2026-05-22T09:20:35.646Z INFO  benchmark_client] Sending sample transaction 243
+[2026-05-22T09:20:35.726Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:35.726Z INFO  benchmark_client] Sending sample transaction 244
+[2026-05-22T09:20:35.742Z INFO  benchmark_client] Sending sample transaction 245
+[2026-05-22T09:20:35.860Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:35.861Z INFO  benchmark_client] Sending sample transaction 246
+[2026-05-22T09:20:35.865Z INFO  benchmark_client] Sending sample transaction 247
+[2026-05-22T09:20:35.981Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:35.981Z INFO  benchmark_client] Sending sample transaction 248
+[2026-05-22T09:20:35.986Z INFO  benchmark_client] Sending sample transaction 249
+[2026-05-22T09:20:36.049Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:36.052Z INFO  benchmark_client] Sending sample transaction 250
+[2026-05-22T09:20:36.055Z INFO  benchmark_client] Sending sample transaction 251
+[2026-05-22T09:20:36.275Z INFO  benchmark_client] Sending sample transaction 252
+[2026-05-22T09:20:36.281Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:36.281Z INFO  benchmark_client] Sending sample transaction 253
+[2026-05-22T09:20:36.285Z INFO  benchmark_client] Sending sample transaction 254
+[2026-05-22T09:20:36.335Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:36.338Z INFO  benchmark_client] Sending sample transaction 255
+[2026-05-22T09:20:36.343Z INFO  benchmark_client] Sending sample transaction 256
+[2026-05-22T09:20:36.852Z INFO  benchmark_client] Sending sample transaction 257
+[2026-05-22T09:20:36.857Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:36.858Z INFO  benchmark_client] Sending sample transaction 258
+[2026-05-22T09:20:36.862Z INFO  benchmark_client] Sending sample transaction 259
+[2026-05-22T09:20:36.993Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:36.994Z INFO  benchmark_client] Sending sample transaction 260
+[2026-05-22T09:20:36.996Z INFO  benchmark_client] Sending sample transaction 261
+[2026-05-22T09:20:37.189Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:37.191Z INFO  benchmark_client] Sending sample transaction 262
+[2026-05-22T09:20:37.196Z INFO  benchmark_client] Sending sample transaction 263
+[2026-05-22T09:20:37.249Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:37.250Z INFO  benchmark_client] Sending sample transaction 264
+[2026-05-22T09:20:37.257Z INFO  benchmark_client] Sending sample transaction 265
+[2026-05-22T09:20:37.351Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:37.352Z INFO  benchmark_client] Sending sample transaction 266
+[2026-05-22T09:20:37.356Z INFO  benchmark_client] Sending sample transaction 267
+[2026-05-22T09:20:37.360Z INFO  benchmark_client] Sending sample transaction 268
+[2026-05-22T09:20:37.400Z INFO  benchmark_client] Sending sample transaction 269
+[2026-05-22T09:20:37.407Z INFO  benchmark_client] Sending sample transaction 270
+[2026-05-22T09:20:37.793Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:37.793Z INFO  benchmark_client] Sending sample transaction 271
+[2026-05-22T09:20:37.802Z INFO  benchmark_client] Sending sample transaction 272
+[2026-05-22T09:20:37.810Z INFO  benchmark_client] Sending sample transaction 273
+[2026-05-22T09:20:37.955Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:37.955Z INFO  benchmark_client] Sending sample transaction 274
+[2026-05-22T09:20:37.960Z INFO  benchmark_client] Sending sample transaction 275
+[2026-05-22T09:20:37.967Z INFO  benchmark_client] Sending sample transaction 276
+[2026-05-22T09:20:38.025Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.026Z INFO  benchmark_client] Sending sample transaction 277
+[2026-05-22T09:20:38.030Z INFO  benchmark_client] Sending sample transaction 278
+[2026-05-22T09:20:38.077Z INFO  benchmark_client] Sending sample transaction 279
+[2026-05-22T09:20:38.083Z INFO  benchmark_client] Sending sample transaction 280
+[2026-05-22T09:20:38.161Z INFO  benchmark_client] Sending sample transaction 281
+[2026-05-22T09:20:38.165Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.168Z INFO  benchmark_client] Sending sample transaction 282
+[2026-05-22T09:20:38.172Z INFO  benchmark_client] Sending sample transaction 283
+[2026-05-22T09:20:38.230Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.232Z INFO  benchmark_client] Sending sample transaction 284
+[2026-05-22T09:20:38.236Z INFO  benchmark_client] Sending sample transaction 285
+[2026-05-22T09:20:38.248Z INFO  benchmark_client] Sending sample transaction 286
+[2026-05-22T09:20:38.596Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.597Z INFO  benchmark_client] Sending sample transaction 287
+[2026-05-22T09:20:38.600Z INFO  benchmark_client] Sending sample transaction 288
+[2026-05-22T09:20:38.640Z INFO  benchmark_client] Sending sample transaction 289
+[2026-05-22T09:20:38.648Z INFO  benchmark_client] Sending sample transaction 290
+[2026-05-22T09:20:38.658Z INFO  benchmark_client] Sending sample transaction 291
+[2026-05-22T09:20:38.663Z INFO  benchmark_client] Sending sample transaction 292
+[2026-05-22T09:20:38.777Z INFO  benchmark_client] Sending sample transaction 293
+[2026-05-22T09:20:38.782Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.783Z INFO  benchmark_client] Sending sample transaction 294
+[2026-05-22T09:20:38.788Z INFO  benchmark_client] Sending sample transaction 295
+[2026-05-22T09:20:38.959Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:38.962Z INFO  benchmark_client] Sending sample transaction 296
+[2026-05-22T09:20:38.966Z INFO  benchmark_client] Sending sample transaction 297
+[2026-05-22T09:20:39.163Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:39.164Z INFO  benchmark_client] Sending sample transaction 298
+[2026-05-22T09:20:39.168Z INFO  benchmark_client] Sending sample transaction 299
+[2026-05-22T09:20:39.368Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:39.369Z INFO  benchmark_client] Sending sample transaction 300
+[2026-05-22T09:20:39.376Z INFO  benchmark_client] Sending sample transaction 301
+[2026-05-22T09:20:39.386Z INFO  benchmark_client] Sending sample transaction 302
+[2026-05-22T09:20:39.392Z INFO  benchmark_client] Sending sample transaction 303
+[2026-05-22T09:20:39.625Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:39.626Z INFO  benchmark_client] Sending sample transaction 304
+[2026-05-22T09:20:39.631Z INFO  benchmark_client] Sending sample transaction 305
+[2026-05-22T09:20:39.694Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:39.694Z INFO  benchmark_client] Sending sample transaction 306
+[2026-05-22T09:20:39.702Z INFO  benchmark_client] Sending sample transaction 307
+[2026-05-22T09:20:39.932Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:39.933Z INFO  benchmark_client] Sending sample transaction 308
+[2026-05-22T09:20:39.937Z INFO  benchmark_client] Sending sample transaction 309
+[2026-05-22T09:20:39.945Z INFO  benchmark_client] Sending sample transaction 310
+[2026-05-22T09:20:40.060Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.061Z INFO  benchmark_client] Sending sample transaction 311
+[2026-05-22T09:20:40.066Z INFO  benchmark_client] Sending sample transaction 312
+[2026-05-22T09:20:40.073Z INFO  benchmark_client] Sending sample transaction 313
+[2026-05-22T09:20:40.136Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.139Z INFO  benchmark_client] Sending sample transaction 314
+[2026-05-22T09:20:40.146Z INFO  benchmark_client] Sending sample transaction 315
+[2026-05-22T09:20:40.259Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.260Z INFO  benchmark_client] Sending sample transaction 316
+[2026-05-22T09:20:40.268Z INFO  benchmark_client] Sending sample transaction 317
+[2026-05-22T09:20:40.283Z INFO  benchmark_client] Sending sample transaction 318
+[2026-05-22T09:20:40.603Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.607Z INFO  benchmark_client] Sending sample transaction 319
+[2026-05-22T09:20:40.611Z INFO  benchmark_client] Sending sample transaction 320
+[2026-05-22T09:20:40.728Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.732Z INFO  benchmark_client] Sending sample transaction 321
+[2026-05-22T09:20:40.735Z INFO  benchmark_client] Sending sample transaction 322
+[2026-05-22T09:20:40.854Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:40.855Z INFO  benchmark_client] Sending sample transaction 323
+[2026-05-22T09:20:40.864Z INFO  benchmark_client] Sending sample transaction 324
+[2026-05-22T09:20:41.141Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.142Z INFO  benchmark_client] Sending sample transaction 325
+[2026-05-22T09:20:41.147Z INFO  benchmark_client] Sending sample transaction 326
+[2026-05-22T09:20:41.213Z INFO  benchmark_client] Sending sample transaction 327
+[2026-05-22T09:20:41.215Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.218Z INFO  benchmark_client] Sending sample transaction 328
+[2026-05-22T09:20:41.223Z INFO  benchmark_client] Sending sample transaction 329
+[2026-05-22T09:20:41.350Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.351Z INFO  benchmark_client] Sending sample transaction 330
+[2026-05-22T09:20:41.355Z INFO  benchmark_client] Sending sample transaction 331
+[2026-05-22T09:20:41.448Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.449Z INFO  benchmark_client] Sending sample transaction 332
+[2026-05-22T09:20:41.455Z INFO  benchmark_client] Sending sample transaction 333
+[2026-05-22T09:20:41.685Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.685Z INFO  benchmark_client] Sending sample transaction 334
+[2026-05-22T09:20:41.695Z INFO  benchmark_client] Sending sample transaction 335
+[2026-05-22T09:20:41.700Z INFO  benchmark_client] Sending sample transaction 336
+[2026-05-22T09:20:41.908Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:41.909Z INFO  benchmark_client] Sending sample transaction 337
+[2026-05-22T09:20:41.917Z INFO  benchmark_client] Sending sample transaction 338
+[2026-05-22T09:20:41.922Z INFO  benchmark_client] Sending sample transaction 339
+[2026-05-22T09:20:41.959Z INFO  benchmark_client] Sending sample transaction 340
+[2026-05-22T09:20:41.968Z INFO  benchmark_client] Sending sample transaction 341
+[2026-05-22T09:20:41.975Z INFO  benchmark_client] Sending sample transaction 342
+[2026-05-22T09:20:41.982Z INFO  benchmark_client] Sending sample transaction 343
+[2026-05-22T09:20:42.085Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:42.086Z INFO  benchmark_client] Sending sample transaction 344
+[2026-05-22T09:20:42.090Z INFO  benchmark_client] Sending sample transaction 345
+[2026-05-22T09:20:42.216Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:42.218Z INFO  benchmark_client] Sending sample transaction 346
+[2026-05-22T09:20:42.227Z INFO  benchmark_client] Sending sample transaction 347
+[2026-05-22T09:20:42.530Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:42.532Z INFO  benchmark_client] Sending sample transaction 348
+[2026-05-22T09:20:42.540Z INFO  benchmark_client] Sending sample transaction 349
+[2026-05-22T09:20:42.551Z INFO  benchmark_client] Sending sample transaction 350
+[2026-05-22T09:20:42.558Z INFO  benchmark_client] Sending sample transaction 351
+[2026-05-22T09:20:42.704Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:42.709Z INFO  benchmark_client] Sending sample transaction 352
+[2026-05-22T09:20:42.719Z INFO  benchmark_client] Sending sample transaction 353
+[2026-05-22T09:20:42.821Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:42.822Z INFO  benchmark_client] Sending sample transaction 354
+[2026-05-22T09:20:42.828Z INFO  benchmark_client] Sending sample transaction 355
+[2026-05-22T09:20:43.183Z INFO  benchmark_client] Sending sample transaction 356
+[2026-05-22T09:20:43.187Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:43.188Z INFO  benchmark_client] Sending sample transaction 357
+[2026-05-22T09:20:43.195Z INFO  benchmark_client] Sending sample transaction 358
+[2026-05-22T09:20:43.558Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:43.559Z INFO  benchmark_client] Sending sample transaction 359
+[2026-05-22T09:20:43.568Z INFO  benchmark_client] Sending sample transaction 360
+[2026-05-22T09:20:43.571Z INFO  benchmark_client] Sending sample transaction 361
+[2026-05-22T09:20:43.601Z INFO  benchmark_client] Sending sample transaction 362
+[2026-05-22T09:20:43.608Z INFO  benchmark_client] Sending sample transaction 363
+[2026-05-22T09:20:43.799Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:43.800Z INFO  benchmark_client] Sending sample transaction 364
+[2026-05-22T09:20:43.802Z INFO  benchmark_client] Sending sample transaction 365
+[2026-05-22T09:20:43.847Z INFO  benchmark_client] Sending sample transaction 366
+[2026-05-22T09:20:43.850Z INFO  benchmark_client] Sending sample transaction 367
+[2026-05-22T09:20:43.854Z INFO  benchmark_client] Sending sample transaction 368
+[2026-05-22T09:20:43.933Z INFO  benchmark_client] Sending sample transaction 369
+[2026-05-22T09:20:43.937Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:43.937Z INFO  benchmark_client] Sending sample transaction 370
+[2026-05-22T09:20:44.167Z INFO  benchmark_client] Sending sample transaction 371
+[2026-05-22T09:20:44.172Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:44.173Z INFO  benchmark_client] Sending sample transaction 372
+[2026-05-22T09:20:44.180Z INFO  benchmark_client] Sending sample transaction 373
+[2026-05-22T09:20:44.398Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:44.399Z INFO  benchmark_client] Sending sample transaction 374
+[2026-05-22T09:20:44.403Z INFO  benchmark_client] Sending sample transaction 375
+[2026-05-22T09:20:44.408Z INFO  benchmark_client] Sending sample transaction 376
+[2026-05-22T09:20:44.454Z INFO  benchmark_client] Sending sample transaction 377
+[2026-05-22T09:20:44.459Z INFO  benchmark_client] Sending sample transaction 378
+[2026-05-22T09:20:44.536Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:44.537Z INFO  benchmark_client] Sending sample transaction 379
+[2026-05-22T09:20:44.542Z INFO  benchmark_client] Sending sample transaction 380
+[2026-05-22T09:20:44.547Z INFO  benchmark_client] Sending sample transaction 381
+[2026-05-22T09:20:44.723Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:44.726Z INFO  benchmark_client] Sending sample transaction 382
+[2026-05-22T09:20:44.734Z INFO  benchmark_client] Sending sample transaction 383
+[2026-05-22T09:20:44.801Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:44.801Z INFO  benchmark_client] Sending sample transaction 384
+[2026-05-22T09:20:44.807Z INFO  benchmark_client] Sending sample transaction 385
+[2026-05-22T09:20:45.008Z INFO  benchmark_client] Sending sample transaction 386
+[2026-05-22T09:20:45.011Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:45.012Z INFO  benchmark_client] Sending sample transaction 387
+[2026-05-22T09:20:45.608Z INFO  benchmark_client] Sending sample transaction 388
+[2026-05-22T09:20:45.614Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:45.615Z INFO  benchmark_client] Sending sample transaction 389
+[2026-05-22T09:20:45.621Z INFO  benchmark_client] Sending sample transaction 390
+[2026-05-22T09:20:45.702Z INFO  benchmark_client] Sending sample transaction 391
+[2026-05-22T09:20:45.705Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:45.706Z INFO  benchmark_client] Sending sample transaction 392
+[2026-05-22T09:20:45.711Z INFO  benchmark_client] Sending sample transaction 393
+[2026-05-22T09:20:46.214Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:46.217Z INFO  benchmark_client] Sending sample transaction 394
+[2026-05-22T09:20:46.222Z INFO  benchmark_client] Sending sample transaction 395
+[2026-05-22T09:20:46.321Z INFO  benchmark_client] Sending sample transaction 396
+[2026-05-22T09:20:46.323Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:46.324Z INFO  benchmark_client] Sending sample transaction 397
+[2026-05-22T09:20:46.327Z INFO  benchmark_client] Sending sample transaction 398
+[2026-05-22T09:20:46.358Z INFO  benchmark_client] Sending sample transaction 399
+[2026-05-22T09:20:46.363Z INFO  benchmark_client] Sending sample transaction 400
+[2026-05-22T09:20:46.370Z INFO  benchmark_client] Sending sample transaction 401
+[2026-05-22T09:20:46.373Z INFO  benchmark_client] Sending sample transaction 402
+[2026-05-22T09:20:46.399Z INFO  benchmark_client] Sending sample transaction 403
+[2026-05-22T09:20:46.404Z INFO  benchmark_client] Sending sample transaction 404
+[2026-05-22T09:20:46.407Z INFO  benchmark_client] Sending sample transaction 405
+[2026-05-22T09:20:46.462Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:46.462Z INFO  benchmark_client] Sending sample transaction 406
+[2026-05-22T09:20:46.466Z INFO  benchmark_client] Sending sample transaction 407
+[2026-05-22T09:20:46.635Z INFO  benchmark_client] Sending sample transaction 408
+[2026-05-22T09:20:46.637Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:46.639Z INFO  benchmark_client] Sending sample transaction 409
+[2026-05-22T09:20:46.644Z INFO  benchmark_client] Sending sample transaction 410
+[2026-05-22T09:20:46.650Z INFO  benchmark_client] Sending sample transaction 411
+[2026-05-22T09:20:46.953Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:46.956Z INFO  benchmark_client] Sending sample transaction 412
+[2026-05-22T09:20:46.961Z INFO  benchmark_client] Sending sample transaction 413
+[2026-05-22T09:20:47.034Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:47.037Z INFO  benchmark_client] Sending sample transaction 414
+[2026-05-22T09:20:47.041Z INFO  benchmark_client] Sending sample transaction 415
+[2026-05-22T09:20:47.302Z INFO  benchmark_client] Sending sample transaction 416
+[2026-05-22T09:20:47.307Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:47.308Z INFO  benchmark_client] Sending sample transaction 417
+[2026-05-22T09:20:47.315Z INFO  benchmark_client] Sending sample transaction 418
+[2026-05-22T09:20:47.422Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:47.422Z INFO  benchmark_client] Sending sample transaction 419
+[2026-05-22T09:20:47.429Z INFO  benchmark_client] Sending sample transaction 420
+[2026-05-22T09:20:47.495Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:47.495Z INFO  benchmark_client] Sending sample transaction 421
+[2026-05-22T09:20:47.502Z INFO  benchmark_client] Sending sample transaction 422
+[2026-05-22T09:20:47.509Z INFO  benchmark_client] Sending sample transaction 423
+[2026-05-22T09:20:47.554Z INFO  benchmark_client] Sending sample transaction 424
+[2026-05-22T09:20:47.562Z INFO  benchmark_client] Sending sample transaction 425
+[2026-05-22T09:20:47.568Z INFO  benchmark_client] Sending sample transaction 426
+[2026-05-22T09:20:47.601Z INFO  benchmark_client] Sending sample transaction 427
+[2026-05-22T09:20:47.606Z INFO  benchmark_client] Sending sample transaction 428
+[2026-05-22T09:20:48.114Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.115Z INFO  benchmark_client] Sending sample transaction 429
+[2026-05-22T09:20:48.128Z INFO  benchmark_client] Sending sample transaction 430
+[2026-05-22T09:20:48.161Z INFO  benchmark_client] Sending sample transaction 431
+[2026-05-22T09:20:48.171Z INFO  benchmark_client] Sending sample transaction 432
+[2026-05-22T09:20:48.225Z INFO  benchmark_client] Sending sample transaction 433
+[2026-05-22T09:20:48.229Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.230Z INFO  benchmark_client] Sending sample transaction 434
+[2026-05-22T09:20:48.362Z INFO  benchmark_client] Sending sample transaction 435
+[2026-05-22T09:20:48.365Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.365Z INFO  benchmark_client] Sending sample transaction 436
+[2026-05-22T09:20:48.370Z INFO  benchmark_client] Sending sample transaction 437
+[2026-05-22T09:20:48.559Z INFO  benchmark_client] Sending sample transaction 438
+[2026-05-22T09:20:48.562Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.564Z INFO  benchmark_client] Sending sample transaction 439
+[2026-05-22T09:20:48.639Z INFO  benchmark_client] Sending sample transaction 440
+[2026-05-22T09:20:48.641Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.642Z INFO  benchmark_client] Sending sample transaction 441
+[2026-05-22T09:20:48.644Z INFO  benchmark_client] Sending sample transaction 442
+[2026-05-22T09:20:48.758Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.758Z INFO  benchmark_client] Sending sample transaction 443
+[2026-05-22T09:20:48.768Z INFO  benchmark_client] Sending sample transaction 444
+[2026-05-22T09:20:48.799Z INFO  benchmark_client] Sending sample transaction 445
+[2026-05-22T09:20:48.808Z INFO  benchmark_client] Sending sample transaction 446
+[2026-05-22T09:20:48.814Z INFO  benchmark_client] Sending sample transaction 447
+[2026-05-22T09:20:48.818Z INFO  benchmark_client] Sending sample transaction 448
+[2026-05-22T09:20:48.912Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.915Z INFO  benchmark_client] Sending sample transaction 449
+[2026-05-22T09:20:48.920Z INFO  benchmark_client] Sending sample transaction 450
+[2026-05-22T09:20:48.972Z INFO  benchmark_client] Sending sample transaction 451
+[2026-05-22T09:20:48.975Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:48.976Z INFO  benchmark_client] Sending sample transaction 452
+[2026-05-22T09:20:48.980Z INFO  benchmark_client] Sending sample transaction 453
+[2026-05-22T09:20:49.033Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:49.033Z INFO  benchmark_client] Sending sample transaction 454
+[2026-05-22T09:20:49.045Z INFO  benchmark_client] Sending sample transaction 455
+[2026-05-22T09:20:49.051Z INFO  benchmark_client] Sending sample transaction 456
+[2026-05-22T09:20:49.607Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:49.610Z INFO  benchmark_client] Sending sample transaction 457
+[2026-05-22T09:20:49.615Z INFO  benchmark_client] Sending sample transaction 458
+[2026-05-22T09:20:49.864Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:49.867Z INFO  benchmark_client] Sending sample transaction 459
+[2026-05-22T09:20:49.872Z INFO  benchmark_client] Sending sample transaction 460
+[2026-05-22T09:20:49.930Z INFO  benchmark_client] Sending sample transaction 461
+[2026-05-22T09:20:49.933Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:49.934Z INFO  benchmark_client] Sending sample transaction 462
+[2026-05-22T09:20:49.940Z INFO  benchmark_client] Sending sample transaction 463
+[2026-05-22T09:20:50.003Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:50.004Z INFO  benchmark_client] Sending sample transaction 464
+[2026-05-22T09:20:50.009Z INFO  benchmark_client] Sending sample transaction 465
+[2026-05-22T09:20:50.046Z INFO  benchmark_client] Sending sample transaction 466
+[2026-05-22T09:20:50.052Z INFO  benchmark_client] Sending sample transaction 467
+[2026-05-22T09:20:50.159Z INFO  benchmark_client] Sending sample transaction 468
+[2026-05-22T09:20:50.161Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:50.166Z INFO  benchmark_client] Sending sample transaction 469
+[2026-05-22T09:20:50.171Z INFO  benchmark_client] Sending sample transaction 470
+[2026-05-22T09:20:50.210Z INFO  benchmark_client] Sending sample transaction 471
+[2026-05-22T09:20:50.216Z INFO  benchmark_client] Sending sample transaction 472
+[2026-05-22T09:20:50.223Z INFO  benchmark_client] Sending sample transaction 473
+[2026-05-22T09:20:50.597Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:50.597Z INFO  benchmark_client] Sending sample transaction 474
+[2026-05-22T09:20:50.601Z INFO  benchmark_client] Sending sample transaction 475
+[2026-05-22T09:20:50.737Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:50.738Z INFO  benchmark_client] Sending sample transaction 476
+[2026-05-22T09:20:50.742Z INFO  benchmark_client] Sending sample transaction 477
+[2026-05-22T09:20:50.791Z INFO  benchmark_client] Sending sample transaction 478
+[2026-05-22T09:20:50.796Z INFO  benchmark_client] Sending sample transaction 479
+[2026-05-22T09:20:50.800Z INFO  benchmark_client] Sending sample transaction 480
+[2026-05-22T09:20:50.905Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:50.906Z INFO  benchmark_client] Sending sample transaction 481
+[2026-05-22T09:20:50.911Z INFO  benchmark_client] Sending sample transaction 482
+[2026-05-22T09:20:50.942Z INFO  benchmark_client] Sending sample transaction 483
+[2026-05-22T09:20:50.945Z INFO  benchmark_client] Sending sample transaction 484
+[2026-05-22T09:20:50.949Z INFO  benchmark_client] Sending sample transaction 485
+[2026-05-22T09:20:51.013Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.016Z INFO  benchmark_client] Sending sample transaction 486
+[2026-05-22T09:20:51.018Z INFO  benchmark_client] Sending sample transaction 487
+[2026-05-22T09:20:51.124Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.125Z INFO  benchmark_client] Sending sample transaction 488
+[2026-05-22T09:20:51.131Z INFO  benchmark_client] Sending sample transaction 489
+[2026-05-22T09:20:51.383Z INFO  benchmark_client] Sending sample transaction 490
+[2026-05-22T09:20:51.389Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.392Z INFO  benchmark_client] Sending sample transaction 491
+[2026-05-22T09:20:51.401Z INFO  benchmark_client] Sending sample transaction 492
+[2026-05-22T09:20:51.408Z INFO  benchmark_client] Sending sample transaction 493
+[2026-05-22T09:20:51.419Z INFO  benchmark_client] Sending sample transaction 494
+[2026-05-22T09:20:51.453Z INFO  benchmark_client] Sending sample transaction 495
+[2026-05-22T09:20:51.458Z INFO  benchmark_client] Sending sample transaction 496
+[2026-05-22T09:20:51.524Z INFO  benchmark_client] Sending sample transaction 497
+[2026-05-22T09:20:51.526Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.527Z INFO  benchmark_client] Sending sample transaction 498
+[2026-05-22T09:20:51.532Z INFO  benchmark_client] Sending sample transaction 499
+[2026-05-22T09:20:51.595Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.598Z INFO  benchmark_client] Sending sample transaction 500
+[2026-05-22T09:20:51.601Z INFO  benchmark_client] Sending sample transaction 501
+[2026-05-22T09:20:51.662Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.665Z INFO  benchmark_client] Sending sample transaction 502
+[2026-05-22T09:20:51.670Z INFO  benchmark_client] Sending sample transaction 503
+[2026-05-22T09:20:51.812Z INFO  benchmark_client] Sending sample transaction 504
+[2026-05-22T09:20:51.815Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.816Z INFO  benchmark_client] Sending sample transaction 505
+[2026-05-22T09:20:51.820Z INFO  benchmark_client] Sending sample transaction 506
+[2026-05-22T09:20:51.877Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:51.881Z INFO  benchmark_client] Sending sample transaction 507
+[2026-05-22T09:20:51.885Z INFO  benchmark_client] Sending sample transaction 508
+[2026-05-22T09:20:51.929Z INFO  benchmark_client] Sending sample transaction 509
+[2026-05-22T09:20:51.936Z INFO  benchmark_client] Sending sample transaction 510
+[2026-05-22T09:20:52.563Z INFO  benchmark_client] Sending sample transaction 511
+[2026-05-22T09:20:52.568Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:52.569Z INFO  benchmark_client] Sending sample transaction 512
+[2026-05-22T09:20:52.576Z INFO  benchmark_client] Sending sample transaction 513
+[2026-05-22T09:20:52.582Z INFO  benchmark_client] Sending sample transaction 514
+[2026-05-22T09:20:52.631Z INFO  benchmark_client] Sending sample transaction 515
+[2026-05-22T09:20:52.638Z INFO  benchmark_client] Sending sample transaction 516
+[2026-05-22T09:20:52.688Z INFO  benchmark_client] Sending sample transaction 517
+[2026-05-22T09:20:52.695Z INFO  benchmark_client] Sending sample transaction 518
+[2026-05-22T09:20:52.820Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:52.821Z INFO  benchmark_client] Sending sample transaction 519
+[2026-05-22T09:20:52.827Z INFO  benchmark_client] Sending sample transaction 520
+[2026-05-22T09:20:53.210Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:53.211Z INFO  benchmark_client] Sending sample transaction 521
+[2026-05-22T09:20:53.216Z INFO  benchmark_client] Sending sample transaction 522
+[2026-05-22T09:20:53.220Z INFO  benchmark_client] Sending sample transaction 523
+[2026-05-22T09:20:53.370Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:53.373Z INFO  benchmark_client] Sending sample transaction 524
+[2026-05-22T09:20:53.379Z INFO  benchmark_client] Sending sample transaction 525
+[2026-05-22T09:20:53.720Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:53.721Z INFO  benchmark_client] Sending sample transaction 526
+[2026-05-22T09:20:53.727Z INFO  benchmark_client] Sending sample transaction 527
+[2026-05-22T09:20:53.770Z INFO  benchmark_client] Sending sample transaction 528
+[2026-05-22T09:20:53.777Z INFO  benchmark_client] Sending sample transaction 529
+[2026-05-22T09:20:53.841Z INFO  benchmark_client] Sending sample transaction 530
+[2026-05-22T09:20:53.844Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:53.846Z INFO  benchmark_client] Sending sample transaction 531
+[2026-05-22T09:20:53.893Z INFO  benchmark_client] Sending sample transaction 532
+[2026-05-22T09:20:53.898Z INFO  benchmark_client] Sending sample transaction 533
+[2026-05-22T09:20:53.907Z INFO  benchmark_client] Sending sample transaction 534
+[2026-05-22T09:20:53.953Z INFO  benchmark_client] Sending sample transaction 535
+[2026-05-22T09:20:53.957Z INFO  benchmark_client] Sending sample transaction 536
+[2026-05-22T09:20:53.989Z INFO  benchmark_client] Sending sample transaction 537
+[2026-05-22T09:20:53.992Z INFO  benchmark_client] Sending sample transaction 538
+[2026-05-22T09:20:53.998Z INFO  benchmark_client] Sending sample transaction 539
+[2026-05-22T09:20:54.142Z INFO  benchmark_client] Sending sample transaction 540
+[2026-05-22T09:20:54.144Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:54.146Z INFO  benchmark_client] Sending sample transaction 541
+[2026-05-22T09:20:54.151Z INFO  benchmark_client] Sending sample transaction 542
+[2026-05-22T09:20:54.393Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:54.394Z INFO  benchmark_client] Sending sample transaction 543
+[2026-05-22T09:20:54.397Z INFO  benchmark_client] Sending sample transaction 544
+[2026-05-22T09:20:54.704Z INFO  benchmark_client] Sending sample transaction 545
+[2026-05-22T09:20:54.709Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:54.710Z INFO  benchmark_client] Sending sample transaction 546
+[2026-05-22T09:20:55.187Z INFO  benchmark_client] Sending sample transaction 547
+[2026-05-22T09:20:55.189Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.194Z INFO  benchmark_client] Sending sample transaction 548
+[2026-05-22T09:20:55.198Z INFO  benchmark_client] Sending sample transaction 549
+[2026-05-22T09:20:55.264Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.265Z INFO  benchmark_client] Sending sample transaction 550
+[2026-05-22T09:20:55.275Z INFO  benchmark_client] Sending sample transaction 551
+[2026-05-22T09:20:55.421Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.422Z INFO  benchmark_client] Sending sample transaction 552
+[2026-05-22T09:20:55.429Z INFO  benchmark_client] Sending sample transaction 553
+[2026-05-22T09:20:55.434Z INFO  benchmark_client] Sending sample transaction 554
+[2026-05-22T09:20:55.600Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.602Z INFO  benchmark_client] Sending sample transaction 555
+[2026-05-22T09:20:55.607Z INFO  benchmark_client] Sending sample transaction 556
+[2026-05-22T09:20:55.614Z INFO  benchmark_client] Sending sample transaction 557
+[2026-05-22T09:20:55.718Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.719Z INFO  benchmark_client] Sending sample transaction 558
+[2026-05-22T09:20:55.724Z INFO  benchmark_client] Sending sample transaction 559
+[2026-05-22T09:20:55.797Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:55.801Z INFO  benchmark_client] Sending sample transaction 560
+[2026-05-22T09:20:55.810Z INFO  benchmark_client] Sending sample transaction 561
+[2026-05-22T09:20:56.229Z INFO  benchmark_client] Sending sample transaction 562
+[2026-05-22T09:20:56.231Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.236Z INFO  benchmark_client] Sending sample transaction 563
+[2026-05-22T09:20:56.243Z INFO  benchmark_client] Sending sample transaction 564
+[2026-05-22T09:20:56.294Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.295Z INFO  benchmark_client] Sending sample transaction 565
+[2026-05-22T09:20:56.302Z INFO  benchmark_client] Sending sample transaction 566
+[2026-05-22T09:20:56.460Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.461Z INFO  benchmark_client] Sending sample transaction 567
+[2026-05-22T09:20:56.468Z INFO  benchmark_client] Sending sample transaction 568
+[2026-05-22T09:20:56.594Z INFO  benchmark_client] Sending sample transaction 569
+[2026-05-22T09:20:56.600Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.602Z INFO  benchmark_client] Sending sample transaction 570
+[2026-05-22T09:20:56.861Z INFO  benchmark_client] Sending sample transaction 571
+[2026-05-22T09:20:56.863Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.865Z INFO  benchmark_client] Sending sample transaction 572
+[2026-05-22T09:20:56.869Z INFO  benchmark_client] Sending sample transaction 573
+[2026-05-22T09:20:56.977Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:56.980Z INFO  benchmark_client] Sending sample transaction 574
+[2026-05-22T09:20:56.985Z INFO  benchmark_client] Sending sample transaction 575
+[2026-05-22T09:20:57.042Z INFO  benchmark_client] Sending sample transaction 576
+[2026-05-22T09:20:57.043Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:57.046Z INFO  benchmark_client] Sending sample transaction 577
+[2026-05-22T09:20:57.051Z INFO  benchmark_client] Sending sample transaction 578
+[2026-05-22T09:20:57.582Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:57.583Z INFO  benchmark_client] Sending sample transaction 579
+[2026-05-22T09:20:57.592Z INFO  benchmark_client] Sending sample transaction 580
+[2026-05-22T09:20:57.661Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:57.664Z INFO  benchmark_client] Sending sample transaction 581
+[2026-05-22T09:20:57.669Z INFO  benchmark_client] Sending sample transaction 582
+[2026-05-22T09:20:57.774Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:57.775Z INFO  benchmark_client] Sending sample transaction 583
+[2026-05-22T09:20:57.779Z INFO  benchmark_client] Sending sample transaction 584
+[2026-05-22T09:20:57.813Z INFO  benchmark_client] Sending sample transaction 585
+[2026-05-22T09:20:57.816Z INFO  benchmark_client] Sending sample transaction 586
+[2026-05-22T09:20:57.819Z INFO  benchmark_client] Sending sample transaction 587
+[2026-05-22T09:20:57.844Z INFO  benchmark_client] Sending sample transaction 588
+[2026-05-22T09:20:57.855Z INFO  benchmark_client] Sending sample transaction 589
+[2026-05-22T09:20:57.862Z INFO  benchmark_client] Sending sample transaction 590
+[2026-05-22T09:20:57.935Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:57.940Z INFO  benchmark_client] Sending sample transaction 591
+[2026-05-22T09:20:57.949Z INFO  benchmark_client] Sending sample transaction 592
+[2026-05-22T09:20:58.296Z INFO  benchmark_client] Sending sample transaction 593
+[2026-05-22T09:20:58.301Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:58.302Z INFO  benchmark_client] Sending sample transaction 594
+[2026-05-22T09:20:58.307Z INFO  benchmark_client] Sending sample transaction 595
+[2026-05-22T09:20:58.852Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:58.853Z INFO  benchmark_client] Sending sample transaction 596
+[2026-05-22T09:20:58.856Z INFO  benchmark_client] Sending sample transaction 597
+[2026-05-22T09:20:58.967Z INFO  benchmark_client] Sending sample transaction 598
+[2026-05-22T09:20:58.971Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:58.973Z INFO  benchmark_client] Sending sample transaction 599
+[2026-05-22T09:20:59.021Z INFO  benchmark_client] Sending sample transaction 600
+[2026-05-22T09:20:59.024Z INFO  benchmark_client] Sending sample transaction 601
+[2026-05-22T09:20:59.031Z INFO  benchmark_client] Sending sample transaction 602
+[2026-05-22T09:20:59.451Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:59.453Z INFO  benchmark_client] Sending sample transaction 603
+[2026-05-22T09:20:59.459Z INFO  benchmark_client] Sending sample transaction 604
+[2026-05-22T09:20:59.554Z INFO  benchmark_client] Sending sample transaction 605
+[2026-05-22T09:20:59.557Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:20:59.559Z INFO  benchmark_client] Sending sample transaction 606
+[2026-05-22T09:20:59.565Z INFO  benchmark_client] Sending sample transaction 607
+[2026-05-22T09:21:00.095Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:00.097Z INFO  benchmark_client] Sending sample transaction 608
+[2026-05-22T09:21:00.105Z INFO  benchmark_client] Sending sample transaction 609
+[2026-05-22T09:21:00.168Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:00.169Z INFO  benchmark_client] Sending sample transaction 610
+[2026-05-22T09:21:00.172Z INFO  benchmark_client] Sending sample transaction 611
+[2026-05-22T09:21:00.248Z INFO  benchmark_client] Sending sample transaction 612
+[2026-05-22T09:21:00.249Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:00.251Z INFO  benchmark_client] Sending sample transaction 613
+[2026-05-22T09:21:00.256Z INFO  benchmark_client] Sending sample transaction 614
+[2026-05-22T09:21:00.279Z INFO  benchmark_client] Sending sample transaction 615
+[2026-05-22T09:21:00.282Z INFO  benchmark_client] Sending sample transaction 616
+[2026-05-22T09:21:00.312Z INFO  benchmark_client] Sending sample transaction 617
+[2026-05-22T09:21:00.314Z INFO  benchmark_client] Sending sample transaction 618
+[2026-05-22T09:21:00.344Z INFO  benchmark_client] Sending sample transaction 619
+[2026-05-22T09:21:00.349Z INFO  benchmark_client] Sending sample transaction 620
+[2026-05-22T09:21:00.353Z INFO  benchmark_client] Sending sample transaction 621
+[2026-05-22T09:21:00.386Z INFO  benchmark_client] Sending sample transaction 622
+[2026-05-22T09:21:00.393Z INFO  benchmark_client] Sending sample transaction 623
+[2026-05-22T09:21:00.399Z INFO  benchmark_client] Sending sample transaction 624
+[2026-05-22T09:21:00.709Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:00.710Z INFO  benchmark_client] Sending sample transaction 625
+[2026-05-22T09:21:00.717Z INFO  benchmark_client] Sending sample transaction 626
+[2026-05-22T09:21:00.758Z INFO  benchmark_client] Sending sample transaction 627
+[2026-05-22T09:21:00.762Z INFO  benchmark_client] Sending sample transaction 628
+[2026-05-22T09:21:00.767Z INFO  benchmark_client] Sending sample transaction 629
+[2026-05-22T09:21:00.852Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:00.856Z INFO  benchmark_client] Sending sample transaction 630
+[2026-05-22T09:21:00.861Z INFO  benchmark_client] Sending sample transaction 631
+[2026-05-22T09:21:01.372Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:01.373Z INFO  benchmark_client] Sending sample transaction 632
+[2026-05-22T09:21:01.378Z INFO  benchmark_client] Sending sample transaction 633
+[2026-05-22T09:21:01.497Z INFO  benchmark_client] Sending sample transaction 634
+[2026-05-22T09:21:01.500Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:01.502Z INFO  benchmark_client] Sending sample transaction 635
+[2026-05-22T09:21:01.627Z INFO  benchmark_client] Sending sample transaction 636
+[2026-05-22T09:21:01.629Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:01.631Z INFO  benchmark_client] Sending sample transaction 637
+[2026-05-22T09:21:01.640Z INFO  benchmark_client] Sending sample transaction 638
+[2026-05-22T09:21:01.680Z INFO  benchmark_client] Sending sample transaction 639
+[2026-05-22T09:21:01.688Z INFO  benchmark_client] Sending sample transaction 640
+[2026-05-22T09:21:01.692Z INFO  benchmark_client] Sending sample transaction 641
+[2026-05-22T09:21:01.728Z INFO  benchmark_client] Sending sample transaction 642
+[2026-05-22T09:21:01.732Z INFO  benchmark_client] Sending sample transaction 643
+[2026-05-22T09:21:01.739Z INFO  benchmark_client] Sending sample transaction 644
+[2026-05-22T09:21:01.771Z INFO  benchmark_client] Sending sample transaction 645
+[2026-05-22T09:21:01.778Z INFO  benchmark_client] Sending sample transaction 646
+[2026-05-22T09:21:01.806Z INFO  benchmark_client] Sending sample transaction 647
+[2026-05-22T09:21:01.811Z INFO  benchmark_client] Sending sample transaction 648
+[2026-05-22T09:21:01.946Z INFO  benchmark_client] Sending sample transaction 649
+[2026-05-22T09:21:01.947Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:01.951Z INFO  benchmark_client] Sending sample transaction 650
+[2026-05-22T09:21:01.956Z INFO  benchmark_client] Sending sample transaction 651
+[2026-05-22T09:21:01.963Z INFO  benchmark_client] Sending sample transaction 652
+[2026-05-22T09:21:02.009Z INFO  benchmark_client] Sending sample transaction 653
+[2026-05-22T09:21:02.016Z INFO  benchmark_client] Sending sample transaction 654
+[2026-05-22T09:21:02.021Z INFO  benchmark_client] Sending sample transaction 655
+[2026-05-22T09:21:02.060Z INFO  benchmark_client] Sending sample transaction 656
+[2026-05-22T09:21:02.066Z INFO  benchmark_client] Sending sample transaction 657
+[2026-05-22T09:21:02.157Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.159Z INFO  benchmark_client] Sending sample transaction 658
+[2026-05-22T09:21:02.165Z INFO  benchmark_client] Sending sample transaction 659
+[2026-05-22T09:21:02.170Z INFO  benchmark_client] Sending sample transaction 660
+[2026-05-22T09:21:02.235Z INFO  benchmark_client] Sending sample transaction 661
+[2026-05-22T09:21:02.236Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.239Z INFO  benchmark_client] Sending sample transaction 662
+[2026-05-22T09:21:02.247Z INFO  benchmark_client] Sending sample transaction 663
+[2026-05-22T09:21:02.301Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.303Z INFO  benchmark_client] Sending sample transaction 664
+[2026-05-22T09:21:02.308Z INFO  benchmark_client] Sending sample transaction 665
+[2026-05-22T09:21:02.313Z INFO  benchmark_client] Sending sample transaction 666
+[2026-05-22T09:21:02.365Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.367Z INFO  benchmark_client] Sending sample transaction 667
+[2026-05-22T09:21:02.370Z INFO  benchmark_client] Sending sample transaction 668
+[2026-05-22T09:21:02.387Z INFO  benchmark_client] Sending sample transaction 669
+[2026-05-22T09:21:02.396Z INFO  benchmark_client] Sending sample transaction 670
+[2026-05-22T09:21:02.429Z INFO  benchmark_client] Sending sample transaction 671
+[2026-05-22T09:21:02.432Z INFO  benchmark_client] Sending sample transaction 672
+[2026-05-22T09:21:02.457Z INFO  benchmark_client] Sending sample transaction 673
+[2026-05-22T09:21:02.461Z INFO  benchmark_client] Sending sample transaction 674
+[2026-05-22T09:21:02.464Z INFO  benchmark_client] Sending sample transaction 675
+[2026-05-22T09:21:02.508Z INFO  benchmark_client] Sending sample transaction 676
+[2026-05-22T09:21:02.511Z INFO  benchmark_client] Sending sample transaction 677
+[2026-05-22T09:21:02.518Z INFO  benchmark_client] Sending sample transaction 678
+[2026-05-22T09:21:02.563Z INFO  benchmark_client] Sending sample transaction 679
+[2026-05-22T09:21:02.571Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.572Z INFO  benchmark_client] Sending sample transaction 680
+[2026-05-22T09:21:02.580Z INFO  benchmark_client] Sending sample transaction 681
+[2026-05-22T09:21:02.589Z INFO  benchmark_client] Sending sample transaction 682
+[2026-05-22T09:21:02.600Z INFO  benchmark_client] Sending sample transaction 683
+[2026-05-22T09:21:02.610Z INFO  benchmark_client] Sending sample transaction 684
+[2026-05-22T09:21:02.625Z INFO  benchmark_client] Sending sample transaction 685
+[2026-05-22T09:21:02.636Z INFO  benchmark_client] Sending sample transaction 686
+[2026-05-22T09:21:02.671Z INFO  benchmark_client] Sending sample transaction 687
+[2026-05-22T09:21:02.676Z INFO  benchmark_client] Sending sample transaction 688
+[2026-05-22T09:21:02.686Z INFO  benchmark_client] Sending sample transaction 689
+[2026-05-22T09:21:02.794Z INFO  benchmark_client] Sending sample transaction 690
+[2026-05-22T09:21:02.799Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:02.801Z INFO  benchmark_client] Sending sample transaction 691
+[2026-05-22T09:21:02.809Z INFO  benchmark_client] Sending sample transaction 692
+[2026-05-22T09:21:03.376Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:03.381Z INFO  benchmark_client] Sending sample transaction 693
+[2026-05-22T09:21:03.388Z INFO  benchmark_client] Sending sample transaction 694
+[2026-05-22T09:21:03.423Z INFO  benchmark_client] Sending sample transaction 695
+[2026-05-22T09:21:03.431Z INFO  benchmark_client] Sending sample transaction 696
+[2026-05-22T09:21:03.435Z INFO  benchmark_client] Sending sample transaction 697
+[2026-05-22T09:21:04.599Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:04.602Z INFO  benchmark_client] Sending sample transaction 698
+[2026-05-22T09:21:04.609Z INFO  benchmark_client] Sending sample transaction 699
+[2026-05-22T09:21:04.976Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:04.978Z INFO  benchmark_client] Sending sample transaction 700
+[2026-05-22T09:21:04.980Z INFO  benchmark_client] Sending sample transaction 701
+[2026-05-22T09:21:05.683Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:05.687Z INFO  benchmark_client] Sending sample transaction 702
+[2026-05-22T09:21:05.691Z INFO  benchmark_client] Sending sample transaction 703
+[2026-05-22T09:21:05.743Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:05.747Z INFO  benchmark_client] Sending sample transaction 704
+[2026-05-22T09:21:05.751Z INFO  benchmark_client] Sending sample transaction 705
+[2026-05-22T09:21:05.790Z INFO  benchmark_client] Sending sample transaction 706
+[2026-05-22T09:21:05.797Z INFO  benchmark_client] Sending sample transaction 707
+[2026-05-22T09:21:05.871Z INFO  benchmark_client] Sending sample transaction 708
+[2026-05-22T09:21:05.872Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:05.875Z INFO  benchmark_client] Sending sample transaction 709
+[2026-05-22T09:21:05.884Z INFO  benchmark_client] Sending sample transaction 710
+[2026-05-22T09:21:05.895Z INFO  benchmark_client] Sending sample transaction 711
+[2026-05-22T09:21:05.900Z INFO  benchmark_client] Sending sample transaction 712
+[2026-05-22T09:21:05.929Z INFO  benchmark_client] Sending sample transaction 713
+[2026-05-22T09:21:05.934Z INFO  benchmark_client] Sending sample transaction 714
+[2026-05-22T09:21:06.085Z INFO  benchmark_client] Sending sample transaction 715
+[2026-05-22T09:21:06.086Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:06.089Z INFO  benchmark_client] Sending sample transaction 716
+[2026-05-22T09:21:06.095Z INFO  benchmark_client] Sending sample transaction 717
+[2026-05-22T09:21:06.487Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:06.490Z INFO  benchmark_client] Sending sample transaction 718
+[2026-05-22T09:21:06.495Z INFO  benchmark_client] Sending sample transaction 719
+[2026-05-22T09:21:06.570Z INFO  benchmark_client] Sending sample transaction 720
+[2026-05-22T09:21:06.572Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:06.574Z INFO  benchmark_client] Sending sample transaction 721
+[2026-05-22T09:21:06.582Z INFO  benchmark_client] Sending sample transaction 722
+[2026-05-22T09:21:06.716Z INFO  benchmark_client] Sending sample transaction 723
+[2026-05-22T09:21:06.717Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:06.720Z INFO  benchmark_client] Sending sample transaction 724
+[2026-05-22T09:21:06.934Z INFO  benchmark_client] Sending sample transaction 725
+[2026-05-22T09:21:06.937Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:06.939Z INFO  benchmark_client] Sending sample transaction 726
+[2026-05-22T09:21:06.945Z INFO  benchmark_client] Sending sample transaction 727
+[2026-05-22T09:21:07.007Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:07.012Z INFO  benchmark_client] Sending sample transaction 728
+[2026-05-22T09:21:07.018Z INFO  benchmark_client] Sending sample transaction 729
+[2026-05-22T09:21:07.234Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:07.235Z INFO  benchmark_client] Sending sample transaction 730
+[2026-05-22T09:21:07.240Z INFO  benchmark_client] Sending sample transaction 731
+[2026-05-22T09:21:07.284Z INFO  benchmark_client] Sending sample transaction 732
+[2026-05-22T09:21:07.293Z INFO  benchmark_client] Sending sample transaction 733
+[2026-05-22T09:21:07.299Z INFO  benchmark_client] Sending sample transaction 734
+[2026-05-22T09:21:07.306Z INFO  benchmark_client] Sending sample transaction 735
+[2026-05-22T09:21:07.313Z INFO  benchmark_client] Sending sample transaction 736
+[2026-05-22T09:21:07.349Z INFO  benchmark_client] Sending sample transaction 737
+[2026-05-22T09:21:07.352Z INFO  benchmark_client] Sending sample transaction 738
+[2026-05-22T09:21:07.434Z INFO  benchmark_client] Sending sample transaction 739
+[2026-05-22T09:21:07.436Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:07.438Z INFO  benchmark_client] Sending sample transaction 740
+[2026-05-22T09:21:07.446Z INFO  benchmark_client] Sending sample transaction 741
+[2026-05-22T09:21:07.564Z WARN  benchmark_client] Transaction rate too high for this client
+[2026-05-22T09:21:07.566Z INFO  benchmark_client] Sending sample transaction 742
+[2026-05-22T09:21:07.574Z INFO  benchmark_client] Sending sample transaction 743

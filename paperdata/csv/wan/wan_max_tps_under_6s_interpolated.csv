@@ -1,0 +1,7 @@
+nodes,protocol,method,tps_at_6s,point1_latency_ms,point1_consensus_tps,point1_rate,point2_latency_ms,point2_consensus_tps,point2_rate
+10,narwhal,interpolated,96548.661861,5845.0,86573.0,120000.0,6608.0,135679.0,240000.0
+20,narwhal,interpolated,83004.350000,5999.0,82394.0,120000.0,6059.0,119015.0,180000.0
+10,wahoo,interpolated,120788.031687,5230.0,120581.0,150000.0,7376.0,121158.0,210000.0
+20,wahoo,below_all,190015.000000,3983.0,190015.0,240000.0,,,
+10,noveldag,below_all,161809.000000,4497.0,161809.0,240000.0,,,
+20,noveldag,interpolated,210196.589766,4975.0,199631.0,240000.0,6128.0,211516.0,260000.0

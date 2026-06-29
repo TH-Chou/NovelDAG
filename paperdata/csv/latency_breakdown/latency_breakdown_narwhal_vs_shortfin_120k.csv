@@ -1,0 +1,8 @@
+protocol,metric,count,mean_ms,p50_ms,p90_ms
+narwhal,client_to_batch,8059,40.0,53.0,64.0
+narwhal,round_produce_interval,394,1001.4,1001.0,1002.0
+narwhal,block_created_to_commit,4436,4819.6,4653.0,6217.0
+noveldag,client_to_batch,8058,39.8,53.0,64.0
+noveldag,round_produce_interval,393,1007.3,1006.0,1012.0
+noveldag,block_created_to_commit,5405,3652.9,3108.0,6956.0
+noveldag,noveldag_cert_age,5417,3742.5,3474.0,6902.0
