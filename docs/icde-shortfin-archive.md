@@ -26,6 +26,31 @@ paperdata/
 Use `paperdata/README.md` as the primary map from manuscript figures to
 archived CSV and summary text files.
 
+## Reproducibility Status
+
+This archive is intended to be highly reproducible. The repository contains the
+implementation, benchmark orchestration scripts, paper-oriented cloud sweep
+tasks, parsers, plotting/data helpers, and summary-level archived data. The
+expected missing pieces are private environment settings rather than research
+logic: SSH private keys, GCP authentication, GCP project permissions, and the
+controller machine's tool installation.
+
+The tracked GCP settings file records the archived WAN testbed shape:
+
+```text
+benchmark/settings.gcp.json
+provider: gcp
+project: noveldag-496906
+zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-a, europe-west1-b
+machine type: n2-standard-2
+image: ubuntu-2204-lts
+disk: 100GB
+ssh user: ubuntu
+```
+
+For detailed local, RTT, and GCP reproduction commands, see
+`docs/benchmark-runbook.md`.
+
 ## Current Branch Purpose
 
 The branch name used for this archive is:

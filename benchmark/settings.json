@@ -7,7 +7,7 @@
   "repo": {
     "name": "NovelDAG",
     "url": "https://github.com/TH-Chou/NovelDAG.git",
-    "branch": "unify-three-protocols"
+    "branch": "icde_shortfin_archive"
   },
   "instances": {
     "type": "t3.medium",

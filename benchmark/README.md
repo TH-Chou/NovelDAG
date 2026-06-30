@@ -5,9 +5,37 @@
 ```bash
 cd benchmark
 pip install -r requirements.txt
-fab local --dag-protocol=shortfin --rate=50000 --duration=20
-fab remote --dag-protocol=shortfin --nodes=10 --faults=1 --rate=10000 --duration=20 --runs=1
+fab local --dag-protocol=shortfin --rate=50000
+fab remote --settings=settings.gcp.json --dag-protocol=shortfin --nodes=10 --faults=1 --rate=10000 --duration=30 --runs=1
 ```
+
+## Reproducibility Status
+
+The current benchmark repository is highly reproducible. It includes local
+runners, GCP/AWS cloud lifecycle management, remote code deployment, remote
+compilation, config generation, tmux-based process orchestration, log download,
+summary parsing, and paper-oriented WAN sweep tasks.
+
+Normal private inputs are not stored in the repository: cloud login state, GCP
+project permissions, SSH private key paths, and the controller machine's local
+tool installation. For this branch archive, set `repo.branch` in
+`settings.gcp.json` to `icde_shortfin_archive` before reproducing cloud runs.
+
+The checked-in GCP topology is:
+
+```text
+project: noveldag-496906
+zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-a, europe-west1-b
+machine type: n2-standard-2
+image: ubuntu-2204-lts
+disk: 100GB pd-ssd
+ssh user: ubuntu
+```
+
+Run benchmark control commands from macOS, Linux, or WSL. The scripts invoke
+Unix tools such as `tmux`, `rm`, `ln`, and `bash`. Local RTT emulation uses
+macOS `pfctl`/`dnctl`; it is not directly reproducible on native Windows without
+rewriting the delay-injection path.
 
 ## Entry Points
 
@@ -19,13 +47,13 @@ The stable entrypoint is `benchmark/fabfile.py`, which wraps `benchmark/scripts/
 
 ```bash
 # Local
-fab local --dag-protocol=shortfin --rate=50000 --duration=20
+fab local --dag-protocol=shortfin --rate=50000
 
-# Cloud
-fab create --nodes=2          # launch EC2 instances
-fab info                      # list all instances
-fab install                   # deploy code + compile
-fab remote --rate=50000 --nodes=10 --faults=1 --runs=2 --duration=60
+# GCP cloud
+fab create --settings=settings.gcp.json --nodes=2
+fab info --settings=settings.gcp.json
+fab install --settings=settings.gcp.json
+fab remote --settings=settings.gcp.json --rate=50000 --nodes=10 --faults=1 --runs=2 --duration=30
 
 # Protocol comparison
 fab compare-consensus-groups --rate=50000 --rounds=5
@@ -48,12 +76,12 @@ fab paper-plot-all
 | `--faults` | 3 | Byzantine faults |
 | `--workers` | 1 | Workers per node |
 | `--tx-size` | 512 | Transaction size (bytes) |
-| `--duration` | 300 | Benchmark duration (seconds) |
+| `--duration` | 50 | Benchmark duration cap is 50 seconds; paper helpers default to 30 seconds |
 | `--runs` | 2 | Runs per config |
 | `--dag-protocol` | shortfin | narwhal / bullshark / shortfin / sailfin / wahoo |
 | `--protocol` | round_robin | round_robin / common_coin (leader election) |
-| `--benchmark-delay` | 0 | Delay before timed phase (seconds, for P2P warmup) |
-| `--max-header-delay` | 200 | Proposer timer interval (ms, increase for cross-region) |
+| `--benchmark-delay` | 20 | Delay before timed phase (seconds, for P2P warmup) |
+| `--max-header-delay` | 1000 | Proposer timer interval (ms, increase for cross-region) |
 
 ### 2. `dagtest-TUI` — Unified benchmark console
 
@@ -130,26 +158,36 @@ Each resolved point: `{bench, node, delay, protocol, faults, rate, run_index, gr
 ## Cloud Lifecycle
 
 ```bash
-fab create --nodes=2      # Launch instances (2 per region × 5 regions = 10 total)
-fab info                  # List all instances with SSH commands
-fab install               # Clone repo + compile on all machines
-fab remote ...            # Run benchmarks
-fab kill                  # Kill all processes
-fab stop                  # Stop instances (preserve data)
-fab start --max=10        # Restart stopped instances
-fab destroy               # Terminate all instances
+fab create --settings=settings.gcp.json --nodes=2
+fab info --settings=settings.gcp.json
+fab install --settings=settings.gcp.json
+fab remote --settings=settings.gcp.json ...
+fab kill --settings=settings.gcp.json
+fab stop --settings=settings.gcp.json
+fab start --settings=settings.gcp.json --max=2
+fab destroy --settings=settings.gcp.json
 ```
 
-Configuration in `benchmark/settings.json`:
+Configuration in `benchmark/settings.gcp.json`:
 ```json
 {
-  "key": { "name": "dag-key", "path": "/Users/.../.ssh/dag-key.pem" },
+  "provider": "gcp",
+  "key": { "name": "google_compute_engine", "path": "/path/to/google_compute_engine", "user": "ubuntu" },
   "port": 5000,
-  "repo": { "name": "NovelDAG", "url": "https://github.com/...", "branch": "unify-three-protocols" },
-  "instances": { "type": "t3.medium", "regions": ["us-east-1", "..."] },
-  "provider": "aws"
+  "repo": { "name": "NovelDAG", "url": "https://github.com/TH-Chou/NovelDAG.git", "branch": "icde_shortfin_archive" },
+  "instances": {
+    "type": "n2-standard-2",
+    "project": "noveldag-496906",
+    "zones": ["asia-east1-a", "asia-southeast1-a", "us-east1-b", "us-west1-a", "europe-west1-b"],
+    "image_family": "ubuntu-2204-lts",
+    "disk_size_gb": 100,
+    "ssh_user": "ubuntu"
+  }
 }
 ```
+
+`fab create --nodes=N` means N instances per configured GCP zone. With the
+current five zones, `--nodes=2` creates 10 VMs.
 
 ## Result File Layout
 
@@ -251,10 +289,10 @@ python scripts/dagtest-TUI
 
 ## Cross-Region Tuning
 
-When running across multiple AWS regions with high latency:
+When running across multiple cloud regions with high latency:
 
 ```bash
-fab remote --benchmark-delay=50 --max-header-delay=2000 --duration=60 ...
+fab remote --benchmark-delay=50 --max-header-delay=2000 --duration=50 ...
 ```
 
 - `--benchmark-delay=N` — wait N seconds after boot for P2P mesh to stabilize before starting timer
