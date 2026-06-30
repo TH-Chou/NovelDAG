@@ -20,8 +20,11 @@ This branch archives the Shortfin-family implementation and benchmark workflow u
 The result archive committed with this branch is:
 
 ```text
-results/icde_shortfin_archive/
+paperdata/
 ```
+
+Use `paperdata/README.md` as the primary map from manuscript figures to
+archived CSV and summary text files.
 
 ## Current Branch Purpose
 

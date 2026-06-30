@@ -5,10 +5,14 @@ This document records the benchmark data layout and metric definitions for the S
 The archived data files for this branch live under:
 
 ```text
-results/icde_shortfin_archive/
+paperdata/
 ```
 
-That directory separates local CSV data from cloud/WAN summaries and includes its own README plus a SHA-256 manifest.
+See `paperdata/README.md` for the figure-by-figure mapping from
+manuscript results to CSV files and compact summary text files.
+
+That directory separates summarized CSV files, compact WAN summaries,
+retained raw latency-breakdown archives, and archived rendered plots.
 
 ## Metrics
 
@@ -35,10 +39,10 @@ environment,source_file,protocol,raw_protocol,run,faults,nodes,workers,collocate
 
 ## Local Data
 
-Local CSV files are under:
+Summarized CSV files are under:
 
 ```text
-results/icde_shortfin_archive/local/csv/
+paperdata/csv/
 ```
 
 Important local files:
@@ -58,16 +62,16 @@ Rows with all-zero metrics are failed or unparseable runs and should not be aver
 
 ## Cloud/WAN Data
 
-Cloud summary files are under:
+Compact WAN benchmark summary files are under:
 
 ```text
-results/icde_shortfin_archive/cloud/summaries/
+paperdata/summary/wan/
 ```
 
-A parsed CSV is available at:
+A parsed legacy cloud CSV is available at:
 
 ```text
-results/icde_shortfin_archive/cloud/cloud_wan_summary.csv
+paperdata/icde_shortfin_archive/cloud/cloud_wan_summary.csv
 ```
 
 The historical cloud files use `noveldag` in filenames. In `cloud_wan_summary.csv`, those rows are normalized as:
@@ -77,7 +81,7 @@ raw_protocol = noveldag
 protocol = shortfin
 ```
 
-Archived cloud summary shape:
+The legacy cloud summary shape:
 
 ```text
 faults = 1
