@@ -44,6 +44,7 @@ faults,nodes,workers,collocate,rate,protocol,run,execution_time_s,consensus_tps,
 1,10,1,True,210000,wahoo,1,49,142514,2129,141455,9948,ok,csv:gcp_fig3_f1_wahoo_120k_240k.csv
 1,10,1,True,240000,noveldag,1,34,183650,3535,177372,5759,ok,logs/results:bench-1-10-1-True-240000-512-noveldag-run1.txt
 1,10,1,True,240000,narwhal,1,45,165240,5444,159669,7914,ok,logs/results:bench-1-10-1-True-240000-512-narwhal-run1.txt
+1,10,1,True,240000,wahoo,1,49,141441,2127,140617,12827,ok,logs/results:bench-1-10-1-True-240000-512-wahoo-run1.txt
 3,10,1,True,30000,noveldag,1,49,21279,4727,20987,5475,ok,csv:gcp_fig3_f3_noveldag_retry_30k_120k_active.csv
 3,10,1,True,30000,narwhal,1,49,16582,6509,16582,6509,ok,restored_from_prior_table_e2e
 3,10,1,True,30000,wahoo,1,49,29723,3017,28988,4128,ok,csv:gcp_fig3_f3_wahoo_180k.csv

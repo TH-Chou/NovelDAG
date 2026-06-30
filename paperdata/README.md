@@ -58,10 +58,11 @@ bench-FAULTS-NODES-WORKERS-COLLOCATE-RATE-TX_SIZE-PROTOCOL-runRUN.txt
 - `summary/wan/bench-1-10-1-True-30000-512-wahoo-run1.txt` is not
   archived, although the corresponding row exists in
   `csv/wan/wan_n10_plot_summary.csv`.
-- Two historical summaries for `faults=1`, `nodes=10`, `wahoo`, and
-  `rate=240000` existed with conflicting metrics. The final manuscript
-  figure CSVs do not use this data point, so both summary files were
-  removed from the canonical archive.
+- A second historical summary for `faults=1`, `nodes=10`, `wahoo`, and
+  `rate=240000` reported 186,894 consensus TPS and 4.519 s end-to-end
+  latency. The final manuscript figure uses the 141,441 consensus TPS
+  and 12.827 s end-to-end latency run, so only that summary remains in
+  the canonical archive.
 - The current RTT CSV archive contains RTT values 0, 100, and 200 ms.
   If the manuscript figure or text uses 300 or 400 ms points, those
   summarized rows still need to be archived or the manuscript should be
