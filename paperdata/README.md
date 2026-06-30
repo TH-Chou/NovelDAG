@@ -53,23 +53,15 @@ Most files follow the legacy benchmark summary naming convention:
 bench-FAULTS-NODES-WORKERS-COLLOCATE-RATE-TX_SIZE-PROTOCOL-runRUN.txt
 ```
 
-One conflicting summary was preserved with a suffix instead of being
-overwritten:
-
-```text
-summary/wan/bench-1-10-1-True-240000-512-wahoo-run1.cloud-archive.txt
-```
-
-The unsuffixed file with the same base name and the `.cloud-archive`
-file are distinct runs with different metrics. The normalized legacy
-cloud CSV under `icde_shortfin_archive/cloud/cloud_wan_summary.csv`
-points to the `.cloud-archive` version.
-
 ## Known Gaps
 
 - `summary/wan/bench-1-10-1-True-30000-512-wahoo-run1.txt` is not
   archived, although the corresponding row exists in
   `csv/wan/wan_n10_plot_summary.csv`.
+- Two historical summaries for `faults=1`, `nodes=10`, `wahoo`, and
+  `rate=240000` existed with conflicting metrics. The final manuscript
+  figure CSVs do not use this data point, so both summary files were
+  removed from the canonical archive.
 - The current RTT CSV archive contains RTT values 0, 100, and 200 ms.
   If the manuscript figure or text uses 300 or 400 ms points, those
   summarized rows still need to be archived or the manuscript should be
