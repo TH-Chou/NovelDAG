@@ -238,6 +238,21 @@ impl Signature {
         dalek::verify_batch(&messages[..], &signatures[..], &keys[..])
     }
 
+    pub fn verify_batch_digests<'a, I>(votes: I) -> Result<(), CryptoError>
+    where
+        I: IntoIterator<Item = &'a (Digest, PublicKey, Signature)>,
+    {
+        let mut messages: Vec<&[u8]> = Vec::new();
+        let mut signatures: Vec<dalek::Signature> = Vec::new();
+        let mut keys: Vec<dalek::PublicKey> = Vec::new();
+        for (digest, key, sig) in votes.into_iter() {
+            messages.push(&digest.0[..]);
+            signatures.push(ed25519::signature::Signature::from_bytes(&sig.flatten())?);
+            keys.push(dalek::PublicKey::from_bytes(&key.0)?);
+        }
+        dalek::verify_batch(&messages[..], &signatures[..], &keys[..])
+    }
+
     /// Async wrapper that runs batch verification on the blocking thread pool
     /// to avoid stalling the async runtime with CPU-bound multi-scalar multiplication.
     pub async fn verify_batch_async<'a, I>(digest: Digest, votes: I) -> Result<(), CryptoError>

@@ -477,7 +477,7 @@ impl Header {
 
             let mut weight = 0;
             let mut used = HashSet::new();
-            let mut sigs: Vec<(PublicKey, Signature)> = Vec::with_capacity(qc.votes.len());
+            let mut sigs: Vec<(Digest, PublicKey, Signature)> = Vec::with_capacity(qc.votes.len());
             for vote in qc.votes.iter() {
                 ensure!(
                     vote.id == qc.target,
@@ -500,15 +500,12 @@ impl Header {
                     committee.stake(&vote.author) > 0,
                     DagError::UnknownAuthority(vote.author)
                 );
-                sigs.push((vote.author, vote.signature.clone()));
+                sigs.push((vote.digest(), vote.author, vote.signature.clone()));
                 used.insert(vote.author);
                 weight += committee.stake(&vote.author);
             }
-            // Batch-verify all QC vote signatures. All votes in a QC sign the
-            // same payload (id == target, same round/voter_round/origin).
-            if let Some(vote_digest) = qc.votes.first().map(|v| v.digest()) {
-                Signature::verify_batch(&vote_digest, &sigs)?;
-            }
+            // The target is shared, but each voter signs its own local voter round.
+            Signature::verify_batch_digests(&sigs)?;
             ensure!(
                 weight >= committee.quorum_threshold(),
                 DagError::CertificateRequiresQuorum
@@ -760,8 +757,7 @@ impl Certificate {
         // Ensure the certificate has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
-        let mut sigs: Vec<(PublicKey, Signature)> = Vec::with_capacity(self.votes.len());
-        let vote_digest = self.votes.first().map(|v| v.digest());
+        let mut sigs: Vec<(Digest, PublicKey, Signature)> = Vec::with_capacity(self.votes.len());
         for vote in self.votes.iter() {
             ensure!(
                 vote.id == self.header.id,
@@ -784,14 +780,12 @@ impl Certificate {
                 committee.stake(&vote.author) > 0,
                 DagError::UnknownAuthority(vote.author)
             );
-            sigs.push((vote.author, vote.signature.clone()));
+            sigs.push((vote.digest(), vote.author, vote.signature.clone()));
             used.insert(vote.author);
             weight += committee.stake(&vote.author);
         }
         // Batch-verify all vote signatures in a single multi-scalar multiplication.
-        if let Some(digest) = vote_digest {
-            Signature::verify_batch(&digest, &sigs)?;
-        }
+        Signature::verify_batch_digests(&sigs)?;
         ensure!(
             weight >= committee.quorum_threshold(),
             DagError::CertificateRequiresQuorum

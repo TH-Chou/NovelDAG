@@ -113,6 +113,43 @@ fn verify_invalid_batch() {
     assert!(Signature::verify_batch(&digest, &signatures).is_err());
 }
 
+#[test]
+fn verify_valid_batch_with_distinct_digests() {
+    let mut keys = keys();
+    let messages: [&[u8]; 3] = [b"first", b"second", b"third"];
+    let signatures: Vec<_> = messages
+        .iter()
+        .copied()
+        .map(|message| {
+            let digest = message.digest();
+            let (public_key, secret_key) = keys.pop().unwrap();
+            let signature = Signature::new(&digest, &secret_key);
+            (digest, public_key, signature)
+        })
+        .collect();
+
+    assert!(Signature::verify_batch_digests(&signatures).is_ok());
+}
+
+#[test]
+fn verify_invalid_batch_with_distinct_digests() {
+    let mut keys = keys();
+    let messages: [&[u8]; 3] = [b"first", b"second", b"third"];
+    let mut signatures: Vec<_> = messages
+        .iter()
+        .copied()
+        .map(|message| {
+            let digest = message.digest();
+            let (public_key, secret_key) = keys.pop().unwrap();
+            let signature = Signature::new(&digest, &secret_key);
+            (digest, public_key, signature)
+        })
+        .collect();
+    signatures[1].0 = b"tampered".as_slice().digest();
+
+    assert!(Signature::verify_batch_digests(&signatures).is_err());
+}
+
 #[tokio::test]
 async fn signature_service() {
     // Get a keypair.
