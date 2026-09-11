@@ -1,7 +1,7 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use config::{ConsensusProtocol, DagProtocol};
 use crate::common::{committee, keys};
+use config::{ConsensusProtocol, DagProtocol};
 use tokio::sync::mpsc::channel;
 
 #[tokio::test]

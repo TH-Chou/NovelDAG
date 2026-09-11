@@ -3,11 +3,8 @@
 // PB ("Provable Broadcast") is the even-round 2-phase broadcast subprotocol
 // of Wahoo. The proposer first broadcasts `Tag=Proposal` carrying real
 // transactions; recipients reply with `Vote`s; once 2f+1 votes are
-// gathered, the proposer broadcasts an empty `Tag=EmptyVoteCertificate`
-// block as a "vote complete" certificate. Recipients deliver the block
-// upward only after receiving BOTH the Tag=1 proposal and the Tag=2
-// completion. This guarantees that an honest delivery implies 2f+1
-// nodes have seen the proposal.
+// gathered, the proposer broadcasts the resulting `Certificate`.
+// Recipients deliver the block upward only after verifying this proof.
 //
 // In the Go reference PB is a separate goroutine-managed type that holds
 // network handles and emits delivered blocks via `blockCh`. In the Rust
@@ -31,11 +28,8 @@ use std::collections::HashMap;
 pub enum PbAction {
     /// `pb.go::sendVote` — unicast the vote to the proposer.
     SendVote { target: PublicKey, vote: WahooVote },
-    /// `pb.go::broadcastBlock2` — broadcast the empty Tag=2 block.
-    /// Carries the PBC Certificate that justified emission (2f+1 Pbc
-    /// votes aggregated by `WahooVotesAggregator`). Phase D will let
-    /// Node broadcast the `Certificate` directly and retire Block2.
-    BroadcastBlock2(WahooBlock, Certificate),
+    /// Paper PBC step 3 — broadcast the delivery certificate.
+    BroadcastCertificate(Certificate),
     /// `pb.go::tryToOutputBlocks` — block is ready for DAG insertion.
     /// Equivalent to writing into `blockCh` in the Go version.
     OutputBlock(WahooBlock),
@@ -51,8 +45,8 @@ pub struct Pb {
 
     /// `pendingBlocks map[round][sender]*Block` — Tag=1 proposals.
     pending_blocks: HashMap<Round, HashMap<PublicKey, WahooBlock>>,
-    /// `pendingBlock2s map[round][sender]*Block` — Tag=2 empty blocks.
-    pending_block2s: HashMap<Round, HashMap<PublicKey, WahooBlock>>,
+    /// PBC delivery certificates, keyed by (round, proposal author).
+    pending_certificates: HashMap<Round, HashMap<PublicKey, Certificate>>,
     /// Replaces Go's `pendingVote[round][block_sender]int`: one
     /// `WahooVotesAggregator` per (round, block-author) tuple that
     /// routes incoming votes into the correct phase bucket (PBC for even
@@ -75,7 +69,7 @@ impl Pb {
             name,
             committee,
             pending_blocks: HashMap::new(),
-            pending_block2s: HashMap::new(),
+            pending_certificates: HashMap::new(),
             pending_vote: HashMap::new(),
             block_output: HashMap::new(),
             block2_send: HashMap::new(),
@@ -124,25 +118,32 @@ impl Pb {
                         ..WahooVote::default()
                     },
                 });
-                let block2_already_seen = self
-                    .pending_block2s
+                let certificate_already_seen = self
+                    .pending_certificates
                     .get(&round)
                     .and_then(|m| m.get(&sender))
                     .is_some();
-                if block2_already_seen {
+                if certificate_already_seen {
                     if let Some(out) = self.try_to_output(round, sender) {
                         actions.push(PbAction::OutputBlock(out));
                     }
                 }
             }
         } else {
-            // Tag=2: empty "vote-complete" block.
-            let round = block.round;
-            let sender = block.author;
-            self.store_block2_msg(&block);
-            if let Some(out) = self.try_to_output(round, sender) {
-                actions.push(PbAction::OutputBlock(out));
-            }
+            // Legacy Tag=2 "vote-complete" blocks do not carry the paper's
+            // PBC proof. Strict Wahoo delivery is driven by certificates.
+        }
+        actions
+    }
+
+    pub fn handle_certificate(&mut self, certificate: Certificate) -> Vec<PbAction> {
+        let mut actions = Vec::new();
+        let round = certificate.round();
+        let sender = certificate.origin();
+        self.store_block_msg(&certificate.header);
+        self.store_certificate(certificate);
+        if let Some(out) = self.try_to_output(round, sender) {
+            actions.push(PbAction::OutputBlock(out));
         }
         actions
     }
@@ -190,10 +191,9 @@ impl Pb {
         };
         let already_sent = *self.block2_send.get(&round).unwrap_or(&false);
         if !already_sent {
-            let block2 = self.generate_block2(round, origin);
             self.block2_send.insert(round, true);
-            self.store_block2_msg(&block2);
-            actions.push(PbAction::BroadcastBlock2(block2, cert));
+            self.store_certificate(cert.clone());
+            actions.push(PbAction::BroadcastCertificate(cert));
         }
         if let Some(out) = self.try_to_output(round, origin) {
             actions.push(PbAction::OutputBlock(out));
@@ -209,12 +209,11 @@ impl Pb {
             .insert(block.author, block.clone());
     }
 
-    /// `pb.go::storeBlock2Msg`.
-    fn store_block2_msg(&mut self, block: &WahooBlock) {
-        self.pending_block2s
-            .entry(block.round)
+    fn store_certificate(&mut self, certificate: Certificate) {
+        self.pending_certificates
+            .entry(certificate.round())
             .or_insert_with(HashMap::new)
-            .insert(block.author, block.clone());
+            .insert(certificate.origin(), certificate);
     }
 
     /// `pb.go::tryToOutputBlocks(round, sender)` (lines 230-252).
@@ -234,23 +233,13 @@ impl Pb {
             .get(&round)
             .and_then(|m| m.get(&sender))
             .cloned()?;
-        // Wahoo's tryToOutputBlocks intentionally does NOT require Tag=2
-        // to be present on the proposer-completing path (the proposer
-        // calls it directly after generating block2). It does, however,
-        // require Tag=2 on the receive path because that path only
-        // arrives via `HandleBlockMsg(Tag=2)`. We therefore only output
-        // when either:
-        //   (a) we just stored Tag=2 for this (round, sender) — the
-        //       receive path, or
-        //   (b) we ourselves broadcast Tag=2 (block2_send[round] == true)
-        //       — the proposer path.
-        let has_block2 = self
-            .pending_block2s
+        let has_certificate = self
+            .pending_certificates
             .get(&round)
             .and_then(|m| m.get(&sender))
             .is_some();
         let we_sent_block2 = *self.block2_send.get(&round).unwrap_or(&false);
-        if !has_block2 && !we_sent_block2 {
+        if !has_certificate && !we_sent_block2 {
             return None;
         }
         self.block_output
@@ -260,8 +249,9 @@ impl Pb {
         Some(block)
     }
 
-    /// `pb.go::generateBlock2` — empty block carrying the unified
-    /// `wahoo_tag = Some(PbcVoteComplete)` (Go Tag=2 equivalent).
+    /// Legacy helper for the Go reference's empty Tag=2 marker. Strict PBC
+    /// delivery now uses `Certificate`.
+    #[allow(dead_code)]
     fn generate_block2(&self, round: Round, block_sender: PublicKey) -> WahooBlock {
         let mut block = WahooBlock {
             author: block_sender,
@@ -280,7 +270,7 @@ impl PbAction {
     pub fn into_message(self) -> Option<WahooMessage> {
         match self {
             PbAction::SendVote { vote, .. } => Some(WahooMessage::Vote(vote)),
-            PbAction::BroadcastBlock2(b, _cert) => Some(WahooMessage::Block(b)),
+            PbAction::BroadcastCertificate(c) => Some(WahooMessage::PbcCertificate(c)),
             PbAction::OutputBlock(_) => None,
         }
     }
@@ -316,15 +306,11 @@ mod tests {
         b
     }
 
-    fn vote_complete_block(sender: PublicKey, round: Round) -> WahooBlock {
-        let mut b = WahooBlock {
-            author: sender,
-            round,
-            wahoo_tag: Some(WahooTag::PbcVoteComplete),
-            ..WahooBlock::default()
-        };
-        b.id = crypto::Hash::digest(&b);
-        b
+    fn pbc_certificate(block: &WahooBlock) -> Certificate {
+        Certificate {
+            header: block.clone(),
+            votes: Vec::new(),
+        }
     }
 
     #[test]
@@ -352,7 +338,7 @@ mod tests {
                 .iter()
                 .all(|a| !matches!(a, PbAction::OutputBlock(_))));
         }
-        // Third vote hits quorum: triggers Block2 broadcast + OutputBlock.
+        // Third vote hits quorum: triggers certificate broadcast + OutputBlock.
         let actions = pb.handle_vote(WahooVote {
             author: keys[3],
             origin: me,
@@ -364,21 +350,22 @@ mod tests {
         });
         assert!(actions
             .iter()
-            .any(|a| matches!(a, PbAction::BroadcastBlock2(_, _))));
+            .any(|a| matches!(a, PbAction::BroadcastCertificate(_))));
         assert!(actions
             .iter()
             .any(|a| matches!(a, PbAction::OutputBlock(b) if b.round == 2 && b.author == me)));
     }
 
     #[test]
-    fn receiver_path_needs_tag2_before_output() {
+    fn receiver_path_needs_certificate_before_output() {
         let (committee, keys) = committee_keys();
         let me = keys[0];
         let proposer = keys[1];
         let mut pb = Pb::new(me, committee);
 
         // Tag=1 arrives first: send vote, no output yet.
-        let actions = pb.handle_block(proposal_block(proposer, 2));
+        let proposal = proposal_block(proposer, 2);
+        let actions = pb.handle_block(proposal.clone());
         assert!(actions
             .iter()
             .any(|a| matches!(a, PbAction::SendVote { .. })));
@@ -386,8 +373,8 @@ mod tests {
             .iter()
             .any(|a| matches!(a, PbAction::OutputBlock(_))));
 
-        // Tag=2 arrives: now we can output.
-        let actions = pb.handle_block(vote_complete_block(proposer, 2));
+        // PBC certificate arrives: now we can output.
+        let actions = pb.handle_certificate(pbc_certificate(&proposal));
         assert!(actions
             .iter()
             .any(|a| matches!(a, PbAction::OutputBlock(_))));
@@ -399,9 +386,10 @@ mod tests {
         let me = keys[0];
         let proposer = keys[1];
         let mut pb = Pb::new(me, committee);
-        pb.handle_block(proposal_block(proposer, 2));
-        let first = pb.handle_block(vote_complete_block(proposer, 2));
-        let second = pb.handle_block(vote_complete_block(proposer, 2));
+        let proposal = proposal_block(proposer, 2);
+        pb.handle_block(proposal.clone());
+        let first = pb.handle_certificate(pbc_certificate(&proposal));
+        let second = pb.handle_certificate(pbc_certificate(&proposal));
         assert_eq!(
             first
                 .iter()

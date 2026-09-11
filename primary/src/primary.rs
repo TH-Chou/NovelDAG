@@ -5,19 +5,20 @@ use crate::error::DagError;
 use crate::garbage_collector::GarbageCollector;
 use crate::header_waiter::HeaderWaiter;
 use crate::helper::Helper;
-use crate::messages::{Certificate, Header, RecpMessage, Vote};
+use crate::messages::{Certificate, Header, RecpMessage, Vote, WahooVotePhase};
 use crate::payload_receiver::PayloadReceiver;
 use crate::proposer::Proposer;
 use crate::synchronizer::Synchronizer;
 use crate::wahoo::{messages::SignedWahoo, Node as WahooNode, WahooMessage};
 use async_trait::async_trait;
 use bytes::Bytes;
-use config::{Committee, DagProtocol, KeyPair, Parameters, WorkerId};
-use crypto::{Digest, Hash as _, PublicKey, SignatureService};
+use config::{Committee, DagProtocol, KeyPair, Parameters, Stake, WorkerId};
+use crypto::{Digest, Hash as _, PublicKey, Signature, SignatureService};
 use futures::sink::SinkExt as _;
 use log::info;
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -335,6 +336,7 @@ impl Primary {
             committee,
             signature_service,
             parameters.batch_size,
+            parameters.header_size,
             rx_wahoo_messages,
             rx_our_digests,
             rx_recp,
@@ -426,7 +428,13 @@ impl MessageHandler for WahooReceiverHandler {
                     // envelope that still wraps them — accepting it would
                     // allow a peer to bypass `Header::verify` /
                     // `Vote.signature.verify` and inject unsigned content.
-                    if matches!(signed.msg, WahooMessage::Block(_) | WahooMessage::Vote(_)) {
+                    if matches!(
+                        &signed.msg,
+                        WahooMessage::Block(_)
+                            | WahooMessage::Vote(_)
+                            | WahooMessage::PbcCertificate(_)
+                            | WahooMessage::EpbcCertificate(_)
+                    ) {
                         log::warn!(
                         "Wahoo: rejected legacy SignedWahoo wrapping Block/Vote (must use PrimaryMessage::Header/Vote); dropping"
                     );
@@ -522,6 +530,44 @@ impl MessageHandler for WahooReceiverHandler {
                         .await
                         .expect("Wahoo channel closed");
                 }
+                PrimaryMessage::Certificate(c) => {
+                    if c.votes.is_empty() {
+                        log::warn!("Wahoo PBC Certificate: dropped empty certificate");
+                        return Ok(());
+                    }
+                    let phase = c.votes[0].wahoo_phase;
+                    if !c.votes.iter().all(|v| v.wahoo_phase == phase) {
+                        log::warn!("Wahoo Certificate: mixed vote phases; dropping");
+                        return Ok(());
+                    }
+                    if let Err(e) = verify_wahoo_certificate(&c, &self.committee) {
+                        log::warn!(
+                            "Wahoo Certificate: verification failed (round={} origin={}): {}; dropping",
+                            c.round(),
+                            c.origin(),
+                            e
+                        );
+                        return Ok(());
+                    }
+                    let msg = match phase {
+                        Some(crate::messages::WahooVotePhase::Pbc) => {
+                            WahooMessage::PbcCertificate(c)
+                        }
+                        Some(crate::messages::WahooVotePhase::Ts1)
+                        | Some(crate::messages::WahooVotePhase::Ts2)
+                        | Some(crate::messages::WahooVotePhase::Tf) => {
+                            WahooMessage::EpbcCertificate(c)
+                        }
+                        None => {
+                            log::warn!("Wahoo Certificate: missing vote phase; dropping");
+                            return Ok(());
+                        }
+                    };
+                    self.tx_wahoo_messages
+                        .send(msg)
+                        .await
+                        .expect("Wahoo channel closed");
+                }
                 PrimaryMessage::Recp(recp) => {
                     // Paper Section IV-B Algorithm 2 line 5 envelope. Filter
                     // out unknown authorities early; the Wahoo `Node` does a
@@ -560,6 +606,94 @@ pub(crate) fn wahoo_digest(payload: &[u8]) -> Digest {
     hasher.update(payload);
     let out = hasher.finalize();
     Digest(out[..32].try_into().expect("sha512 truncation"))
+}
+
+fn verify_wahoo_certificate(c: &Certificate, committee: &Committee) -> Result<(), DagError> {
+    ensure!(c.header.digest() == c.header.id, DagError::InvalidHeaderId);
+    ensure!(
+        committee.stake(&c.header.author) > 0,
+        DagError::UnknownAuthority(c.header.author)
+    );
+    c.header
+        .signature
+        .verify(&c.header.id, &c.header.author)
+        .map_err(DagError::from)?;
+
+    let phase = c
+        .votes
+        .first()
+        .and_then(|v| v.wahoo_phase)
+        .ok_or_else(|| DagError::MalformedHeader(c.header.id.clone()))?;
+    let phase_round_ok = match phase {
+        WahooVotePhase::Pbc => c.round() % 2 == 0,
+        WahooVotePhase::Ts1 | WahooVotePhase::Ts2 | WahooVotePhase::Tf => c.round() % 2 == 1,
+    };
+    ensure!(
+        phase_round_ok,
+        DagError::MalformedHeader(c.header.id.clone())
+    );
+    if let Some(tag) = c.header.wahoo_tag {
+        let tag_phase_ok = match phase {
+            WahooVotePhase::Pbc => matches!(
+                tag,
+                crate::messages::WahooTag::Pbc | crate::messages::WahooTag::PbcVoteComplete
+            ),
+            WahooVotePhase::Ts1 | WahooVotePhase::Ts2 | WahooVotePhase::Tf => matches!(
+                tag,
+                crate::messages::WahooTag::EpbcTs1
+                    | crate::messages::WahooTag::EpbcTs2
+                    | crate::messages::WahooTag::EpbcTf
+            ),
+        };
+        ensure!(tag_phase_ok, DagError::MalformedHeader(c.header.id.clone()));
+    }
+    let mut weight = 0;
+    let mut used = HashSet::new();
+    let mut sigs: Vec<(PublicKey, Signature)> = Vec::with_capacity(c.votes.len());
+    for vote in &c.votes {
+        ensure!(
+            vote.wahoo_phase == Some(phase),
+            DagError::MalformedHeader(c.header.id.clone())
+        );
+        ensure!(
+            vote.id == c.header.id,
+            DagError::MalformedHeader(c.header.id.clone())
+        );
+        ensure!(
+            vote.round == c.round(),
+            DagError::MalformedHeader(c.header.id.clone())
+        );
+        ensure!(
+            vote.origin == c.origin(),
+            DagError::MalformedHeader(c.header.id.clone())
+        );
+        ensure!(
+            used.insert(vote.author),
+            DagError::AuthorityReuse(vote.author)
+        );
+        ensure!(
+            committee.stake(&vote.author) > 0,
+            DagError::UnknownAuthority(vote.author)
+        );
+        sigs.push((vote.author, vote.signature.clone()));
+        weight += committee.stake(&vote.author);
+    }
+    if let Some(digest) = c.votes.first().map(|v| v.digest()) {
+        Signature::verify_batch(&digest, &sigs)?;
+    }
+    let total: Stake = committee
+        .authorities
+        .keys()
+        .map(|name| committee.stake(name))
+        .sum();
+    let threshold = match phase {
+        WahooVotePhase::Tf => total,
+        WahooVotePhase::Ts1 | WahooVotePhase::Ts2 | WahooVotePhase::Pbc => {
+            committee.quorum_threshold()
+        }
+    };
+    ensure!(weight >= threshold, DagError::CertificateRequiresQuorum);
+    Ok(())
 }
 
 /// Defines how the network receiver handles incoming primary messages.

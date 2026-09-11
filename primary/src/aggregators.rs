@@ -4,14 +4,14 @@ use crate::messages::{Certificate, Header, Vote, WahooTag, WahooVotePhase};
 use config::{Committee, Stake};
 use crypto::{Digest, Hash as _, PublicKey};
 use std::collections::HashSet;
- 
+
 /// Aggregates votes for a particular header into a certificate.
 pub struct VotesAggregator {
     weight: Stake,
     votes: Vec<Vote>,
     used: HashSet<PublicKey>,
 }
- 
+
 impl VotesAggregator {
     pub fn new() -> Self {
         Self {
@@ -20,7 +20,7 @@ impl VotesAggregator {
             used: HashSet::new(),
         }
     }
- 
+
     pub fn append(
         &mut self,
         vote: Vote,

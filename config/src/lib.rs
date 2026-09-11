@@ -67,6 +67,12 @@ pub enum DagProtocol {
     Shortfin,
     #[serde(rename = "sailfin")]
     Sailfin,
+    #[serde(rename = "mahi_mahi", alias = "mahi-mahi")]
+    MahiMahi,
+    #[serde(rename = "mahi_mahi_4", alias = "mahi-mahi-4")]
+    MahiMahi4,
+    #[serde(rename = "mahi_mahi_5", alias = "mahi-mahi-5")]
+    MahiMahi5,
     Wahoo,
 }
 
@@ -83,12 +89,35 @@ impl DagProtocol {
             Self::Bullshark => "bullshark",
             Self::Shortfin => "shortfin",
             Self::Sailfin => "sailfin",
+            Self::MahiMahi => "mahi_mahi",
+            Self::MahiMahi4 => "mahi_mahi_4",
+            Self::MahiMahi5 => "mahi_mahi_5",
             Self::Wahoo => "wahoo",
         }
     }
 
     pub fn is_shortfin_family(&self) -> bool {
         matches!(self, Self::Shortfin | Self::Sailfin)
+    }
+
+    pub fn is_uncertified_dag(&self) -> bool {
+        matches!(
+            self,
+            Self::Shortfin | Self::Sailfin | Self::MahiMahi | Self::MahiMahi4 | Self::MahiMahi5
+        )
+    }
+
+    pub fn is_mahi_mahi(&self) -> bool {
+        self.mahi_mahi_wave_length().is_some()
+    }
+
+    pub fn mahi_mahi_wave_length(&self) -> Option<u64> {
+        match self {
+            // Use the five-stage variant as the default paper-facing baseline.
+            Self::MahiMahi | Self::MahiMahi5 => Some(5),
+            Self::MahiMahi4 => Some(4),
+            _ => None,
+        }
     }
 }
 

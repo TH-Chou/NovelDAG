@@ -8,7 +8,7 @@ use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
 use log::{log_enabled, warn};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
 
@@ -48,6 +48,7 @@ pub struct Proposer {
     coin_threshold: usize,
     /// Threshold for parents_2 (dual-hop) references. Shortfin-family protocols require
     /// the second-hop references to cover a quorum from round r-2.
+    #[cfg_attr(not(feature = "benchmark"), allow(dead_code))]
     parents_2_threshold: usize,
 
     /// Receives construction signals from `Core`.
@@ -154,17 +155,37 @@ impl Proposer {
             Vec::new()
         };
 
+        let mut selected_size = 0usize;
+        let mut take_count = 0usize;
+        for (digest, _) in &self.digests {
+            if take_count > 0 && selected_size >= self.header_size {
+                break;
+            }
+            selected_size += digest.size();
+            take_count += 1;
+        }
+        let mut payload: BTreeMap<Digest, WorkerId> = self.digests.drain(..take_count).collect();
+        self.payload_size = self.payload_size.saturating_sub(selected_size);
+        if std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("invalid_payload") {
+            let mut fake = [0u8; 32];
+            fake[..8].copy_from_slice(&self.round.to_le_bytes());
+            fake[8..16].copy_from_slice(&self.name.0[..8]);
+            fake[16] = 0xB7;
+            let digest = Digest(fake);
+            payload.insert(digest.clone(), 0);
+            warn!(
+                "Byzantine invalid_payload: injected fake batch {:?} in header round {}",
+                digest, self.round
+            );
+        }
+
         // Make a new header.
         let header = Header::new(
             self.name,
             self.round,
-            self.digests.drain(..).collect(),
+            payload,
             self.parents_1.drain(..).collect::<BTreeSet<_>>(),
-            if self.dag_protocol.is_shortfin_family() {
-                self.parents_2.drain(..).collect::<BTreeSet<_>>()
-            } else {
-                BTreeSet::new()
-            },
+            BTreeSet::new(),
             if self.dag_protocol.is_shortfin_family() {
                 self.last_qc.clone()
             } else {
@@ -354,6 +375,10 @@ impl Proposer {
 
         let timer = sleep(Duration::from_millis(self.max_header_delay));
         tokio::pin!(timer);
+        // A completed `Sleep` stays ready until it is reset. Keep the expiry
+        // as explicit state so a proposer waiting for parents or its QC does
+        // not busy-spin and starve the core task that must produce them.
+        let mut timer_expired = false;
 
         // Bullshark advance flag.
         let mut advance = true;
@@ -368,11 +393,9 @@ impl Proposer {
                     // 2. We have a quorum of certificates from the previous round and the
                     //    specified maximum inter-header delay has passed.
                     let enough_parents_1 = !self.parents_1.is_empty();
-                    let enough_parents_2 =
-                        self.round < 2 || self.parents_2.len() >= self.parents_2_threshold;
+                    let enough_parents_2 = true;
                     let enough_qc = self.round < 2 || self.last_qc.is_some();
                     let enough_digests = self.payload_size >= self.header_size;
-                    let timer_expired = timer.is_elapsed();
                     let ready_to_propose = timer_expired || enough_digests;
 
                     #[cfg(feature = "benchmark")]
@@ -457,7 +480,6 @@ impl Proposer {
 
                         // Make a new header.
                         self.make_header().await;
-                        self.payload_size = 0;
 
                         #[cfg(feature = "benchmark")]
                         {
@@ -516,27 +538,29 @@ impl Proposer {
                         let deadline =
                             Instant::now() + Duration::from_millis(self.max_header_delay);
                         timer.as_mut().reset(deadline);
+                        timer_expired = false;
                     }
                 }
 
-                DagProtocol::Narwhal => {
+                DagProtocol::Narwhal
+                | DagProtocol::MahiMahi
+                | DagProtocol::MahiMahi4
+                | DagProtocol::MahiMahi5 => {
                     let enough_parents = !self.parents_1.is_empty();
                     let enough_digests = self.payload_size >= self.header_size;
-                    let timer_expired = timer.is_elapsed();
                     if (timer_expired || enough_digests) && enough_parents {
                         self.make_header().await;
-                        self.payload_size = 0;
 
                         let deadline =
                             Instant::now() + Duration::from_millis(self.max_header_delay);
                         timer.as_mut().reset(deadline);
+                        timer_expired = false;
                     }
                 }
 
                 DagProtocol::Bullshark | DagProtocol::Wahoo => {
                     let enough_parents = !self.last_parent_certs.is_empty();
                     let enough_digests = self.payload_size >= self.header_size;
-                    let timer_expired = timer.is_elapsed();
 
                     if (timer_expired || (enough_digests && advance)) && enough_parents {
                         if timer_expired {
@@ -554,11 +578,11 @@ impl Proposer {
                             .map(|x| x.digest())
                             .collect();
                         self.make_header().await;
-                        self.payload_size = 0;
 
                         let deadline =
                             Instant::now() + Duration::from_millis(self.max_header_delay);
                         timer.as_mut().reset(deadline);
+                        timer_expired = false;
                     }
                 }
             }
@@ -613,7 +637,10 @@ impl Proposer {
                             }
                             debug!("Dag moved to round {}", self.round);
                         }
-                        DagProtocol::Narwhal => {
+                        DagProtocol::Narwhal
+                        | DagProtocol::MahiMahi
+                        | DagProtocol::MahiMahi4
+                        | DagProtocol::MahiMahi5 => {
                             if signal.round < self.round {
                                 continue;
                             }
@@ -650,8 +677,8 @@ impl Proposer {
                     self.payload_size += digest.size();
                     self.digests.push((digest, worker_id));
                 }
-                () = &mut timer => {
-                    // Nothing to do.
+                () = &mut timer, if !timer_expired => {
+                    timer_expired = true;
                 }
             }
         }

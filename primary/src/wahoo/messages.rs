@@ -12,7 +12,7 @@
 // so every Go `string` sender field becomes a `PublicKey` here.
 // `[]byte` (Go) → `Vec<u8>` (Rust) for raw signature payloads.
 
-use crate::messages::{Header, Vote, WahooTag};
+use crate::messages::{Certificate, Header, Vote, WahooTag};
 use crate::primary::Round;
 use crypto::{Digest, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
@@ -77,10 +77,10 @@ pub struct WahooReady {
 pub struct WahooDone {
     pub done_sender: PublicKey,
     pub block_sender: PublicKey,
-    /// `Done [][]byte` — collected partial signatures (or the assembled
-    /// QC, depending on the implementation choice). Kept opaque on the
-    /// wire to match the Go layout.
-    pub done: Vec<Vec<u8>>,
+    /// Collected Ready signatures. The paper's EPBC proof is a threshold
+    /// signature; in this codebase we keep the same evidence semantics by
+    /// carrying the individual signed shares with their authors.
+    pub done: Vec<(PublicKey, Vec<u8>)>,
     pub hash: Digest,
     pub round: Round,
 }
@@ -119,6 +119,10 @@ pub enum WahooMessage {
     Block(WahooBlock),
     /// `VoteTag`.
     Vote(WahooVote),
+    /// Paper PBC output proof: a proposal header plus 2f+1 signed PBC votes.
+    PbcCertificate(Certificate),
+    /// Paper EPBC output proof: a proposal header plus signed TS1/TS2/TF votes.
+    EpbcCertificate(Certificate),
     /// `ElectTag`.
     Elect(WahooElect),
     /// `ReadyTag`.
@@ -140,6 +144,8 @@ impl WahooMessage {
         match self {
             Self::Block(b) => b.author,
             Self::Vote(v) => v.author,
+            Self::PbcCertificate(c) => c.origin(),
+            Self::EpbcCertificate(c) => c.origin(),
             Self::Elect(e) => e.sender,
             Self::Ready(r) => r.ready_sender,
             Self::Done(d) => d.done_sender,
@@ -195,6 +201,8 @@ mod tests {
         let cases = vec![
             WahooMessage::Block(WahooBlock::default()),
             WahooMessage::Vote(WahooVote::default()),
+            WahooMessage::PbcCertificate(Certificate::default()),
+            WahooMessage::EpbcCertificate(Certificate::default()),
             WahooMessage::Elect(WahooElect::default()),
             WahooMessage::Ready(WahooReady::default()),
             WahooMessage::Done(WahooDone::default()),
@@ -236,6 +244,20 @@ mod tests {
             WahooMessage::Vote(WahooVote {
                 author: pk,
                 ..WahooVote::default()
+            }),
+            WahooMessage::PbcCertificate(Certificate {
+                header: WahooBlock {
+                    author: pk,
+                    ..WahooBlock::default()
+                },
+                votes: Vec::new(),
+            }),
+            WahooMessage::EpbcCertificate(Certificate {
+                header: WahooBlock {
+                    author: pk,
+                    ..WahooBlock::default()
+                },
+                votes: Vec::new(),
             }),
             WahooMessage::Elect(WahooElect {
                 sender: pk,

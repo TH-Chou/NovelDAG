@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 mod bullshark;
+mod mahi_mahi;
 mod narwhal;
 mod sailfin;
 mod shortfin;
@@ -144,6 +145,9 @@ impl Consensus {
             DagProtocol::Bullshark => bullshark::run(self).await,
             DagProtocol::Shortfin => shortfin::run(self).await,
             DagProtocol::Sailfin => sailfin::run(self).await,
+            DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
+                mahi_mahi::run(self).await
+            }
             DagProtocol::Wahoo => wahoo::run(self).await,
         }
     }

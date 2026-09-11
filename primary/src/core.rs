@@ -65,14 +65,25 @@ pub struct Core {
     processing: HashMap<Round, HashSet<Digest>>,
     /// The last header we proposed (for which we are waiting votes).
     current_header: Header,
-    /// Aggregates votes into a certificate.
-    votes_aggregator: VotesAggregator,
+    /// Own headers that may still receive late votes.
+    own_headers: HashMap<Digest, Header>,
+    /// Aggregates votes into certificates, keyed by own header id.
+    votes_aggregators: HashMap<Digest, VotesAggregator>,
     /// Aggregates certificates to use as parents for new headers (Narwhal/Bullshark).
     certificates_aggregators: HashMap<Round, Box<CertificatesAggregator>>,
     /// Aggregates certificates to use as parents (Bullshark full-cert variant).
     certificates_vec_aggregators: HashMap<Round, Box<CertificatesVecAggregator>>,
     /// Certificates observed per round keyed by authority.
     certificates_by_round: HashMap<Round, HashMap<PublicKey, Certificate>>,
+    /// Certificates observed by certificate digest for incremental history checks.
+    certificates_by_digest: HashMap<Digest, Certificate>,
+    /// Lazy cache for reachable authors at one queried round from one root.
+    history_support_cache: HashMap<(Digest, Round), HashSet<PublicKey>>,
+    /// Lazy cache for whether one target header id is reachable from one root.
+    history_id_cache: HashMap<(Digest, Digest), bool>,
+    /// Votes for own blocks that arrived before their voter-round predecessor
+    /// quorum was visible in our local DAG.
+    pending_votes: HashMap<Digest, Vec<Vote>>,
     /// Next round whose completion we still need to signal to the proposer.
     next_round_to_signal: Round,
     /// Rounds for which we sent a proposer signal without QC (own cert not yet ready).
@@ -116,6 +127,10 @@ impl Core {
             .into_iter()
             .map(|certificate| (certificate.origin(), certificate))
             .collect();
+        let genesis_by_digest: HashMap<_, _> = genesis_by_authority
+            .values()
+            .map(|certificate| (certificate.digest(), certificate.clone()))
+            .collect();
         tokio::spawn(async move {
             Self {
                 name,
@@ -136,10 +151,15 @@ impl Core {
                 last_voted: HashMap::with_capacity(2 * gc_depth as usize),
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
                 current_header: Header::default(),
-                votes_aggregator: VotesAggregator::new(),
+                own_headers: HashMap::with_capacity(2 * gc_depth as usize),
+                votes_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_vec_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
+                certificates_by_digest: genesis_by_digest,
+                history_support_cache: HashMap::with_capacity(2 * gc_depth as usize),
+                history_id_cache: HashMap::with_capacity(2 * gc_depth as usize),
+                pending_votes: HashMap::with_capacity(2 * gc_depth as usize),
                 next_round_to_signal: 1,
                 pending_qc_signals: HashSet::new(),
                 #[cfg(feature = "benchmark")]
@@ -170,6 +190,185 @@ impl Core {
             .get(&round)
             .map(|by_authority| by_authority.values().map(|x| x.digest()).collect())
             .unwrap_or_default()
+    }
+
+    fn latest_ref_digests(&self, max_round: Round) -> Vec<Digest> {
+        self.committee
+            .authorities
+            .keys()
+            .filter_map(|name| {
+                self.certificates_by_round
+                    .values()
+                    .filter_map(|by_authority| by_authority.get(name))
+                    .filter(|certificate| certificate.round() <= max_round)
+                    .max_by_key(|certificate| certificate.round())
+                    .map(|certificate| certificate.digest())
+            })
+            .collect()
+    }
+
+    fn index_certificate(&mut self, certificate: &Certificate) {
+        self.certificates_by_digest
+            .insert(certificate.digest(), certificate.clone());
+    }
+
+    fn index_roots(&mut self, roots: &[Certificate]) {
+        for certificate in roots {
+            self.index_certificate(certificate);
+        }
+    }
+
+    fn reachable_authors_at_round(
+        &mut self,
+        root: &Digest,
+        round: Round,
+        visiting: &mut HashSet<Digest>,
+    ) -> Option<HashSet<PublicKey>> {
+        if let Some(authors) = self.history_support_cache.get(&(root.clone(), round)) {
+            return Some(authors.clone());
+        }
+
+        if !visiting.insert(root.clone()) {
+            return Some(HashSet::new());
+        }
+
+        let Some(certificate) = self.certificates_by_digest.get(root).cloned() else {
+            visiting.remove(root);
+            return None;
+        };
+
+        let mut authors = HashSet::new();
+        if certificate.round() == round {
+            authors.insert(certificate.origin());
+        } else if certificate.round() > round {
+            for parent in certificate
+                .header
+                .parents
+                .iter()
+                .chain(certificate.header.parents_2.iter())
+            {
+                let Some(parent_authors) = self.reachable_authors_at_round(parent, round, visiting)
+                else {
+                    visiting.remove(root);
+                    return None;
+                };
+                authors.extend(parent_authors);
+            }
+        }
+
+        visiting.remove(root);
+        self.history_support_cache
+            .insert((root.clone(), round), authors.clone());
+        Some(authors)
+    }
+
+    fn history_support_weight_from_roots(&mut self, roots: &[Certificate], round: Round) -> u32 {
+        self.index_roots(roots);
+
+        let mut authors = HashSet::new();
+        for root in roots {
+            let mut visiting = HashSet::new();
+            if let Some(root_authors) =
+                self.reachable_authors_at_round(&root.digest(), round, &mut visiting)
+            {
+                authors.extend(root_authors);
+            }
+        }
+
+        authors
+            .iter()
+            .map(|author| self.committee.stake(author))
+            .sum()
+    }
+
+    fn history_contains_header_from_root(
+        &mut self,
+        root: &Digest,
+        id: &Digest,
+        origin: PublicKey,
+        min_round: Round,
+        visiting: &mut HashSet<Digest>,
+    ) -> Option<bool> {
+        if let Some(contains) = self.history_id_cache.get(&(root.clone(), id.clone())) {
+            return Some(*contains);
+        }
+
+        if !visiting.insert(root.clone()) {
+            return Some(false);
+        }
+
+        let Some(certificate) = self.certificates_by_digest.get(root).cloned() else {
+            visiting.remove(root);
+            return None;
+        };
+
+        if certificate.header.id == *id
+            && certificate.origin() == origin
+            && certificate.round() == min_round
+        {
+            visiting.remove(root);
+            self.history_id_cache
+                .insert((root.clone(), id.clone()), true);
+            return Some(true);
+        } else if certificate.round() < min_round {
+            visiting.remove(root);
+            self.history_id_cache
+                .insert((root.clone(), id.clone()), false);
+            return Some(false);
+        } else {
+            let parents: Vec<_> = certificate
+                .header
+                .parents
+                .iter()
+                .chain(certificate.header.parents_2.iter())
+                .cloned()
+                .collect();
+            for parent in parents {
+                match self
+                    .history_contains_header_from_root(&parent, id, origin, min_round, visiting)
+                {
+                    Some(true) => {
+                        visiting.remove(root);
+                        self.history_id_cache
+                            .insert((root.clone(), id.clone()), true);
+                        return Some(true);
+                    }
+                    Some(false) => {}
+                    None => {
+                        visiting.remove(root);
+                        return None;
+                    }
+                }
+            }
+        }
+
+        visiting.remove(root);
+        self.history_id_cache
+            .insert((root.clone(), id.clone()), false);
+        Some(false)
+    }
+
+    fn history_contains_header_from_roots(
+        &mut self,
+        roots: &[Certificate],
+        id: &Digest,
+        origin: PublicKey,
+        round: Round,
+    ) -> bool {
+        self.index_roots(roots);
+
+        if roots
+            .iter()
+            .any(|root| root.header.id == *id && root.origin() == origin && root.round() == round)
+        {
+            return true;
+        }
+
+        roots.iter().any(|root| {
+            let mut visiting = HashSet::new();
+            self.history_contains_header_from_root(&root.digest(), id, origin, round, &mut visiting)
+                .unwrap_or(false)
+        })
     }
 
     #[cfg(feature = "benchmark")]
@@ -336,6 +535,72 @@ impl Core {
             }
 
             let previous_round = if round == 1 { 0 } else { round - 1 };
+
+            if self.dag_protocol.is_mahi_mahi() {
+                let signal = ProposerSignal {
+                    round: round + 1,
+                    parents_1,
+                    parents_2: Vec::new(),
+                    qc: None,
+                    certificates_1: Vec::new(),
+                };
+                self.tx_proposer
+                    .send(signal)
+                    .await
+                    .expect("Failed to send certificate");
+                self.next_round_to_signal += 1;
+                continue;
+            }
+
+            if self.dag_protocol.is_shortfin_family() {
+                let parents_1 = self.latest_ref_digests(round);
+                let own_certificate = by_authority
+                    .get(&self.name)
+                    .filter(|certificate| !certificate.votes.is_empty());
+                let qc = own_certificate.map(|c| Self::certificate_to_embedded_qc(c));
+                let needs_qc = round >= 1; // proposer target round >= 2
+                if needs_qc && qc.is_none() {
+                    #[cfg(feature = "benchmark")]
+                    self.diag_signal_blocked(
+                        round,
+                        "missing_own_qc",
+                        by_authority.len(),
+                        round_weight,
+                        self.committee.quorum_threshold(),
+                        parents_1.len(),
+                        previous_round,
+                        0,
+                        0,
+                        self.committee.quorum_threshold(),
+                        false,
+                    );
+                    break;
+                }
+
+                let signal = ProposerSignal {
+                    round: round + 1,
+                    parents_1,
+                    parents_2: Vec::new(),
+                    qc,
+                    certificates_1: Vec::new(),
+                };
+
+                self.tx_proposer
+                    .send(signal)
+                    .await
+                    .expect("Failed to send certificate");
+
+                #[cfg(feature = "benchmark")]
+                if self.diag_signal_blocked_round == Some(round) {
+                    self.diag_signal_blocked_round = None;
+                    self.diag_signal_blocked_since = None;
+                    self.diag_last_signal_block_log_at = None;
+                }
+
+                self.next_round_to_signal += 1;
+                continue;
+            }
+
             let parents_2 = self.round_digests(previous_round);
 
             let (_parents_2_authorities, parents_2_weight): (usize, u32) = self
@@ -434,9 +699,13 @@ impl Core {
     }
 
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
-        // Reset the votes aggregator.
+        // Track the own header so late votes can still assemble its QC after
+        // the proposer has moved on.
         self.current_header = header.clone();
-        self.votes_aggregator = VotesAggregator::new();
+        self.own_headers.insert(header.id.clone(), header.clone());
+        self.votes_aggregators
+            .entry(header.id.clone())
+            .or_insert_with(VotesAggregator::new);
 
         // Broadcast the new header in a reliable manner.
         let addresses = self
@@ -481,34 +750,26 @@ impl Core {
         } else {
             match self.dag_protocol {
                 DagProtocol::Shortfin | DagProtocol::Sailfin => {
-                    // Check first-hop parents (`r-1`).
-                    let mut stake_1 = 0;
-                    for x in &parents_1 {
+                    for certificate in &parents_1 {
                         ensure!(
-                            x.round() + 1 == header.round,
+                            certificate.round() < header.round,
                             DagError::MalformedHeader(header.id.clone())
                         );
-                        stake_1 += self.committee.stake(&x.origin());
                     }
+
+                    let support_round = header.round.saturating_sub(1);
+                    let stake_1 = self.history_support_weight_from_roots(&parents_1, support_round);
                     ensure!(
                         stake_1 >= self.committee.quorum_threshold(),
                         DagError::HeaderRequiresQuorum(header.id.clone())
                     );
 
-                    // Check second-hop parents (`r-2`) and embedded QC requirements.
-                    let mut stake_2 = 0;
-                    for x in &parents_2 {
-                        ensure!(
-                            x.round() + 2 == header.round,
-                            DagError::MalformedHeader(header.id.clone())
-                        );
-                        stake_2 += self.committee.stake(&x.origin());
-                    }
+                    ensure!(
+                        parents_2.is_empty(),
+                        DagError::MalformedHeader(header.id.clone())
+                    );
+
                     if header.round >= 2 {
-                        ensure!(
-                            stake_2 >= self.committee.quorum_threshold(),
-                            DagError::HeaderRequiresQuorum(header.id.clone())
-                        );
                         let qc = header
                             .qc
                             .as_ref()
@@ -518,15 +779,40 @@ impl Core {
                             DagError::MalformedHeader(header.id.clone())
                         );
                         ensure!(
-                            parents_1.iter().any(|certificate| {
-                                certificate.header.id == qc.target
-                                    && certificate.origin() == header.author
-                            }),
+                            self.history_contains_header_from_roots(
+                                &parents_1,
+                                &qc.target,
+                                header.author,
+                                qc.round,
+                            ),
                             DagError::MalformedHeader(header.id.clone())
                         );
+                        let mut checked_vote_support_rounds = HashSet::new();
+                        for vote in &qc.votes {
+                            ensure!(
+                                vote.voter_round >= vote.round,
+                                DagError::MalformedHeader(header.id.clone())
+                            );
+                            let vote_support_round = vote.voter_round.saturating_sub(1);
+                            if !checked_vote_support_rounds.insert(vote_support_round) {
+                                continue;
+                            }
+                            ensure!(
+                                self.history_support_weight_from_roots(
+                                    &parents_1,
+                                    vote_support_round
+                                ) >= self.committee.quorum_threshold(),
+                                DagError::HeaderRequiresQuorum(header.id.clone())
+                            );
+                        }
                     }
                 }
-                DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
+                DagProtocol::Narwhal
+                | DagProtocol::Bullshark
+                | DagProtocol::MahiMahi
+                | DagProtocol::MahiMahi4
+                | DagProtocol::MahiMahi5
+                | DagProtocol::Wahoo => {
                     // Single-parent validation: r-1 parents must form a quorum.
                     let mut stake_1 = 0;
                     for x in &parents_1 {
@@ -558,6 +844,10 @@ impl Core {
         let bytes = bincode::serialize(header).expect("Failed to serialize header");
         self.store.write(header.id.to_vec(), bytes).await;
 
+        if self.dag_protocol.is_mahi_mahi() {
+            return Ok(());
+        }
+
         // Check if we can vote for this header.
         if self
             .last_voted
@@ -566,25 +856,11 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            // Shortfin-family 流水线设计：使用 header.round 而非投票者当前轮次。
-            //
-            // 设计文档将 voter_round 定义为"投票者当前所处轮次"，但在
-            // Shortfin-family 流水线中，投票者投票时可能已推进到更高轮次（例如
-            // 对 r-3 轮 Leader 投票时，投票者已处于 r-1 轮）。若使用实际
-            // 轮次，voter_round 可能 ≥ commit_round，导致 Section 6 QC
-            // 链检查拒绝有效 QC，阻塞提交。
-            //
-            // 使用 header.round 的安全性：
-            // 1. qc.round < commit_round 已约束 QC 形成时间早于提交轮
-            // 2. qc.target == parent.id  防止跨块 QC 重放
-            // 3. QC 嵌入已签名 Header 中，摘要包含全部投票数据，无法伪造
-            let vote = Vote::new(
-                header,
-                header.round,
-                &self.name,
-                &mut self.signature_service,
-            )
-            .await;
+            // The default earlier-ref-only layout cannot expose predecessor
+            // support above the target block's logical round.
+            let voter_round = header.round;
+            let vote =
+                Vote::new(header, voter_round, &self.name, &mut self.signature_service).await;
             debug!("Created {:?}", vote);
             if vote.origin == self.name {
                 self.process_vote(vote)
@@ -608,8 +884,9 @@ impl Core {
         Ok(())
     }
 
-    /// Shortfin-family protocols: peer blocks never arrive as independent Certificates — the
-    /// author's QC is piggybacked inside the next round's header.qc field.
+    /// Uncertified DAG protocols: peer blocks never arrive as independent Certificates.
+    /// Shortfin-family carries the author's QC in the next header; Mahi-Mahi
+    /// has no votes at all and treats the signed header itself as the block.
     /// To keep the downstream DAG-tracking logic uniform, we synthesize a
     /// local empty-votes Certificate from every peer Header we successfully
     /// processed. The consensus layer only reads certificate.header.* fields
@@ -618,8 +895,8 @@ impl Core {
     /// the direct Header dispatch points — never inside process_certificate's
     /// header-processing path, to avoid double-emitting a cert for the same
     /// block.
-    async fn maybe_synthesize_peer_cert(&mut self, header: &Header) {
-        if !self.dag_protocol.is_shortfin_family() || header.author == self.name {
+    async fn maybe_synthesize_uncertified_cert(&mut self, header: &Header) {
+        if !self.dag_protocol.is_uncertified_dag() {
             return;
         }
         let synthetic = Certificate {
@@ -635,10 +912,16 @@ impl Core {
     async fn process_vote(&mut self, vote: Vote) -> DagResult<()> {
         debug!("Processing {:?}", vote);
 
+        let Some(header) = self.own_headers.get(&vote.id).cloned() else {
+            return Err(DagError::UnexpectedVote(vote.id.clone()));
+        };
+
         // Add it to the votes' aggregator and try to make a new certificate.
-        if let Some(certificate) =
-            self.votes_aggregator
-                .append(vote, &self.committee, &self.current_header)?
+        if let Some(certificate) = self
+            .votes_aggregators
+            .entry(header.id.clone())
+            .or_insert_with(VotesAggregator::new)
+            .append(vote, &self.committee, &header)?
         {
             debug!("Assembled {:?}", certificate);
 
@@ -646,7 +929,7 @@ impl Core {
             // is the 3rd network phase). Shortfin-family protocols skip this phase entirely:
             // the QC is delivered by piggybacking inside the next round's
             // header.qc field, saving one delta of latency per round.
-            if !self.dag_protocol.is_shortfin_family() {
+            if !self.dag_protocol.is_uncertified_dag() {
                 let addresses = self
                     .committee
                     .others_primaries(&self.name)
@@ -698,9 +981,13 @@ impl Core {
         }
 
         match self.dag_protocol {
-            DagProtocol::Shortfin | DagProtocol::Sailfin => {
-                // Shortfin-family certificates are never broadcast: peer blocks arrive
-                // as headers and are synthesised locally with empty votes.
+            DagProtocol::Shortfin
+            | DagProtocol::Sailfin
+            | DagProtocol::MahiMahi
+            | DagProtocol::MahiMahi4
+            | DagProtocol::MahiMahi5 => {
+                // Uncertified DAG certificates are never broadcast: peer blocks
+                // arrive as headers and are synthesized locally with empty votes.
                 // Store them after local header validation so HeaderWaiter
                 // notify_read() calls wake up and helpers can answer sync
                 // requests for locally observed Shortfin-family parents.
@@ -713,11 +1000,17 @@ impl Core {
                     .entry(certificate.round())
                     .or_insert_with(HashMap::new)
                     .insert(certificate.origin(), certificate.clone());
+                self.index_certificate(&certificate);
 
+                self.process_pending_votes().await?;
                 self.try_signal_proposer().await;
 
-                // If this is our own newly-formed certificate, send a QC follow-up.
-                if certificate.origin() == self.name {
+                // Shortfin-family only: if this is our own newly-formed
+                // certificate, send a QC follow-up.
+                if self.dag_protocol.is_shortfin_family()
+                    && certificate.origin() == self.name
+                    && !certificate.votes.is_empty()
+                {
                     self.send_qc_signal(&certificate).await;
                 }
             }
@@ -808,20 +1101,92 @@ impl Core {
 
     fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
         ensure!(
-            self.current_header.round <= vote.round,
+            self.gc_round <= vote.round,
             DagError::TooOld(vote.digest(), vote.round)
         );
 
-        // Ensure we receive a vote on the expected header.
+        let Some(header) = self.own_headers.get(&vote.id) else {
+            return Err(DagError::UnexpectedVote(vote.id.clone()));
+        };
         ensure!(
-            vote.id == self.current_header.id
-                && vote.origin == self.current_header.author
-                && vote.round == self.current_header.round,
+            vote.origin == header.author && vote.round == header.round,
+            DagError::UnexpectedVote(vote.id.clone())
+        );
+
+        ensure!(
+            vote.voter_round >= vote.round,
             DagError::UnexpectedVote(vote.id.clone())
         );
 
         // Verify the vote.
         vote.verify(&self.committee).map_err(DagError::from)
+    }
+
+    fn vote_pending_reason(&self, vote: &Vote) -> Option<&'static str> {
+        if vote.voter_round == 0 {
+            return None;
+        }
+
+        let predecessor_weight = self
+            .certificates_by_round
+            .get(&(vote.voter_round - 1))
+            .map(|by_authority| {
+                by_authority
+                    .keys()
+                    .map(|author| self.committee.stake(author))
+                    .sum::<u32>()
+            })
+            .unwrap_or_default();
+        if predecessor_weight >= self.committee.quorum_threshold() {
+            None
+        } else {
+            Some("missing_predecessor_quorum")
+        }
+    }
+
+    fn cache_pending_vote(&mut self, vote: Vote) {
+        debug!(
+            "Caching vote {:?}: missing predecessor quorum for voter {} round {}",
+            vote.digest(),
+            vote.author,
+            vote.voter_round
+        );
+        self.pending_votes
+            .entry(vote.id.clone())
+            .or_insert_with(Vec::new)
+            .push(vote);
+    }
+
+    async fn process_vote_when_countable(&mut self, vote: Vote) -> DagResult<()> {
+        if self.vote_pending_reason(&vote).is_none() {
+            self.process_vote(vote).await
+        } else {
+            self.cache_pending_vote(vote);
+            Ok(())
+        }
+    }
+
+    async fn process_pending_votes(&mut self) -> DagResult<()> {
+        let pending_votes = std::mem::take(&mut self.pending_votes);
+        if pending_votes.is_empty() {
+            return Ok(());
+        }
+
+        for (id, pending) in pending_votes {
+            let mut still_pending = Vec::new();
+            for vote in pending {
+                if self.vote_pending_reason(&vote).is_none() {
+                    self.process_vote(vote).await?;
+                } else {
+                    still_pending.push(vote);
+                }
+            }
+
+            if !still_pending.is_empty() {
+                self.pending_votes.insert(id, still_pending);
+            }
+        }
+        Ok(())
     }
 
     async fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
@@ -851,16 +1216,19 @@ impl Core {
                                 error => error,
                             };
                             if result.is_ok() {
-                                self.maybe_synthesize_peer_cert(&header).await;
+                                self.maybe_synthesize_uncertified_cert(&header).await;
                             }
                             result
                         },
-                        PrimaryMessage::Vote(vote) => {
-                            match self.sanitize_vote(&vote) {
-                                Ok(()) => self.process_vote(vote).await,
-                                error => error,
-                            }
-                        },
+                PrimaryMessage::Vote(vote) => {
+                    match self.sanitize_vote(&vote) {
+                        Ok(()) if self.dag_protocol.is_shortfin_family() => {
+                            self.process_vote_when_countable(vote).await
+                        }
+                        Ok(()) => self.process_vote(vote).await,
+                        error => error,
+                    }
+                },
                         PrimaryMessage::Certificate(certificate) => {
                             match self.sanitize_certificate(&certificate).await {
                                 Ok(()) => self.process_certificate(certificate).await,
@@ -876,7 +1244,7 @@ impl Core {
                 Some(header) = self.rx_header_waiter.recv() => {
                     let result = self.process_header(&header).await;
                     if result.is_ok() {
-                        self.maybe_synthesize_peer_cert(&header).await;
+                        self.maybe_synthesize_uncertified_cert(&header).await;
                     }
                     result
                 },
@@ -887,7 +1255,13 @@ impl Core {
                 Some(certificate) = self.rx_certificate_waiter.recv() => self.process_certificate(certificate).await,
 
                 // We also receive here our new headers created by the `Proposer`.
-                Some(header) = self.rx_proposer.recv() => self.process_own_header(header).await,
+                Some(header) = self.rx_proposer.recv() => {
+                    let result = self.process_own_header(header.clone()).await;
+                    if result.is_ok() {
+                        self.maybe_synthesize_uncertified_cert(&header).await;
+                    }
+                    result
+                },
             };
             match result {
                 Ok(()) => (),
@@ -905,9 +1279,31 @@ impl Core {
                 let gc_round = round - self.gc_depth;
                 self.last_voted.retain(|k, _| k >= &gc_round);
                 self.processing.retain(|k, _| k >= &gc_round);
+                self.own_headers
+                    .retain(|_, header| header.round >= gc_round);
+                let live_own_headers: HashSet<_> = self.own_headers.keys().cloned().collect();
+                self.votes_aggregators
+                    .retain(|id, _| live_own_headers.contains(id));
                 self.certificates_aggregators.retain(|k, _| k >= &gc_round);
                 self.certificates_vec_aggregators
                     .retain(|k, _| k >= &gc_round);
+                self.certificates_by_round.retain(|k, _| k >= &gc_round);
+                let live_digests: HashSet<_> = self
+                    .certificates_by_round
+                    .values()
+                    .flat_map(|by_authority| {
+                        by_authority
+                            .values()
+                            .map(|certificate| certificate.digest())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                self.certificates_by_digest
+                    .retain(|digest, _| live_digests.contains(digest));
+                self.history_support_cache
+                    .retain(|(digest, _), _| live_digests.contains(digest));
+                self.history_id_cache
+                    .retain(|(digest, _), _| live_digests.contains(digest));
                 self.cancel_handlers.retain(|k, _| k >= &gc_round);
                 self.gc_round = gc_round;
             }

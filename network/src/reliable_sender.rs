@@ -187,7 +187,10 @@ impl Connection {
         // which we are still waiting to receive an ACK.
         let mut pending_replies = VecDeque::new();
         let buf_len = self.buffer.len();
-        info!("Connection to {}: keep_alive starting with {} buffered messages", self.address, buf_len);
+        info!(
+            "Connection to {}: keep_alive starting with {} buffered messages",
+            self.address, buf_len
+        );
 
         let (mut writer, mut reader) = Framed::new(stream, LengthDelimitedCodec::new()).split();
         let error = 'connection: loop {

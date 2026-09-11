@@ -22,7 +22,7 @@
 // that a Rust Wahoo node cannot interoperate over the wire with a Go
 // Wahoo node, which is expected for a port.
 
-use crate::messages::{Header, RecpMessage, Vote};
+use crate::messages::{Certificate, Header, RecpMessage, Vote};
 use crate::primary::PrimaryMessage;
 use crate::wahoo::messages::SignedWahoo;
 use bytes::Bytes;
@@ -60,8 +60,8 @@ pub async fn broadcast_recp(
     self_name: &PublicKey,
     recp: RecpMessage,
 ) -> Vec<CancelHandler> {
-    let bytes = bincode::serialize(&PrimaryMessage::Recp(recp))
-        .expect("Failed to serialize RECP message");
+    let bytes =
+        bincode::serialize(&PrimaryMessage::Recp(recp)).expect("Failed to serialize RECP message");
     let addresses: Vec<SocketAddr> = committee
         .others_primaries(self_name)
         .into_iter()
@@ -91,6 +91,25 @@ pub async fn broadcast_header(
     sender.broadcast(addresses, Bytes::from(bytes)).await
 }
 
+/// Broadcast the PBC delivery certificate. This is Wahoo's PBC third
+/// communication step: recipients verify the certificate before delivering
+/// the proposal into the DAG.
+pub async fn broadcast_certificate(
+    sender: &mut ReliableSender,
+    committee: &Committee,
+    self_name: &PublicKey,
+    certificate: Certificate,
+) -> Vec<CancelHandler> {
+    let bytes = bincode::serialize(&PrimaryMessage::Certificate(certificate))
+        .expect("Failed to serialize Wahoo PBC Certificate");
+    let addresses: Vec<SocketAddr> = committee
+        .others_primaries(self_name)
+        .into_iter()
+        .map(|(_, addrs)| addrs.primary_to_primary)
+        .collect();
+    sender.broadcast(addresses, Bytes::from(bytes)).await
+}
+
 /// Phase B Step 3d: unicast a Wahoo PB vote as a first-class
 /// `PrimaryMessage::Vote(_)` envelope. Same authentication model as
 /// `broadcast_header`: caller has already populated `vote.signature`.
@@ -100,8 +119,8 @@ pub async fn send_vote(
     target: &PublicKey,
     vote: Vote,
 ) -> CancelHandler {
-    let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
-        .expect("Failed to serialize Wahoo Vote");
+    let bytes =
+        bincode::serialize(&PrimaryMessage::Vote(vote)).expect("Failed to serialize Wahoo Vote");
     let address = committee
         .primary(target)
         .expect("Wahoo send target not in committee")

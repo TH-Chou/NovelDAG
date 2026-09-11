@@ -119,14 +119,8 @@ fn leader<'a>(
     by_round.get(&leader)
 }
 
-
-
 /// Order the past leaders that we didn't already commit.
-fn order_leaders(
-    consensus: &Consensus,
-    leader: &Certificate,
-    state: &State,
-) -> Vec<Certificate> {
+fn order_leaders(consensus: &Consensus, leader: &Certificate, state: &State) -> Vec<Certificate> {
     let mut to_commit = vec![leader.clone()];
     let mut current = leader;
     for r in (state.last_committed_round + 2..=current.round() - 2)

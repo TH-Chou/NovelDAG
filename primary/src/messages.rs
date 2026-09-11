@@ -331,12 +331,12 @@ impl Header {
                     );
                 } else if self.round == 1 {
                     ensure!(
-                        self.parents_2.is_empty() && self.qc.is_none(),
+                        !self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
                         DagError::MalformedHeader(self.id.clone())
                     );
                 } else {
                     ensure!(
-                        !self.parents_2.is_empty() && self.qc.is_some(),
+                        !self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_some(),
                         DagError::MalformedHeader(self.id.clone())
                     );
                 }
@@ -351,12 +351,32 @@ impl Header {
                     );
                 } else {
                     ensure!(
-                        !self.parents.is_empty(),
+                        self.round == 1 || !self.parents.is_empty(),
                         DagError::MalformedHeader(self.id.clone())
                     );
                 }
                 // Phase A invariant: only Wahoo headers may carry wahoo_tag
                 // or leader_link.
+                ensure!(
+                    self.wahoo_tag.is_none() && self.leader_link.is_none(),
+                    DagError::MalformedHeader(self.id.clone())
+                );
+            }
+            DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
+                // Mahi-Mahi runs on an uncertified DAG: a signed block with a
+                // quorum of previous-round references is the DAG unit. It does
+                // not carry Shortfin's second-hop parents/QC or Wahoo metadata.
+                if self.round == 0 {
+                    ensure!(
+                        self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                } else {
+                    ensure!(
+                        !self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                }
                 ensure!(
                     self.wahoo_tag.is_none() && self.leader_link.is_none(),
                     DagError::MalformedHeader(self.id.clone())
@@ -729,11 +749,11 @@ impl Certificate {
         // Check the embedded header.
         self.header.verify(committee, dag_protocol)?;
 
-        // Shortfin-family protocols carry peer certificates implicitly through signed headers
-        // and embedded QCs. Locally synthesized certificates intentionally have
-        // empty vote sets; for Shortfin-family protocols the signed header is the object we need
-        // to store, sync, and use as a DAG parent.
-        if dag_protocol.is_shortfin_family() && self.votes.is_empty() {
+        // Uncertified DAG protocols carry their DAG units as signed headers.
+        // Locally synthesized certificates intentionally have empty vote sets;
+        // the certificate wrapper only keeps the storage/synchronizer/consensus
+        // interfaces uniform.
+        if dag_protocol.is_uncertified_dag() && self.votes.is_empty() {
             return Ok(());
         }
 

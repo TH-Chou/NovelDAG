@@ -1,14 +1,17 @@
-use crate::messages::{LeaderLink, LeaderProof, RecpMessage, WahooTag};
+use crate::aggregators::{WahooQuorum, WahooVotesAggregator};
+use crate::messages::{
+    Certificate, LeaderLink, LeaderProof, RecpMessage, WahooTag, WahooVotePhase,
+};
 use crate::primary::Round;
 use crate::wahoo::messages::{
-    SignedWahoo, WahooBlock, WahooDone, WahooElect, WahooMessage, WahooReady,
+    SignedWahoo, WahooBlock, WahooDone, WahooElect, WahooMessage, WahooReady, WahooVote,
 };
 use crate::wahoo::msg_send;
 use crate::wahoo::pb::{Pb, PbAction};
 use crate::wahoo::tools::unix_nano_now;
 use bytes::Bytes;
 use config::{Committee, Stake, WorkerId};
-use crypto::{Digest, Hash as _, PublicKey, SignatureService};
+use crypto::{Digest, Hash as _, PublicKey, Signature, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -52,6 +55,7 @@ pub struct Node {
     /// aggregate signature used by `LeaderProof::ExclusiveCommit`.
     recp_threshold: usize,
     batch_size: usize,
+    header_size: usize,
 
     // ---- crypto ----
     signature_service: SignatureService,
@@ -79,6 +83,11 @@ pub struct Node {
     /// every parent reference is a raw digest and we recover the author
     /// (and the parent's full block) via this index.
     blocks_by_digest: HashMap<Digest, WahooBlock>,
+    /// Odd-round EPBC proposals waiting for TS1/TS2/TF certificates.
+    epbc_blocks: HashMap<Round, HashMap<PublicKey, WahooBlock>>,
+    epbc_votes: HashMap<(Round, PublicKey), WahooVotesAggregator>,
+    epbc_delivered: HashMap<Round, HashMap<PublicKey, WahooVotePhase>>,
+    epbc_cert_sent: HashSet<(Round, PublicKey, WahooVotePhase)>,
     /// Committed blocks.
     chain: Chain,
 
@@ -161,6 +170,7 @@ impl Node {
         committee: Committee,
         signature_service: SignatureService,
         batch_size: usize,
+        header_size: usize,
         rx_messages: Receiver<WahooMessage>,
         rx_workers: Receiver<(Digest, WorkerId)>,
         rx_recp: Receiver<RecpMessage>,
@@ -189,12 +199,17 @@ impl Node {
             elect_threshold,
             recp_threshold,
             batch_size,
+            header_size,
             signature_service,
             sender: ReliableSender::new(),
             cancel_handlers: Vec::new(),
             dag: HashMap::new(),
             pending_blocks: HashMap::new(),
             blocks_by_digest: HashMap::new(),
+            epbc_blocks: HashMap::new(),
+            epbc_votes: HashMap::new(),
+            epbc_delivered: HashMap::new(),
+            epbc_cert_sent: HashSet::new(),
             chain: Chain {
                 round: 0,
                 blocks: HashMap::new(),
@@ -488,8 +503,19 @@ impl Node {
                 }
             }
             WahooMessage::Vote(v) => {
-                let actions = self.pb.handle_vote(v);
+                if v.round % 2 == 0 {
+                    let actions = self.pb.handle_vote(v);
+                    self.dispatch_pb_actions(actions).await;
+                } else {
+                    self.handle_epbc_vote(v).await;
+                }
+            }
+            WahooMessage::PbcCertificate(c) => {
+                let actions = self.pb.handle_certificate(c);
                 self.dispatch_pb_actions(actions).await;
+            }
+            WahooMessage::EpbcCertificate(c) => {
+                self.handle_epbc_certificate(c).await;
             }
             WahooMessage::Elect(e) => self.handle_elect(e).await,
             WahooMessage::Ready(r) => self.handle_ready(r).await,
@@ -533,24 +559,12 @@ impl Node {
                         msg_send::send_vote(&mut self.sender, &self.committee, &target, vote).await;
                     self.cancel_handlers.push(h);
                 }
-                PbAction::BroadcastBlock2(block, _pbc_cert) => {
-                    // `_pbc_cert` carries the 2f+1 PBC quorum evidence
-                    // assembled by `WahooVotesAggregator`. Phase D will
-                    // route it onto the wire as `Certificate` directly;
-                    // for now we keep emitting Block2 (a synthesised
-                    // empty header carrying `wahoo_tag = PbcVoteComplete`)
-                    // but it now travels as `PrimaryMessage::Header`,
-                    // signed inline.
-                    let mut block = block;
-                    block.signature = self
-                        .signature_service
-                        .request_signature(block.id.clone())
-                        .await;
-                    let hs = msg_send::broadcast_header(
+                PbAction::BroadcastCertificate(certificate) => {
+                    let hs = msg_send::broadcast_certificate(
                         &mut self.sender,
                         &self.committee,
                         &self.name,
-                        block,
+                        certificate,
                     )
                     .await;
                     self.cancel_handlers.extend(hs);
@@ -577,18 +591,135 @@ impl Node {
         let hash = block.digest();
         let round = block.round;
         let sender = block.author;
-        info!("Wahoo fast_block round={} sender={}", round, sender);
-        // Fast-path blocks are inserted into DAG immediately.
-        self.try_to_update_dag(block).await;
-        // Send Ready unless we have already advanced past this odd round.
-        // (Mirrors `n.blockSend[block.Round+1]` check in Go.)
+        info!("Wahoo epbc proposal round={} sender={}", round, sender);
+        self.epbc_blocks
+            .entry(round)
+            .or_insert_with(HashMap::new)
+            .insert(sender, block.clone());
+        if !self.check_whether_can_add_to_dag(&block) {
+            self.block_query += 1;
+            return;
+        }
+        // EPBC merged fast/slow path: receivers return TS1 and TF shares
+        // on the raw proposal. TS1 may later trigger a TS2 share.
         if !self.block_send.contains(&(round + 1)) {
-            self.send_ready(round, hash, sender).await;
+            self.send_epbc_vote(round, hash.clone(), sender, WahooVotePhase::Ts1)
+                .await;
+            self.send_epbc_vote(round, hash, sender, WahooVotePhase::Tf)
+                .await;
         } else {
             info!(
-                "Wahoo fast_block: skip Ready for round={} (already sent r+1)",
+                "Wahoo epbc proposal: skip votes for round={} (already sent r+1)",
                 round
             );
+        }
+    }
+
+    fn handle_epbc_vote(&mut self, vote: WahooVote) -> futures::future::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let round = vote.round;
+            let origin = vote.origin;
+            let header = match self
+                .epbc_blocks
+                .get(&round)
+                .and_then(|m| m.get(&origin))
+                .cloned()
+            {
+                Some(h) => h,
+                None => return,
+            };
+            let aggregator = self
+                .epbc_votes
+                .entry((round, origin))
+                .or_insert_with(WahooVotesAggregator::new);
+            let quorum = match aggregator.append(vote, &self.committee, &header) {
+                Ok(Some(q)) => q,
+                Ok(None) => return,
+                Err(_) => return,
+            };
+            let (cert_phase, cert) = match quorum {
+                WahooQuorum::Ts1(c) => (WahooVotePhase::Ts1, c),
+                WahooQuorum::Ts2(c) => (WahooVotePhase::Ts2, c),
+                WahooQuorum::Tf(c) => (WahooVotePhase::Tf, c),
+                WahooQuorum::Pbc(_) => return,
+            };
+            if !self.epbc_cert_sent.insert((round, origin, cert_phase)) {
+                return;
+            }
+            info!(
+                "Wahoo epbc quorum phase={:?} round={} proposer={} votes={}",
+                cert_phase,
+                round,
+                origin,
+                cert.votes.len()
+            );
+            self.broadcast_epbc_certificate(cert.clone()).await;
+            self.handle_epbc_certificate(cert).await;
+        })
+    }
+
+    async fn handle_epbc_certificate(&mut self, certificate: Certificate) {
+        let phase = match certificate.votes.first().and_then(|v| v.wahoo_phase) {
+            Some(p) => p,
+            None => return,
+        };
+        let round = certificate.round();
+        let origin = certificate.origin();
+        self.epbc_blocks
+            .entry(round)
+            .or_insert_with(HashMap::new)
+            .insert(origin, certificate.header.clone());
+        info!(
+            "Wahoo epbc certificate phase={:?} round={} proposer={} votes={}",
+            phase,
+            round,
+            origin,
+            certificate.votes.len()
+        );
+        match phase {
+            WahooVotePhase::Ts1 => {
+                self.send_epbc_vote(
+                    round,
+                    certificate.header.id.clone(),
+                    origin,
+                    WahooVotePhase::Ts2,
+                )
+                .await;
+            }
+            WahooVotePhase::Ts2 | WahooVotePhase::Tf => {
+                let already = self
+                    .epbc_delivered
+                    .entry(round)
+                    .or_insert_with(HashMap::new)
+                    .insert(origin, phase)
+                    .is_some();
+                if already {
+                    return;
+                }
+                info!(
+                    "Wahoo epbc deliver phase={:?} round={} proposer={} votes={}",
+                    phase,
+                    round,
+                    origin,
+                    certificate.votes.len()
+                );
+                let block = certificate.header.clone();
+                self.try_to_update_dag(block).await;
+                let done = WahooDone {
+                    done_sender: self.name,
+                    block_sender: origin,
+                    done: certificate
+                        .votes
+                        .iter()
+                        .map(|v| (v.author, v.signature.to_bytes().to_vec()))
+                        .collect(),
+                    hash: certificate.header.id.clone(),
+                    round,
+                };
+                self.handle_done(done.clone()).await;
+                self.broadcast_done(done).await;
+            }
+            WahooVotePhase::Pbc => {}
         }
     }
 
@@ -610,6 +741,13 @@ impl Node {
             "Done received from {} round {} (proposer {})",
             done.done_sender, done.round, done.block_sender
         );
+        if !self.verify_done_proof(&done) {
+            warn!(
+                "Wahoo Done: invalid proof from {} round {} for {}; dropping",
+                done.done_sender, done.round, done.block_sender
+            );
+            return;
+        }
         self.store_done(&done);
         let round = done.round;
         self.try_to_next_round(round).await;
@@ -717,6 +855,46 @@ impl Node {
         self.cancel_handlers.push(h);
     }
 
+    async fn send_epbc_vote(
+        &mut self,
+        round: Round,
+        block_id: Digest,
+        block_sender: PublicKey,
+        phase: WahooVotePhase,
+    ) {
+        let mut vote = WahooVote {
+            id: block_id,
+            round,
+            voter_round: round,
+            origin: block_sender,
+            author: self.name,
+            wahoo_phase: Some(phase),
+            ..WahooVote::default()
+        };
+        vote.signature = self
+            .signature_service
+            .request_signature(vote.digest())
+            .await;
+        if block_sender == self.name {
+            self.handle_epbc_vote(vote).await;
+        } else {
+            let h =
+                msg_send::send_vote(&mut self.sender, &self.committee, &block_sender, vote).await;
+            self.cancel_handlers.push(h);
+        }
+    }
+
+    async fn broadcast_epbc_certificate(&mut self, certificate: Certificate) {
+        let hs = msg_send::broadcast_certificate(
+            &mut self.sender,
+            &self.committee,
+            &self.name,
+            certificate,
+        )
+        .await;
+        self.cancel_handlers.extend(hs);
+    }
+
     /// `msg_send.go::broadcastElect`.
     async fn broadcast_elect(&mut self, round: Round) {
         let partial_sig = crypto::make_coin_share(
@@ -764,6 +942,50 @@ impl Node {
             .entry(ready.block_sender)
             .or_insert_with(HashMap::new)
             .insert(ready.ready_sender, ready.partial_sig.clone());
+    }
+
+    fn verify_done_proof(&self, done: &WahooDone) -> bool {
+        if self.committee.stake(&done.done_sender) == 0
+            || self.committee.stake(&done.block_sender) == 0
+        {
+            return false;
+        }
+        let mut used = HashSet::new();
+        for (author, bytes) in &done.done {
+            if self.committee.stake(author) == 0 || !used.insert(*author) {
+                return false;
+            }
+            let sig = match Signature::from_bytes(bytes) {
+                Ok(sig) => sig,
+                Err(_) => return false,
+            };
+            let signed_tf = WahooVote {
+                id: done.hash.clone(),
+                round: done.round,
+                voter_round: done.round,
+                origin: done.block_sender,
+                author: *author,
+                wahoo_phase: Some(WahooVotePhase::Tf),
+                signature: sig.clone(),
+            };
+            let signed_ts2 = WahooVote {
+                wahoo_phase: Some(WahooVotePhase::Ts2),
+                ..signed_tf.clone()
+            };
+            let signed_ready = sig.verify(&done.hash, author).is_ok();
+            let signed_delivery_vote = signed_tf
+                .signature
+                .verify(&signed_tf.digest(), author)
+                .is_ok()
+                || signed_ts2
+                    .signature
+                    .verify(&signed_ts2.digest(), author)
+                    .is_ok();
+            if !signed_ready && !signed_delivery_vote {
+                return false;
+            }
+        }
+        used.len() >= self.quorum_num
     }
 
     fn store_elect(&mut self, elect: &WahooElect) {
@@ -937,21 +1159,29 @@ impl Node {
             "Wahoo Ready count: round={} block_sender={} count={}/{}",
             round, block_sender, count, self.node_num
         );
-        // Paper ALGepbc dual-path (Section IV-B):
-        //   Fast path (TF):  broadcaster receives n    Readies → Done immediately.
-        //   Slow path (TS1): broadcaster receives n-f  Readies → Done as well.
-        // n-f == quorum_num in this codebase (ceil(2n/3) >= n-f for all n,f).
-        // We only broadcast Done for our own block (block_sender == self.name).
-        let threshold_met = block_sender == self.name
-            && count >= self.quorum_num
-            && !self.done_send.contains(&round);
+        // Paper ALGepbc fast path (TF): the broadcaster receives n Ready
+        // shares before broadcasting the delivery proof. Slow-path TS1/TS2
+        // is not modelled by this Wahoo port; using quorum here would
+        // incorrectly turn the TF path into an n-f path.
+        let threshold_met =
+            block_sender == self.name && count >= self.node_num && !self.done_send.contains(&round);
         if threshold_met {
             self.done_send.insert(round);
+            let proof = self
+                .ready
+                .get(&round)
+                .and_then(|m| m.get(&block_sender))
+                .map(|m| {
+                    m.iter()
+                        .map(|(author, sig)| (*author, sig.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             let done = WahooDone {
                 done_sender: self.name,
                 block_sender,
-                done: Vec::new(),
-                hash: Digest::default(),
+                done: proof,
+                hash: ready.hash,
                 round,
             };
             self.handle_done(done.clone()).await;
@@ -1203,12 +1433,32 @@ impl Node {
     // ============================================================
 
     fn new_block(&mut self, round: Round, parents: BTreeSet<Digest>) -> WahooBlock {
-        // Pack as many pending worker-batch digests as we have. We do
-        // not gate round advancement on payload size — Wahoo rounds are
-        // driven by Done/Ready quorums, not by `header_size` like
-        // `Proposer`. Empty blocks are legal and just have no Created/
-        // Committed lines, which is fine for the benchmark.
-        let payload_digests: BTreeMap<Digest, WorkerId> = self.pending_digests.drain(..).collect();
+        // Pack pending worker-batch digests up to the same payload-size
+        // threshold used by the regular proposer. Wahoo's rounds are still
+        // protocol-driven, but a single round should not consume an
+        // unbounded backlog while other protocols respect `header_size`.
+        let mut payload_digests: BTreeMap<Digest, WorkerId> = BTreeMap::new();
+        let mut payload_size = 0usize;
+        while !self.pending_digests.is_empty()
+            && (payload_size < self.header_size || payload_digests.is_empty())
+        {
+            let (digest, wid) = self.pending_digests.remove(0);
+            payload_size += digest.size();
+            payload_digests.insert(digest, wid);
+        }
+        if std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("invalid_payload") {
+            let mut fake = [0u8; 32];
+            fake[..8].copy_from_slice(&round.to_le_bytes());
+            fake[8..16].copy_from_slice(&self.name.0[..8]);
+            fake[16] = 0xB7;
+            let digest = Digest(fake);
+            payload_digests.insert(digest.clone(), 0);
+            log::warn!(
+                "Byzantine invalid_payload: injected fake batch {:?} in Wahoo block round {}",
+                digest,
+                round
+            );
+        }
         // `txs` is left empty: the protocol never inspects it, and the
         // benchmark accounting now flows through `payload_digests` ->
         // worker-emitted `Batch ... contains ... B` lines, identical to
@@ -1349,6 +1599,7 @@ mod tests {
             committee,
             sig_service,
             4,
+            32,
             rx_msg,
             rx_workers,
             rx_recp,
@@ -1386,6 +1637,7 @@ mod tests {
             committee,
             sig_service,
             1,
+            32,
             rx_msg,
             rx_workers,
             rx_recp,
@@ -1456,6 +1708,7 @@ mod tests {
             committee,
             sig_service,
             1,
+            32,
             rx_msg,
             rx_workers,
             rx_recp,
@@ -1541,6 +1794,7 @@ mod tests {
             committee,
             sig_service,
             1,
+            32,
             rx_msg,
             rx_workers,
             rx_recp,

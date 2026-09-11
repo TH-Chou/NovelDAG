@@ -1,15 +1,15 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use ed25519_dalek as dalek;
-use ed25519_dalek::Digest as _;
 use ed25519_dalek::ed25519;
+use ed25519_dalek::Digest as _;
 use ed25519_dalek::Sha512;
 use ed25519_dalek::Signer as _;
 use rand::rngs::OsRng;
-use rand::{CryptoRng, RngCore};
 use rand::SeedableRng as _;
+use rand::{CryptoRng, RngCore};
 use serde::{de, ser, Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::array::TryFromSliceError;
+use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use threshold_crypto::{PublicKeySet, SecretKeySet, SignatureShare};
@@ -206,6 +206,17 @@ impl Signature {
         self.flatten()
     }
 
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let signature: dalek::Signature = ed25519::signature::Signature::from_bytes(bytes)?;
+        let bytes = signature.to_bytes();
+        Ok(Signature {
+            part1: bytes[..32].try_into().expect("Unexpected signature length"),
+            part2: bytes[32..64]
+                .try_into()
+                .expect("Unexpected signature length"),
+        })
+    }
+
     pub fn verify(&self, digest: &Digest, public_key: &PublicKey) -> Result<(), CryptoError> {
         let signature = ed25519::signature::Signature::from_bytes(&self.flatten())?;
         let key = dalek::PublicKey::from_bytes(&public_key.0)?;
@@ -333,7 +344,10 @@ pub fn recover_coin(
             Ok(share) => share,
             Err(_) => continue,
         };
-        if !public_key_set.public_key_share(index).verify(&share, &message) {
+        if !public_key_set
+            .public_key_share(index)
+            .verify(&share, &message)
+        {
             continue;
         }
         unique_shares.entry(index).or_insert(share);
@@ -504,5 +518,6 @@ pub fn verify_recp_aggregate(
         Ok(s) => s,
         Err(_) => return false,
     };
-    pks.public_key().verify(&signature, recp_message(round, block_hash))
+    pks.public_key()
+        .verify(&signature, recp_message(round, block_hash))
 }
