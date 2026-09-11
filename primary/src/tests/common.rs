@@ -1,5 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crate::messages::{Certificate, Header, Vote};
+use crate::primary::PrimaryMessage;
 use bytes::Bytes;
 use config::{Authority, Committee, PrimaryAddresses, WorkerAddresses};
 use crypto::Hash as _;
@@ -177,6 +178,23 @@ pub fn listener(address: SocketAddr) -> JoinHandle<Bytes> {
                 received.freeze()
             }
             _ => panic!("Failed to receive network message"),
+        }
+    })
+}
+
+pub fn vote_listener(address: SocketAddr) -> JoinHandle<Vote> {
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(&address).await.unwrap();
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let transport = Framed::new(socket, LengthDelimitedCodec::new());
+            let (mut writer, mut reader) = transport.split();
+            if let Some(Ok(received)) = reader.next().await {
+                writer.send(Bytes::from("Ack")).await.unwrap();
+                if let PrimaryMessage::Vote(vote) = bincode::deserialize(&received).unwrap() {
+                    return vote;
+                }
+            }
         }
     })
 }

@@ -65,6 +65,8 @@ pub struct Core {
     processing: HashMap<Round, HashSet<Digest>>,
     /// The last header we proposed (for which we are waiting votes).
     current_header: Header,
+    /// The local Shortfin round entered by this voter.
+    local_round: Round,
     /// Own headers that may still receive late votes.
     own_headers: HashMap<Digest, Header>,
     /// Aggregates votes into certificates, keyed by own header id.
@@ -81,8 +83,8 @@ pub struct Core {
     history_support_cache: HashMap<(Digest, Round), HashSet<PublicKey>>,
     /// Lazy cache for whether one target header id is reachable from one root.
     history_id_cache: HashMap<(Digest, Digest), bool>,
-    /// Votes for own blocks that arrived before their voter-round predecessor
-    /// quorum was visible in our local DAG.
+    /// Votes for own blocks that arrived before the voter's block at
+    /// `voter_round` was visible in our local DAG.
     pending_votes: HashMap<Digest, Vec<Vote>>,
     /// Next round whose completion we still need to signal to the proposer.
     next_round_to_signal: Round,
@@ -151,6 +153,7 @@ impl Core {
                 last_voted: HashMap::with_capacity(2 * gc_depth as usize),
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
                 current_header: Header::default(),
+                local_round: 1,
                 own_headers: HashMap::with_capacity(2 * gc_depth as usize),
                 votes_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
@@ -192,7 +195,7 @@ impl Core {
             .unwrap_or_default()
     }
 
-    fn latest_ref_digests(&self, max_round: Round) -> Vec<Digest> {
+    fn latest_ref_digests(&self) -> Vec<Digest> {
         self.committee
             .authorities
             .keys()
@@ -200,7 +203,6 @@ impl Core {
                 self.certificates_by_round
                     .values()
                     .filter_map(|by_authority| by_authority.get(name))
-                    .filter(|certificate| certificate.round() <= max_round)
                     .max_by_key(|certificate| certificate.round())
                     .map(|certificate| certificate.digest())
             })
@@ -263,6 +265,17 @@ impl Core {
     }
 
     fn history_support_weight_from_roots(&mut self, roots: &[Certificate], round: Round) -> u32 {
+        self.history_authors_at_round_from_roots(roots, round)
+            .iter()
+            .map(|author| self.committee.stake(author))
+            .sum()
+    }
+
+    fn history_authors_at_round_from_roots(
+        &mut self,
+        roots: &[Certificate],
+        round: Round,
+    ) -> HashSet<PublicKey> {
         self.index_roots(roots);
 
         let mut authors = HashSet::new();
@@ -274,11 +287,7 @@ impl Core {
                 authors.extend(root_authors);
             }
         }
-
         authors
-            .iter()
-            .map(|author| self.committee.stake(author))
-            .sum()
     }
 
     fn history_contains_header_from_root(
@@ -553,7 +562,7 @@ impl Core {
             }
 
             if self.dag_protocol.is_shortfin_family() {
-                let parents_1 = self.latest_ref_digests(round);
+                let parents_1 = self.latest_ref_digests();
                 let own_certificate = by_authority
                     .get(&self.name)
                     .filter(|certificate| !certificate.votes.is_empty());
@@ -589,6 +598,7 @@ impl Core {
                     .send(signal)
                     .await
                     .expect("Failed to send certificate");
+                self.local_round = self.local_round.max(round + 1);
 
                 #[cfg(feature = "benchmark")]
                 if self.diag_signal_blocked_round == Some(round) {
@@ -701,6 +711,9 @@ impl Core {
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
         // Track the own header so late votes can still assemble its QC after
         // the proposer has moved on.
+        if self.dag_protocol.is_shortfin_family() {
+            self.local_round = self.local_round.max(header.round);
+        }
         self.current_header = header.clone();
         self.own_headers.insert(header.id.clone(), header.clone());
         self.votes_aggregators
@@ -750,13 +763,6 @@ impl Core {
         } else {
             match self.dag_protocol {
                 DagProtocol::Shortfin | DagProtocol::Sailfin => {
-                    for certificate in &parents_1 {
-                        ensure!(
-                            certificate.round() < header.round,
-                            DagError::MalformedHeader(header.id.clone())
-                        );
-                    }
-
                     let support_round = header.round.saturating_sub(1);
                     let stake_1 = self.history_support_weight_from_roots(&parents_1, support_round);
                     ensure!(
@@ -787,16 +793,27 @@ impl Core {
                             ),
                             DagError::MalformedHeader(header.id.clone())
                         );
-                        let mut checked_vote_support_rounds = HashSet::new();
+                        let mut voters_by_round: HashMap<Round, HashSet<PublicKey>> =
+                            HashMap::new();
                         for vote in &qc.votes {
                             ensure!(
-                                vote.voter_round >= vote.round,
+                                vote.voter_round > 0,
                                 DagError::MalformedHeader(header.id.clone())
                             );
-                            let vote_support_round = vote.voter_round.saturating_sub(1);
-                            if !checked_vote_support_rounds.insert(vote_support_round) {
-                                continue;
-                            }
+                            voters_by_round
+                                .entry(vote.voter_round)
+                                .or_insert_with(HashSet::new)
+                                .insert(vote.author);
+                        }
+
+                        for (voter_round, voters) in voters_by_round {
+                            let voter_round_authors =
+                                self.history_authors_at_round_from_roots(&parents_1, voter_round);
+                            ensure!(
+                                voters.is_subset(&voter_round_authors),
+                                DagError::HeaderRequiresQuorum(header.id.clone())
+                            );
+                            let vote_support_round = voter_round.saturating_sub(1);
                             ensure!(
                                 self.history_support_weight_from_roots(
                                     &parents_1,
@@ -856,9 +873,11 @@ impl Core {
             .insert(header.author)
         {
             // Make a vote and send it to the header's creator.
-            // The default earlier-ref-only layout cannot expose predecessor
-            // support above the target block's logical round.
-            let voter_round = header.round;
+            let voter_round = if self.dag_protocol.is_shortfin_family() {
+                self.local_round
+            } else {
+                header.round
+            };
             let vote =
                 Vote::new(header, voter_round, &self.name, &mut self.signature_service).await;
             debug!("Created {:?}", vote);
@@ -1085,7 +1104,12 @@ impl Core {
         );
 
         // Reject headers with round numbers that are too far in the future.
-        let max_future_round = self.current_header.round.saturating_add(10);
+        let local_round = if self.dag_protocol.is_shortfin_family() {
+            self.local_round
+        } else {
+            self.current_header.round
+        };
+        let max_future_round = local_round.saturating_add(10);
         ensure!(
             header.round <= max_future_round,
             DagError::TooOld(header.id.clone(), header.round)
@@ -1113,10 +1137,12 @@ impl Core {
             DagError::UnexpectedVote(vote.id.clone())
         );
 
-        ensure!(
-            vote.voter_round >= vote.round,
-            DagError::UnexpectedVote(vote.id.clone())
-        );
+        if self.dag_protocol.is_shortfin_family() {
+            ensure!(
+                vote.voter_round > 0,
+                DagError::UnexpectedVote(vote.id.clone())
+            );
+        }
 
         // Verify the vote.
         vote.verify(&self.committee).map_err(DagError::from)
@@ -1127,26 +1153,21 @@ impl Core {
             return None;
         }
 
-        let predecessor_weight = self
+        let voter_block_available = self
             .certificates_by_round
-            .get(&(vote.voter_round - 1))
-            .map(|by_authority| {
-                by_authority
-                    .keys()
-                    .map(|author| self.committee.stake(author))
-                    .sum::<u32>()
-            })
-            .unwrap_or_default();
-        if predecessor_weight >= self.committee.quorum_threshold() {
+            .get(&vote.voter_round)
+            .map(|by_authority| by_authority.contains_key(&vote.author))
+            .unwrap_or(false);
+        if voter_block_available {
             None
         } else {
-            Some("missing_predecessor_quorum")
+            Some("missing_voter_round_block")
         }
     }
 
     fn cache_pending_vote(&mut self, vote: Vote) {
         debug!(
-            "Caching vote {:?}: missing predecessor quorum for voter {} round {}",
+            "Caching vote {:?}: missing round block for voter {} round {}",
             vote.digest(),
             vote.author,
             vote.voter_round

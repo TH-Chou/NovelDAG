@@ -1,7 +1,8 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
 use crate::common::{
-    certificate, committee, committee_with_base_port, header, headers, keys, listener, votes,
+    certificate, committee, committee_with_base_port, header, headers, keys, listener,
+    vote_listener, votes,
 };
 use crate::proposer::ProposerSignal;
 use config::DagProtocol;
@@ -227,11 +228,11 @@ async fn process_votes() {
 
     let (tx_sync_headers, _rx_sync_headers) = channel(1);
     let (tx_sync_certificates, _rx_sync_certificates) = channel(1);
-    let (tx_primary_messages, rx_primary_messages) = channel(1);
+    let (tx_primary_messages, rx_primary_messages) = channel(8);
     let (_tx_headers_loopback, rx_headers_loopback) = channel(1);
     let (_tx_certificates_loopback, rx_certificates_loopback) = channel(1);
     let (_tx_headers, rx_headers) = channel(1);
-    let (tx_consensus, mut rx_consensus) = channel(1);
+    let (tx_consensus, mut rx_consensus) = channel(8);
     let (tx_parents, _rx_parents) = channel(1);
 
     // Create a new test store.
@@ -294,6 +295,38 @@ async fn process_votes() {
     assert_eq!(synthetic.header, proposed_header);
     assert!(synthetic.votes.is_empty());
 
+    // A Shortfin vote is only countable after the proposer's DAG contains
+    // the voter's own block at voter_round. Populate those round-1 contexts.
+    let peer_headers: Vec<_> = headers()
+        .into_iter()
+        .filter(|peer_header| peer_header.author != name)
+        .collect();
+    for peer_header in &peer_headers {
+        tx_primary_messages
+            .send(PrimaryMessage::Header(peer_header.clone()))
+            .await
+            .unwrap();
+        let peer_certificate = Certificate {
+            header: peer_header.clone(),
+            votes: Vec::new(),
+        };
+        while store
+            .read(peer_certificate.digest().to_vec())
+            .await
+            .unwrap()
+            .is_none()
+        {
+            tokio::task::yield_now().await;
+        }
+    }
+    for _ in &peer_headers {
+        let peer_synthetic = timeout(Duration::from_secs(1), rx_consensus.recv())
+            .await
+            .expect("timed out waiting for peer synthetic certificate")
+            .unwrap();
+        assert!(peer_synthetic.votes.is_empty());
+    }
+
     // Make the certificate we expect to receive.
     let expected = certificate(&proposed_header);
 
@@ -308,6 +341,105 @@ async fn process_votes() {
     // Ensure the core produced and forwarded the expected certificate.
     let received = rx_consensus.recv().await.unwrap();
     assert_eq!(received, expected);
+}
+
+#[tokio::test]
+async fn shortfin_vote_waits_for_voter_round_block() {
+    let (name, secret) = keys().pop().unwrap();
+    let signature_service = SignatureService::new(secret);
+    let committee = committee_with_base_port(13_180);
+
+    let (tx_sync_headers, _rx_sync_headers) = channel(1);
+    let (tx_sync_certificates, _rx_sync_certificates) = channel(1);
+    let (tx_primary_messages, rx_primary_messages) = channel(8);
+    let (_tx_headers_loopback, rx_headers_loopback) = channel(1);
+    let (_tx_certificates_loopback, rx_certificates_loopback) = channel(1);
+    let (tx_headers, rx_headers) = channel(1);
+    let (tx_consensus, mut rx_consensus) = channel(8);
+    let (tx_parents, _rx_parents) = channel(1);
+
+    let path = ".db_test_shortfin_vote_waits_for_voter_block";
+    let _ = fs::remove_dir_all(path);
+    let store = Store::new(path).unwrap();
+    let synchronizer = Synchronizer::new(
+        name,
+        &committee,
+        DagProtocol::Shortfin,
+        store.clone(),
+        tx_sync_headers,
+        tx_sync_certificates,
+    );
+    Core::spawn(
+        name,
+        committee,
+        DagProtocol::Shortfin,
+        store.clone(),
+        synchronizer,
+        signature_service,
+        Arc::new(AtomicU64::new(0)),
+        50,
+        rx_primary_messages,
+        rx_headers_loopback,
+        rx_certificates_loopback,
+        rx_headers,
+        tx_consensus,
+        tx_parents,
+    );
+
+    let proposed_header = header();
+    tx_headers.send(proposed_header.clone()).await.unwrap();
+    let own_synthetic = timeout(Duration::from_secs(1), rx_consensus.recv())
+        .await
+        .expect("timed out waiting for own synthetic certificate")
+        .unwrap();
+    assert_eq!(own_synthetic.header, proposed_header);
+
+    let mut peer_headers = headers()
+        .into_iter()
+        .filter(|peer_header| peer_header.author != name);
+    let available_voter_block = peer_headers.next().unwrap();
+    let delayed_voter_block = peer_headers.next().unwrap();
+
+    tx_primary_messages
+        .send(PrimaryMessage::Header(available_voter_block.clone()))
+        .await
+        .unwrap();
+    let available_synthetic = timeout(Duration::from_secs(1), rx_consensus.recv())
+        .await
+        .expect("timed out waiting for available voter block")
+        .unwrap();
+    assert_eq!(available_synthetic.header, available_voter_block);
+
+    let target_votes = votes(&proposed_header);
+    for voter in [available_voter_block.author, delayed_voter_block.author] {
+        let vote = target_votes
+            .iter()
+            .find(|vote| vote.author == voter)
+            .cloned()
+            .unwrap();
+        tx_primary_messages
+            .send(PrimaryMessage::Vote(vote))
+            .await
+            .unwrap();
+    }
+
+    assert!(timeout(Duration::from_millis(100), rx_consensus.recv())
+        .await
+        .is_err());
+
+    tx_primary_messages
+        .send(PrimaryMessage::Header(delayed_voter_block))
+        .await
+        .unwrap();
+    let certificate = timeout(Duration::from_secs(1), rx_consensus.recv())
+        .await
+        .expect("cached vote was not retried after its voter block arrived")
+        .unwrap();
+    assert_eq!(certificate.header, proposed_header);
+    assert_eq!(
+        certificate.votes.len(),
+        committee_with_base_port(13_180).quorum_threshold() as usize
+    );
 }
 
 #[tokio::test]
@@ -537,9 +669,141 @@ async fn process_certificates() {
         assert_eq!(received, x);
     }
 
+    // Once the signal has advanced this node to round 2, a late round-1
+    // header must receive a vote carrying the voter's true local round.
+    let late_header = round_1_headers
+        .iter()
+        .find(|header| {
+            !selected_headers
+                .iter()
+                .any(|selected| selected.author == header.author)
+        })
+        .cloned()
+        .unwrap();
+    let address = committee()
+        .primary(&late_header.author)
+        .unwrap()
+        .primary_to_primary;
+    let handle = vote_listener(address);
+    tx_primary_messages
+        .send(PrimaryMessage::Header(late_header.clone()))
+        .await
+        .unwrap();
+    let vote = handle.await.unwrap();
+    assert_eq!(vote.round, late_header.round);
+    assert_eq!(vote.voter_round, 2);
+
     // Note: in Shortfin mode certificates are no longer persisted to the
     // store (they use an in-memory cache instead), so we skip the DB
     // assertion here.
+}
+
+#[tokio::test]
+async fn shortfin_accepts_ref_above_header_round() {
+    let mut all_keys = keys();
+    let (name, secret) = all_keys.pop().unwrap();
+    let (carrier_author, carrier_secret) = all_keys.pop().unwrap();
+    let (high_author, high_secret) = all_keys.pop().unwrap();
+    let signature_service = SignatureService::new(secret);
+    let committee = committee_with_base_port(13_250);
+
+    let (tx_sync_headers, _rx_sync_headers) = channel(1);
+    let (tx_sync_certificates, _rx_sync_certificates) = channel(1);
+    let (tx_primary_messages, rx_primary_messages) = channel(1);
+    let (_tx_headers_loopback, rx_headers_loopback) = channel(1);
+    let (_tx_certificates_loopback, rx_certificates_loopback) = channel(1);
+    let (_tx_headers, rx_headers) = channel(1);
+    let (tx_consensus, _rx_consensus) = channel(2);
+    let (tx_parents, _rx_parents) = channel(1);
+
+    let path = ".db_test_shortfin_high_ref";
+    let _ = fs::remove_dir_all(path);
+    let mut store = Store::new(path).unwrap();
+
+    let round_1 = headers()
+        .into_iter()
+        .find(|header| header.author == high_author)
+        .unwrap();
+    let mut high_header = Header {
+        author: high_author,
+        round: 2,
+        parents: Certificate::genesis(&committee)
+            .iter()
+            .map(|certificate| certificate.digest())
+            .collect(),
+        qc: Some(crate::messages::EmbeddedQc {
+            target: round_1.id.clone(),
+            round: 1,
+            votes: votes(&round_1),
+        }),
+        ..Header::default()
+    };
+    high_header.id = high_header.digest();
+    high_header.signature = Signature::new(&high_header.id, &high_secret);
+    let high_certificate = Certificate {
+        header: high_header.clone(),
+        votes: Vec::new(),
+    };
+    store
+        .write(
+            high_certificate.digest().to_vec(),
+            bincode::serialize(&high_certificate).unwrap(),
+        )
+        .await;
+
+    let mut carrier = Header {
+        author: carrier_author,
+        round: 1,
+        parents: [high_certificate.digest()].iter().cloned().collect(),
+        ..Header::default()
+    };
+    carrier.id = carrier.digest();
+    carrier.signature = Signature::new(&carrier.id, &carrier_secret);
+
+    let address = committee
+        .primary(&carrier.author)
+        .unwrap()
+        .primary_to_primary;
+    let handle = listener(address);
+    let synchronizer = Synchronizer::new(
+        name,
+        &committee,
+        DagProtocol::Shortfin,
+        store.clone(),
+        tx_sync_headers,
+        tx_sync_certificates,
+    );
+    Core::spawn(
+        name,
+        committee,
+        DagProtocol::Shortfin,
+        store.clone(),
+        synchronizer,
+        signature_service,
+        Arc::new(AtomicU64::new(0)),
+        50,
+        rx_primary_messages,
+        rx_headers_loopback,
+        rx_certificates_loopback,
+        rx_headers,
+        tx_consensus,
+        tx_parents,
+    );
+
+    tx_primary_messages
+        .send(PrimaryMessage::Header(carrier.clone()))
+        .await
+        .unwrap();
+    let received = handle.await.unwrap();
+    match bincode::deserialize(&received).unwrap() {
+        PrimaryMessage::Vote(vote) => {
+            assert_eq!(vote.id, carrier.id);
+            assert_eq!(vote.voter_round, 1);
+        }
+        message => panic!("Unexpected message: {:?}", message),
+    }
+    assert!(high_header.round > carrier.round);
+    assert!(store.read(carrier.id.to_vec()).await.unwrap().is_some());
 }
 
 #[tokio::test]

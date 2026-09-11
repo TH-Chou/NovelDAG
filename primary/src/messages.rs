@@ -491,6 +491,12 @@ impl Header {
                     vote.origin == self.author,
                     DagError::MalformedHeader(self.id.clone())
                 );
+                if dag_protocol.is_shortfin_family() {
+                    ensure!(
+                        vote.voter_round > 0,
+                        DagError::MalformedHeader(self.id.clone())
+                    );
+                }
 
                 ensure!(
                     !used.contains(&vote.author),
@@ -858,7 +864,7 @@ impl PartialEq for Certificate {
 #[cfg(test)]
 mod novel_verify_tests {
     use super::*;
-    use crate::common::{committee, keys};
+    use crate::common::{committee, header, keys};
 
     #[test]
     fn shortfin_round_1_rejects_embedded_qc() {
@@ -906,6 +912,55 @@ mod novel_verify_tests {
         header.signature = Signature::new(&header.id, &secret);
 
         assert!(header.verify(&committee, DagProtocol::Shortfin).is_err());
+    }
+
+    #[test]
+    fn shortfin_qc_accepts_distinct_voter_rounds() {
+        let committee = committee();
+        let target = header();
+        let (author, secret) = keys()
+            .into_iter()
+            .find(|(public_key, _)| *public_key == target.author)
+            .unwrap();
+        let voter_rounds = [1, 2, 3, 2];
+        let votes = keys()
+            .into_iter()
+            .zip(voter_rounds.iter().copied())
+            .map(|((voter, voter_secret), voter_round)| {
+                let vote = Vote {
+                    id: target.id.clone(),
+                    round: target.round,
+                    voter_round,
+                    origin: author,
+                    author: voter,
+                    wahoo_phase: None,
+                    signature: Signature::default(),
+                };
+                Vote {
+                    signature: Signature::new(&vote.digest(), &voter_secret),
+                    ..vote
+                }
+            })
+            .collect();
+
+        let mut carrier = Header {
+            author,
+            round: 2,
+            parents: Certificate::genesis(&committee)
+                .iter()
+                .map(|certificate| certificate.digest())
+                .collect(),
+            qc: Some(EmbeddedQc {
+                target: target.id,
+                round: target.round,
+                votes,
+            }),
+            ..Header::default()
+        };
+        carrier.id = carrier.digest();
+        carrier.signature = Signature::new(&carrier.id, &secret);
+
+        assert!(carrier.verify(&committee, DagProtocol::Shortfin).is_ok());
     }
 }
 
