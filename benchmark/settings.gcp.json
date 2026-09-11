@@ -1,8 +1,8 @@
 {
   "provider": "gcp",
   "key": {
-    "name": "google_compute_engine",
-    "path": "/Users/apple/.ssh/google_compute_engine",
+    "name": "gcp_noveldag_rsa",
+    "path": "/root/.ssh/gcp_noveldag_rsa",
     "user": "ubuntu"
   },
   "port": 5000,
@@ -14,7 +14,7 @@
   "instances": {
     "name": "noveldag-node",
     "type": "n2-standard-2",
-    "project": "noveldag-496906",
+    "project": "shortfin",
     "zones": [
       "asia-east1-a",
       "asia-southeast1-a",

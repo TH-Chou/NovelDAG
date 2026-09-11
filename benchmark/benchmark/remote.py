@@ -11,6 +11,7 @@ from time import sleep
 from math import ceil
 from copy import deepcopy
 from shutil import rmtree
+import os
 import subprocess
 import threading
 import re
@@ -314,21 +315,54 @@ class Bench:
             'exit 1; '
             'fi'
         )
-        cmd = [
-            f'(cd {repo} && git fetch -f)',
-            f'(cd {repo} && git checkout -f {self.settings.branch})',
-            f'(cd {repo} && git pull -f)',
-            'source $HOME/.cargo/env',
-            f'WORKSPACE_DIR=$({workspace_discovery})',
-            f'(cd "$WORKSPACE_DIR/node" && {CommandMaker.compile()})',
-            'rm -f node benchmark_client',
-            'ln -s "./$WORKSPACE_DIR/target/release/node" node',
-            'ln -s "./$WORKSPACE_DIR/target/release/benchmark_client" benchmark_client',
-            'test -x ./node',
-            'test -x ./benchmark_client',
-        ]
+        if os.environ.get('NOVELDAG_SKIP_REMOTE_BUILD') == '1':
+            cmd = [
+                'test -x ./node',
+                'test -x ./benchmark_client',
+            ]
+        else:
+            git_cmd = [
+                f'(cd {repo} && git fetch -f)',
+                f'(cd {repo} && git checkout -f {self.settings.branch})',
+                f'(cd {repo} && git pull -f)',
+            ]
+            build_cmd = [
+                'source $HOME/.cargo/env',
+                f'WORKSPACE_DIR=$({workspace_discovery})',
+                f'(cd "$WORKSPACE_DIR/node" && {CommandMaker.compile()})',
+                'rm -f node benchmark_client',
+                'ln -s "./$WORKSPACE_DIR/target/release/node" node',
+                'ln -s "./$WORKSPACE_DIR/target/release/benchmark_client" benchmark_client',
+                'test -x ./node',
+                'test -x ./benchmark_client',
+            ]
+            g = Group(*ips, user=self.settings.ssh_user, connect_kwargs=self.connect)
+            g.run(' && '.join(git_cmd), hide=True)
+            if os.environ.get('NOVELDAG_UPLOAD_LOCAL_CHANGES') == '1':
+                self._upload_local_changes(ips, repo)
+            g.run(' && '.join(build_cmd), hide=True)
+            return
         g = Group(*ips, user=self.settings.ssh_user, connect_kwargs=self.connect)
         g.run(' && '.join(cmd), hide=True)
+
+    def _upload_local_changes(self, ips, repo):
+        files = [
+            'config/src/lib.rs',
+            'consensus/src/lib.rs',
+            'consensus/src/mahi_mahi.rs',
+            'primary/src/messages.rs',
+            'primary/src/core.rs',
+            'primary/src/proposer.rs',
+            'benchmark/benchmark/config.py',
+            'benchmark/benchmark/remote.py',
+        ]
+        local_root = Path(__file__).resolve().parents[2]
+        Print.info(f'Uploading local changes to {len(ips)} machines...')
+        for host in progress_bar(ips, prefix='Uploading local patch:'):
+            c = Connection(host, user=self.settings.ssh_user, connect_kwargs=self.connect)
+            for rel in files:
+                c.run(f'mkdir -p {repo}/{Path(rel).parent.as_posix()}', hide=True)
+                c.put(str(local_root / rel), remote=f'{repo}/{rel}')
 
     def _config(self, hosts, node_parameters, bench_parameters):
         Print.info('Generating configuration files...')
