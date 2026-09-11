@@ -80,7 +80,8 @@ class LocalBench:
             self.node_parameters.print(PathMaker.parameters_file())
 
             # Run the clients (they will wait for the nodes to be ready).
-            workers_addresses = committee.workers_addresses(self.faults)
+            silent_faults = self.faults if self.fault_mode == 'silence' else 0
+            workers_addresses = committee.workers_addresses(silent_faults)
             active_workers = sum(len(addresses) for addresses in workers_addresses)
             if active_workers == 0:
                 raise BenchError("No active workers available to inject transactions")
@@ -96,19 +97,27 @@ class LocalBench:
                     log_file = PathMaker.client_log_file(i, id)
                     self._background_run(cmd, log_file)
 
-            # Run the primaries (except the faulty ones).
-            for i, address in enumerate(committee.primary_addresses(self.faults)):
+            # Run the primaries. In silence mode, faulty authorities are not
+            # started. In invalid_payload mode, all authorities run but the
+            # last `faults` primaries inject invalid batch digests into blocks.
+            primary_addresses = committee.primary_addresses(silent_faults)
+            byzantine_start = nodes - self.faults
+            for i, address in enumerate(primary_addresses):
+                env = None
+                if self.fault_mode == 'invalid_payload' and i >= byzantine_start:
+                    env = 'NOVELDAG_BYZANTINE_ATTACK=invalid_payload'
                 cmd = CommandMaker.run_primary(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),
                     PathMaker.db_path(i),
                     PathMaker.parameters_file(),
                     debug=debug,
+                    env=env,
                 )
                 log_file = PathMaker.primary_log_file(i)
                 self._background_run(cmd, log_file)
 
-            # Run the workers (except the faulty ones).
+            # Run the workers (except the faulty ones in silence mode).
             for i, addresses in enumerate(workers_addresses):
                 for id, address in addresses:
                     cmd = CommandMaker.run_worker(

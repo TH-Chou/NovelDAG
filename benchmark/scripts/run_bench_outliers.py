@@ -6,6 +6,8 @@ Supports three methods:
   - std-dev: drop runs where |value - mean| > threshold * stdev
 """
 
+from __future__ import annotations
+
 import statistics
 from typing import Any
 

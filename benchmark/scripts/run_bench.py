@@ -90,6 +90,11 @@ def main() -> None:
     run_p.add_argument("--protocols", type=str, help="Comma-separated protocols")
     run_p.add_argument("--rates", type=str, help="Comma-separated injection rates")
     run_p.add_argument("--faults", type=str, help="Comma-separated fault counts")
+    run_p.add_argument(
+        "--fault-mode",
+        choices=["silence", "invalid_payload"],
+        help="Fault behavior: silence stops faulty nodes; invalid_payload runs faulty primaries that inject invalid batch digests",
+    )
     run_p.add_argument("--delays", type=str, help="Comma-separated one-way delays (ms)")
     run_p.add_argument("--nodes", type=int, help="Number of nodes")
     run_p.add_argument("--duration", type=int, help="Benchmark duration per run (s)")
@@ -99,7 +104,9 @@ def main() -> None:
     run_p.add_argument("--batch-size", type=int, help="Max batch size (bytes)")
     run_p.add_argument("--tx-size", type=int, help="Transaction size (bytes)")
     run_p.add_argument(
-        "--dag-protocol", type=str, help="DAG protocol (narwhal/shortfin/sailfin/wahoo)"
+        "--dag-protocol",
+        type=str,
+        help="DAG protocol (narwhal/shortfin/sailfin/mahi_mahi/mahi_mahi_4/mahi_mahi_5/wahoo)",
     )
     run_p.add_argument("--output-prefix", type=str, help="Output CSV prefix")
     run_p.add_argument(
@@ -149,6 +156,7 @@ def main() -> None:
     full_p.add_argument("--protocols", type=str)
     full_p.add_argument("--rates", type=str)
     full_p.add_argument("--faults", type=str)
+    full_p.add_argument("--fault-mode", choices=["silence", "invalid_payload"])
     full_p.add_argument("--delays", type=str)
     full_p.add_argument("--nodes", type=int)
     full_p.add_argument("--duration", type=int)
@@ -205,6 +213,7 @@ def _build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "protocols",
         "rates",
         "faults",
+        "fault_mode",
         "delays",
         "nodes",
         "duration",
@@ -263,6 +272,7 @@ def _resolve_config_and_points(
         "tx_size": cli_overrides.get("tx_size", 512),
         "duration": duration,
         "runs": runs,
+        "fault_mode": cli_overrides.get("fault_mode", "silence"),
     }
     node = {
         "header_size": cli_overrides.get("header_size", 1000),
@@ -288,6 +298,7 @@ def _resolve_config_and_points(
                     "delay": delay,
                     "protocol": proto,
                     "faults": fault,
+                    "fault_mode": bench["fault_mode"],
                     "rate": rate,
                     "run_index": run_idx,
                     "group": "cli",

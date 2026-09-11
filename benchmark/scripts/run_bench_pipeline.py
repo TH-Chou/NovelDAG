@@ -94,7 +94,10 @@ def _save_checkpoint(path: Path, completed: set[str]) -> None:
 
 def _point_hash(point: dict[str, Any]) -> str:
     """Stable hash for a config point so checkpoints survive YAML reordering."""
-    s = f"{point['protocol']}_{point['faults']}_{point['delay']}_{point['rate']}_{point['run_index']}"
+    s = (
+        f"{point['protocol']}_{point['faults']}_{point.get('fault_mode', 'silence')}_"
+        f"{point['delay']}_{point['rate']}_{point['run_index']}"
+    )
     return hashlib.md5(s.encode()).hexdigest()[:12]
 
 
@@ -114,6 +117,7 @@ def _run_one_local(point: dict[str, Any]) -> dict[str, Any] | None:
         "rate": point["rate"],
         "tx_size": bench["tx_size"],
         "duration": bench["duration"],
+        "fault_mode": point.get("fault_mode", bench.get("fault_mode", "silence")),
     }
     inner = f"""
 import multiprocessing

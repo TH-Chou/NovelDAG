@@ -189,9 +189,15 @@ class NodeParameters:
 
         if 'dag_protocol' in json:
             dag_protocol = json['dag_protocol']
-            if dag_protocol not in ('narwhal', 'bullshark', 'shortfin', 'sailfin', 'wahoo'):
+            if dag_protocol not in (
+                'narwhal', 'bullshark', 'shortfin', 'sailfin',
+                'mahi_mahi', 'mahi-mahi',
+                'mahi_mahi_4', 'mahi-mahi-4',
+                'mahi_mahi_5', 'mahi-mahi-5',
+                'wahoo'
+            ):
                 raise ConfigError(
-                    'Invalid parameters: dag_protocol must be narwhal, bullshark, shortfin, sailfin, or wahoo'
+                    'Invalid parameters: dag_protocol must be narwhal, bullshark, shortfin, sailfin, mahi_mahi, mahi_mahi_4, mahi_mahi_5, or wahoo'
                 )
         else:
             json['dag_protocol'] = 'shortfin'
@@ -205,7 +211,7 @@ class NodeParameters:
 
 
 class BenchParameters:
-    MAX_DURATION_SECONDS = 50
+    MAX_DURATION_SECONDS = 60
 
     def __init__(self, json):
         try:
@@ -238,6 +244,7 @@ class BenchParameters:
             self.runs = int(json['runs']) if 'runs' in json else 1
 
             self.benchmark_delay = int(json['benchmark_delay']) if 'benchmark_delay' in json else 0
+            self.fault_mode = json.get('fault_mode', 'silence')
         except KeyError as e:
             raise ConfigError(f'Malformed bench parameters: missing key {e}')
 
@@ -252,6 +259,8 @@ class BenchParameters:
             raise ConfigError(
                 f'Duration must be at most {self.MAX_DURATION_SECONDS}s'
             )
+        if self.fault_mode not in ('silence', 'invalid_payload'):
+            raise ConfigError('fault_mode must be silence or invalid_payload')
 
 
 class PlotParameters:

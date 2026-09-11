@@ -1,0 +1,32 @@
+# Local Shortfin comparison for the latest-ref implementation.
+# Runs two node counts at a small rate sweep; single run per point.
+
+output:
+  csv_dir: csv_plots
+  plot_dir: plots
+  checkpoint_dir: .checkpoints
+
+outlier_rejection:
+  method: none
+
+groups:
+  n4:
+    protocols: [shortfin]
+    rates: [30000, 60000, 90000]
+    faults: [0]
+    bench:
+      nodes: 4
+      duration: 30
+      runs: 1
+    node:
+      dag_protocol: shortfin
+  n8:
+    protocols: [shortfin]
+    rates: [30000, 60000, 90000]
+    faults: [0]
+    bench:
+      nodes: 8
+      duration: 30
+      runs: 1
+    node:
+      dag_protocol: shortfin

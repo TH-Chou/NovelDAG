@@ -22,6 +22,7 @@ DEFAULT_BENCH: dict[str, Any] = {
     "tx_size": 512,
     "duration": 30,
     "runs": 3,
+    "fault_mode": "silence",
 }
 
 DEFAULT_NODE: dict[str, Any] = {
@@ -120,7 +121,7 @@ def _resolve_one_group(
     runs = int(overrides.get("runs") or bench.get("runs", 1))
 
     # Apply CLI overrides to bench/node
-    for k in ("nodes", "workers", "tx_size", "duration", "runs"):
+    for k in ("nodes", "workers", "tx_size", "duration", "runs", "fault_mode"):
         if k in overrides and overrides[k] is not None:
             bench[k] = overrides[k]
     for k in (
@@ -151,6 +152,7 @@ def _resolve_one_group(
                     "delay": delay,
                     "protocol": proto,
                     "faults": fault,
+                    "fault_mode": bench.get("fault_mode", "silence"),
                     "rate": rate,
                     "run_index": run_idx,
                     "group": gname,

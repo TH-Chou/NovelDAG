@@ -1,5 +1,7 @@
 """Pre-flight checks for local and cloud benchmark modes."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
