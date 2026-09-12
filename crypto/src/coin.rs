@@ -25,7 +25,14 @@ struct ThresholdCoinInner {
     secret_key_set: SecretKeySet,
     public_key_set: PublicKeySet,
     share_cache: Mutex<BTreeMap<(u64, usize), Vec<u8>>>,
+    verified_share_cache: Mutex<BTreeMap<(u64, usize), CachedShare>>,
     recovered_cache: Mutex<BTreeMap<u64, u64>>,
+}
+
+#[derive(Clone)]
+struct CachedShare {
+    bytes: Vec<u8>,
+    share: Option<SignatureShare>,
 }
 
 impl ThresholdCoin {
@@ -53,6 +60,7 @@ impl ThresholdCoin {
                 secret_key_set,
                 public_key_set,
                 share_cache: Mutex::new(BTreeMap::new()),
+                verified_share_cache: Mutex::new(BTreeMap::new()),
                 recovered_cache: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -90,7 +98,22 @@ impl ThresholdCoin {
             .lock()
             .expect("coin share cache poisoned");
         cache.insert(cache_key, bytes.clone());
-        retain_recent(&mut cache, round);
+        retain_recent_generated_shares(&mut cache, round);
+        drop(cache);
+
+        let mut verified = self
+            .inner
+            .verified_share_cache
+            .lock()
+            .expect("verified coin share cache poisoned");
+        verified.insert(
+            cache_key,
+            CachedShare {
+                bytes: bytes.clone(),
+                share: Some(share),
+            },
+        );
+        retain_recent_verified_shares(&mut verified, round);
         Some(bytes)
     }
 
@@ -116,18 +139,10 @@ impl ThresholdCoin {
                 Some(index) if !unique_shares.contains_key(index) => *index,
                 _ => continue,
             };
-            let share: SignatureShare = match bincode::deserialize(bytes) {
-                Ok(share) => share,
-                Err(_) => continue,
+            let share = match self.verify_share(round, index, bytes, &message) {
+                Some(share) => share,
+                None => continue,
             };
-            if !self
-                .inner
-                .public_key_set
-                .public_key_share(index)
-                .verify(&share, &message)
-            {
-                continue;
-            }
             unique_shares.insert(index, share);
             if unique_shares.len() == self.inner.threshold + 1 {
                 break;
@@ -170,6 +185,48 @@ impl ThresholdCoin {
         }
         Some(coin)
     }
+
+    fn verify_share(
+        &self,
+        round: u64,
+        index: usize,
+        bytes: &[u8],
+        message: &[u8],
+    ) -> Option<SignatureShare> {
+        let cache_key = (round, index);
+        if let Some(cached) = self
+            .inner
+            .verified_share_cache
+            .lock()
+            .expect("verified coin share cache poisoned")
+            .get(&cache_key)
+            .filter(|cached| cached.bytes == bytes)
+            .cloned()
+        {
+            return cached.share;
+        }
+
+        let share: Option<SignatureShare> = bincode::deserialize(bytes).ok().filter(|share| {
+            self.inner
+                .public_key_set
+                .public_key_share(index)
+                .verify(share, message)
+        });
+        let mut cache = self
+            .inner
+            .verified_share_cache
+            .lock()
+            .expect("verified coin share cache poisoned");
+        cache.insert(
+            cache_key,
+            CachedShare {
+                bytes: bytes.to_vec(),
+                share: share.clone(),
+            },
+        );
+        retain_recent_verified_shares(&mut cache, round);
+        share
+    }
 }
 
 /// The existing no-cryptography coin used by Narwhal and Bullshark. Keeping
@@ -209,7 +266,15 @@ fn deterministic_key_set(authorities: &[PublicKey], threshold: usize) -> SecretK
     SecretKeySet::random(threshold, &mut rng)
 }
 
-fn retain_recent(cache: &mut BTreeMap<(u64, usize), Vec<u8>>, newest_round: u64) {
+fn retain_recent_generated_shares(cache: &mut BTreeMap<(u64, usize), Vec<u8>>, newest_round: u64) {
+    let oldest_round = newest_round.saturating_sub(CACHE_ROUNDS as u64);
+    cache.retain(|(round, _), _| *round >= oldest_round);
+}
+
+fn retain_recent_verified_shares(
+    cache: &mut BTreeMap<(u64, usize), CachedShare>,
+    newest_round: u64,
+) {
     let oldest_round = newest_round.saturating_sub(CACHE_ROUNDS as u64);
     cache.retain(|(round, _), _| *round >= oldest_round);
 }
