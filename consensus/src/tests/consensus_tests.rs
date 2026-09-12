@@ -59,7 +59,9 @@ fn mock_certificate(
             id: Digest(header_id),
             ..Header::default()
         },
-        ..Certificate::default()
+        // Consensus receives a non-empty vote set only after Primary has both
+        // a QC and the validated payload for this record.
+        votes: vec![Vote::default()],
     };
     (certificate.digest(), certificate)
 }
@@ -112,6 +114,68 @@ fn make_certificates(
         prev_by_author = next_prev_by_author.clone();
     }
     (certificates, next_parents)
+}
+
+#[test]
+fn shortfin_structural_only_record_is_not_output() {
+    let mut authorities: Vec<_> = keys().into_iter().map(|(key, _)| key).collect();
+    authorities.sort();
+    let committee = mock_committee();
+    let genesis = Certificate::genesis(&committee);
+    let genesis_digests = genesis
+        .iter()
+        .map(|certificate| certificate.digest())
+        .collect::<BTreeSet<_>>();
+    let (mut certificates, _) = make_certificates(1, 4, &genesis_digests, &authorities);
+
+    let leader = authorities[0];
+    let bubble_id = certificates
+        .iter()
+        .find(|certificate| certificate.round() == 2 && certificate.origin() == leader)
+        .unwrap()
+        .header
+        .id
+        .clone();
+    for certificate in certificates.iter_mut() {
+        if certificate.header.id == bubble_id {
+            certificate.votes.clear();
+        }
+    }
+
+    let mut state = State::new(genesis);
+    for certificate in certificates {
+        state
+            .dag
+            .entry(certificate.round())
+            .or_insert_with(HashMap::new)
+            .insert(certificate.origin(), (certificate.digest(), certificate));
+    }
+
+    let leader_blocks = [1, 2, 3]
+        .iter()
+        .map(|round| {
+            state
+                .dag
+                .get(round)
+                .unwrap()
+                .get(&leader)
+                .map(|(_, certificate)| certificate)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let sequence = crate::shortfin::collect_wave(
+        4,
+        &state,
+        committee.validity_threshold() as usize,
+        &leader_blocks,
+    );
+
+    assert!(!sequence
+        .iter()
+        .any(|certificate| certificate.header.id == bubble_id));
+    assert!(sequence
+        .iter()
+        .any(|certificate| certificate.round() == 1 && certificate.origin() == leader));
 }
 
 // Shortfin wave = 4. Running rounds 1..=4 with a full DAG reaches the first wave

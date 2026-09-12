@@ -25,7 +25,11 @@ const TIMER_RESOLUTION: u64 = 1_000;
 /// The commands that can be sent to the `Waiter`.
 #[derive(Debug)]
 pub enum WaiterMessage {
-    SyncBatches(HashMap<Digest, WorkerId>, Header),
+    SyncBatches {
+        missing: HashMap<Digest, WorkerId>,
+        source: PublicKey,
+        deliver: Header,
+    },
     SyncParents(Vec<Digest>, Header),
 }
 
@@ -128,11 +132,10 @@ impl HeaderWaiter {
             tokio::select! {
                 Some(message) = self.rx_synchronizer.recv() => {
                     match message {
-                        WaiterMessage::SyncBatches(missing, header) => {
-                            debug!("Synching the payload of {}", header);
-                            let header_id = header.id.clone();
-                            let round = header.round;
-                            let author = header.author;
+                        WaiterMessage::SyncBatches { missing, source, deliver } => {
+                            debug!("Synching payload required before processing {}", deliver);
+                            let header_id = deliver.id.clone();
+                            let round = deliver.round;
 
                             // Ensure we sync only once per header.
                             if self.pending.contains_key(&header_id) {
@@ -150,7 +153,7 @@ impl HeaderWaiter {
                                 .collect();
                             let (tx_cancel, rx_cancel) = channel(1);
                             self.pending.insert(header_id, (round, tx_cancel));
-                            let fut = Self::waiter(wait_for, header, rx_cancel);
+                            let fut = Self::waiter(wait_for, deliver, rx_cancel);
                             waiting.push(fut);
 
                             // Ensure we didn't already send a sync request for these parents.
@@ -163,10 +166,10 @@ impl HeaderWaiter {
                             }
                             for (worker_id, digests) in requires_sync {
                                 let address = self.committee
-                                    .worker(&author, &worker_id)
+                                    .worker(&source, &worker_id)
                                     .expect("Author of valid header is not in the committee")
                                     .primary_to_worker;
-                                let message = PrimaryWorkerMessage::Synchronize(digests, author);
+                                let message = PrimaryWorkerMessage::Synchronize(digests, source);
                                 let bytes = bincode::serialize(&message)
                                     .expect("Failed to serialize batch sync request");
                                 self.network.send(address, Bytes::from(bytes)).await;

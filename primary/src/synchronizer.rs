@@ -64,13 +64,24 @@ impl Synchronizer {
     /// synchronize with other nodes (through our workers), and re-schedule processing of the
     /// header for when we will have its complete payload.
     pub async fn missing_payload(&mut self, header: &Header) -> DagResult<bool> {
+        self.missing_payload_for(header, header).await
+    }
+
+    /// Synchronize `payload_header` and resume `deliver` when the payload is available.
+    /// Shortfin uses this to fetch a QC target before admitting a carrier whose own
+    /// payload may remain a bubble.
+    pub async fn missing_payload_for(
+        &mut self,
+        payload_header: &Header,
+        deliver: &Header,
+    ) -> DagResult<bool> {
         // We don't store the payload of our own workers.
-        if header.author == self.name {
+        if payload_header.author == self.name {
             return Ok(false);
         }
 
         let mut missing = HashMap::new();
-        for (digest, worker_id) in header.payload.iter() {
+        for (digest, worker_id) in payload_header.payload.iter() {
             // Check whether we have the batch. If one of our worker has the batch, the primary stores the pair
             // (digest, worker_id) in its own storage. It is important to verify that we received the batch
             // from the correct worker id to prevent the following attack:
@@ -93,7 +104,11 @@ impl Synchronizer {
         }
 
         self.tx_header_waiter
-            .send(WaiterMessage::SyncBatches(missing, header.clone()))
+            .send(WaiterMessage::SyncBatches {
+                missing,
+                source: payload_header.author,
+                deliver: deliver.clone(),
+            })
             .await
             .expect("Failed to send sync batch request");
         Ok(true)

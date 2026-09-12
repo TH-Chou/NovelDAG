@@ -26,6 +26,13 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[path = "tests/core_tests.rs"]
 pub mod core_tests;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShortfinBlockState {
+    Bubble,
+    Uncertificated,
+    Certificated,
+}
+
 pub struct Core {
     /// The public key of this primary.
     name: PublicKey,
@@ -79,6 +86,8 @@ pub struct Core {
     certificates_by_round: HashMap<Round, HashMap<PublicKey, Certificate>>,
     /// Certificates observed by certificate digest for incremental history checks.
     certificates_by_digest: HashMap<Digest, Certificate>,
+    /// Exact headers indexed by their signed header id.
+    headers_by_id: HashMap<Digest, Header>,
     /// Lazy cache for reachable authors at one queried round from one root.
     history_support_cache: HashMap<(Digest, Round), HashSet<PublicKey>>,
     /// Lazy cache for whether one target header id is reachable from one root.
@@ -86,6 +95,14 @@ pub struct Core {
     /// Votes for own blocks that arrived before the voter's block at
     /// `voter_round` was visible in our local DAG.
     pending_votes: HashMap<Digest, Vec<Vote>>,
+    /// Local three-state view for synchronized Shortfin records.
+    shortfin_states: HashMap<Digest, ShortfinBlockState>,
+    /// QCs learned for Shortfin blocks, keyed by the certified header id.
+    shortfin_qcs: HashMap<Digest, Vec<Vote>>,
+    /// Structural records already delivered to consensus.
+    shortfin_structural_sent: HashSet<Digest>,
+    /// Payload-complete certified updates already delivered to consensus.
+    shortfin_certified_sent: HashSet<Digest>,
     /// Next round whose completion we still need to signal to the proposer.
     next_round_to_signal: Round,
     /// Rounds for which we sent a proposer signal without QC (own cert not yet ready).
@@ -160,9 +177,14 @@ impl Core {
                 certificates_vec_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_by_round: [(0, genesis_by_authority)].iter().cloned().collect(),
                 certificates_by_digest: genesis_by_digest,
+                headers_by_id: HashMap::with_capacity(2 * gc_depth as usize),
                 history_support_cache: HashMap::with_capacity(2 * gc_depth as usize),
                 history_id_cache: HashMap::with_capacity(2 * gc_depth as usize),
                 pending_votes: HashMap::with_capacity(2 * gc_depth as usize),
+                shortfin_states: HashMap::with_capacity(2 * gc_depth as usize),
+                shortfin_qcs: HashMap::with_capacity(2 * gc_depth as usize),
+                shortfin_structural_sent: HashSet::with_capacity(2 * gc_depth as usize),
+                shortfin_certified_sent: HashSet::with_capacity(2 * gc_depth as usize),
                 next_round_to_signal: 1,
                 pending_qc_signals: HashSet::new(),
                 #[cfg(feature = "benchmark")]
@@ -210,8 +232,34 @@ impl Core {
     }
 
     fn index_certificate(&mut self, certificate: &Certificate) {
+        self.headers_by_id
+            .insert(certificate.header.id.clone(), certificate.header.clone());
         self.certificates_by_digest
             .insert(certificate.digest(), certificate.clone());
+    }
+
+    fn shortfin_payload_available(&self, id: &Digest) -> bool {
+        matches!(
+            self.shortfin_states.get(id),
+            Some(ShortfinBlockState::Uncertificated | ShortfinBlockState::Certificated)
+        )
+    }
+
+    fn record_shortfin_qc(&mut self, id: Digest, votes: Vec<Vote>) {
+        self.shortfin_qcs.entry(id.clone()).or_insert(votes);
+        if self.shortfin_states.get(&id) == Some(&ShortfinBlockState::Uncertificated) {
+            self.shortfin_states
+                .insert(id, ShortfinBlockState::Certificated);
+        }
+    }
+
+    fn mark_shortfin_payload_available(&mut self, id: &Digest) {
+        let state = if self.shortfin_qcs.contains_key(id) {
+            ShortfinBlockState::Certificated
+        } else {
+            ShortfinBlockState::Uncertificated
+        };
+        self.shortfin_states.insert(id.clone(), state);
     }
 
     fn index_roots(&mut self, roots: &[Certificate]) {
@@ -708,6 +756,95 @@ impl Core {
         }
     }
 
+    async fn emit_shortfin_record(&mut self, id: &Digest) -> DagResult<()> {
+        let Some(state) = self.shortfin_states.get(id).copied() else {
+            return Ok(());
+        };
+        let Some(header) = self.headers_by_id.get(id).cloned() else {
+            return Ok(());
+        };
+
+        let is_certificated = state == ShortfinBlockState::Certificated;
+        let first_delivery = !self.shortfin_structural_sent.contains(id);
+        let certification_upgrade = is_certificated && !self.shortfin_certified_sent.contains(id);
+        if !first_delivery && !certification_upgrade {
+            return Ok(());
+        }
+
+        self.shortfin_structural_sent.insert(id.clone());
+        if is_certificated {
+            self.shortfin_certified_sent.insert(id.clone());
+        }
+
+        let votes = if is_certificated {
+            self.shortfin_qcs.get(id).cloned().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let certificate = Certificate { header, votes };
+        let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
+        self.store.write(certificate.digest().to_vec(), bytes).await;
+        self.synchronizer.cache_certificate(&certificate);
+        self.certificates_by_round
+            .entry(certificate.round())
+            .or_insert_with(HashMap::new)
+            .insert(certificate.origin(), certificate.clone());
+        self.index_certificate(&certificate);
+
+        self.process_pending_votes().await?;
+        self.try_signal_proposer().await;
+        if is_certificated && certificate.origin() == self.name {
+            self.send_qc_signal(&certificate).await;
+        }
+
+        let header_id = certificate.header.id.clone();
+        if let Err(e) = self.tx_consensus.send(certificate).await {
+            warn!(
+                "Failed to deliver Shortfin record {} to the consensus: {}",
+                header_id, e
+            );
+        }
+        Ok(())
+    }
+
+    async fn vote_for_header(&mut self, header: &Header) -> DagResult<()> {
+        if !self
+            .last_voted
+            .entry(header.round)
+            .or_insert_with(HashSet::new)
+            .insert(header.author)
+        {
+            return Ok(());
+        }
+
+        let voter_round = if self.dag_protocol.is_shortfin_family() {
+            self.local_round
+        } else {
+            header.round
+        };
+        let vote = Vote::new(header, voter_round, &self.name, &mut self.signature_service).await;
+        debug!("Created {:?}", vote);
+        if vote.origin == self.name {
+            self.process_vote(vote)
+                .await
+                .expect("Failed to process our own vote");
+        } else {
+            let address = self
+                .committee
+                .primary(&header.author)
+                .expect("Author of valid header is not in the committee")
+                .primary_to_primary;
+            let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
+                .expect("Failed to serialize our own vote");
+            let handler = self.network.send(address, Bytes::from(bytes)).await;
+            self.cancel_handlers
+                .entry(header.round)
+                .or_insert_with(Vec::new)
+                .push(handler);
+        }
+        Ok(())
+    }
+
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
         // Track the own header so late votes can still assemble its QC after
         // the proposer has moved on.
@@ -742,6 +879,23 @@ impl Core {
     #[async_recursion]
     async fn process_header(&mut self, header: &Header) -> DagResult<()> {
         debug!("Processing {:?}", header);
+
+        if self.dag_protocol == DagProtocol::Shortfin
+            && self.shortfin_states.contains_key(&header.id)
+        {
+            if self.shortfin_payload_available(&header.id) {
+                return Ok(());
+            }
+            if self.synchronizer.missing_payload(header).await? {
+                return Ok(());
+            }
+
+            self.mark_shortfin_payload_available(&header.id);
+            self.vote_for_header(header).await?;
+            self.emit_shortfin_record(&header.id).await?;
+            return Ok(());
+        }
+
         // Indicate that we are processing this header.
         self.processing
             .entry(header.round)
@@ -849,6 +1003,54 @@ impl Core {
             }
         }
 
+        if self.dag_protocol == DagProtocol::Shortfin {
+            self.headers_by_id.insert(header.id.clone(), header.clone());
+
+            if let Some(qc) = &header.qc {
+                self.record_shortfin_qc(qc.target.clone(), qc.votes.clone());
+                let target = self
+                    .headers_by_id
+                    .get(&qc.target)
+                    .cloned()
+                    .ok_or_else(|| DagError::MalformedHeader(header.id.clone()))?;
+                ensure!(
+                    self.shortfin_states.contains_key(&qc.target),
+                    DagError::MalformedHeader(header.id.clone())
+                );
+
+                if self
+                    .synchronizer
+                    .missing_payload_for(&target, header)
+                    .await?
+                {
+                    return Ok(());
+                }
+
+                if !self.shortfin_payload_available(&qc.target) {
+                    self.mark_shortfin_payload_available(&qc.target);
+                    self.vote_for_header(&target).await?;
+                }
+                self.emit_shortfin_record(&qc.target).await?;
+            }
+
+            self.shortfin_states
+                .entry(header.id.clone())
+                .or_insert(ShortfinBlockState::Bubble);
+
+            let own_payload_missing = self.synchronizer.missing_payload(header).await?;
+            if !own_payload_missing {
+                self.mark_shortfin_payload_available(&header.id);
+            }
+
+            let bytes = bincode::serialize(header).expect("Failed to serialize header");
+            self.store.write(header.id.to_vec(), bytes).await;
+
+            if !own_payload_missing {
+                self.vote_for_header(header).await?;
+            }
+            return Ok(());
+        }
+
         // Ensure we have the payload. If we don't, the synchronizer will ask our workers to get it, and then
         // reschedule processing of this header once we have it.
         // 延迟构成-Primary阶段D：payload 不齐也会挂起，间接拖慢后续投票/证书形成。
@@ -865,42 +1067,7 @@ impl Core {
             return Ok(());
         }
 
-        // Check if we can vote for this header.
-        if self
-            .last_voted
-            .entry(header.round)
-            .or_insert_with(HashSet::new)
-            .insert(header.author)
-        {
-            // Make a vote and send it to the header's creator.
-            let voter_round = if self.dag_protocol.is_shortfin_family() {
-                self.local_round
-            } else {
-                header.round
-            };
-            let vote =
-                Vote::new(header, voter_round, &self.name, &mut self.signature_service).await;
-            debug!("Created {:?}", vote);
-            if vote.origin == self.name {
-                self.process_vote(vote)
-                    .await
-                    .expect("Failed to process our own vote");
-            } else {
-                let address = self
-                    .committee
-                    .primary(&header.author)
-                    .expect("Author of valid header is not in the committee")
-                    .primary_to_primary;
-                let bytes = bincode::serialize(&PrimaryMessage::Vote(vote))
-                    .expect("Failed to serialize our own vote");
-                let handler = self.network.send(address, Bytes::from(bytes)).await;
-                self.cancel_handlers
-                    .entry(header.round)
-                    .or_insert_with(Vec::new)
-                    .push(handler);
-            }
-        }
-        Ok(())
+        self.vote_for_header(header).await
     }
 
     /// Uncertified DAG protocols: peer blocks never arrive as independent Certificates.
@@ -908,14 +1075,20 @@ impl Core {
     /// has no votes at all and treats the signed header itself as the block.
     /// To keep the downstream DAG-tracking logic uniform, we synthesize a
     /// local empty-votes Certificate from every peer Header we successfully
-    /// processed. The consensus layer only reads certificate.header.* fields
-    /// (never certificate.votes), so an empty-votes certificate is
-    /// semantically equivalent to a real one here. This is only invoked at
-    /// the direct Header dispatch points — never inside process_certificate's
+    /// processed. For Shortfin, empty votes mark a structural-only record;
+    /// Primary later replaces it with the QC votes after both certification
+    /// and payload validation. Other uncertified protocols continue to treat
+    /// the empty-votes record as the complete block. This is only invoked at
+    /// the direct Header dispatch points, never inside process_certificate's
     /// header-processing path, to avoid double-emitting a cert for the same
     /// block.
     async fn maybe_synthesize_uncertified_cert(&mut self, header: &Header) {
         if !self.dag_protocol.is_uncertified_dag() {
+            return;
+        }
+        if self.dag_protocol == DagProtocol::Shortfin
+            && !self.shortfin_states.contains_key(&header.id)
+        {
             return;
         }
         let synthetic = Certificate {
@@ -976,17 +1149,31 @@ impl Core {
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
 
+        if self.dag_protocol == DagProtocol::Shortfin && !certificate.votes.is_empty() {
+            self.headers_by_id
+                .insert(certificate.header.id.clone(), certificate.header.clone());
+            self.record_shortfin_qc(certificate.header.id.clone(), certificate.votes.clone());
+        }
+
         // Process the header embedded in the certificate if we haven't already voted for it (if we already
         // voted, it means we already processed it). Since this header got certified, we are sure that all
         // the data it refers to (ie. its payload and its parents) are available. We can thus continue the
         // processing of the certificate even if we don't have them in store right now.
-        if !self
-            .processing
-            .get(&certificate.header.round)
-            .map_or_else(|| false, |x| x.contains(&certificate.header.id))
-        {
+        let header_ready = if self.dag_protocol == DagProtocol::Shortfin {
+            self.shortfin_states.contains_key(&certificate.header.id)
+        } else {
+            self.processing
+                .get(&certificate.header.round)
+                .map_or_else(|| false, |x| x.contains(&certificate.header.id))
+        };
+        if !header_ready {
             // This function may still throw an error if the storage fails.
             self.process_header(&certificate.header).await?;
+        }
+        if self.dag_protocol == DagProtocol::Shortfin
+            && !self.shortfin_states.contains_key(&certificate.header.id)
+        {
+            return Ok(());
         }
 
         // Ensure we have all the ancestors of this certificate yet. If we don't, the synchronizer will gather
@@ -1000,8 +1187,11 @@ impl Core {
         }
 
         match self.dag_protocol {
-            DagProtocol::Shortfin
-            | DagProtocol::Sailfin
+            DagProtocol::Shortfin => {
+                self.emit_shortfin_record(&certificate.header.id).await?;
+                return Ok(());
+            }
+            DagProtocol::Sailfin
             | DagProtocol::MahiMahi
             | DagProtocol::MahiMahi4
             | DagProtocol::MahiMahi5 => {
@@ -1319,12 +1509,34 @@ impl Core {
                             .collect::<Vec<_>>()
                     })
                     .collect();
+                let live_header_ids: HashSet<_> = self
+                    .certificates_by_round
+                    .values()
+                    .flat_map(|by_authority| {
+                        by_authority
+                            .values()
+                            .map(|certificate| certificate.header.id.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
                 self.certificates_by_digest
                     .retain(|digest, _| live_digests.contains(digest));
+                self.headers_by_id
+                    .retain(|id, _| live_header_ids.contains(id));
                 self.history_support_cache
                     .retain(|(digest, _), _| live_digests.contains(digest));
                 self.history_id_cache
                     .retain(|(digest, _), _| live_digests.contains(digest));
+                self.shortfin_states
+                    .retain(|id, _| live_header_ids.contains(id));
+                self.shortfin_qcs
+                    .retain(|id, _| live_header_ids.contains(id));
+                self.shortfin_structural_sent
+                    .retain(|id| live_header_ids.contains(id));
+                self.shortfin_certified_sent
+                    .retain(|id| live_header_ids.contains(id));
+                self.pending_votes
+                    .retain(|id, _| live_own_headers.contains(id));
                 self.cancel_handlers.retain(|k, _| k >= &gc_round);
                 self.gc_round = gc_round;
             }

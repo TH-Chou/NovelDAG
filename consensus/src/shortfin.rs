@@ -84,8 +84,9 @@ pub(crate) async fn run(consensus: &mut Consensus) {
     let mut state = State::new(consensus.genesis.clone());
     let name = consensus.name;
 
-    // 已触发过提交检查的轮次（防重入）。
-    let mut completed_rounds: HashSet<Round> = HashSet::new();
+    // Boundaries that have already produced a decision. Failed checks remain
+    // retryable when another boundary record arrives.
+    let mut processed_boundaries: HashSet<Round> = HashSet::new();
     #[cfg(feature = "benchmark")]
     let mut diag = Diag::new();
     #[cfg(not(feature = "benchmark"))]
@@ -95,7 +96,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         let cutoff = state
             .last_committed_round
             .saturating_sub(consensus.gc_depth);
-        completed_rounds.retain(|r| *r >= cutoff);
+        processed_boundaries.retain(|r| *r >= cutoff);
 
         #[cfg(feature = "benchmark")]
         {
@@ -125,7 +126,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             .insert(certificate.origin(), (certificate.digest(), certificate));
 
         // ── Wave 边界闸门 ──
-        if round < WAVE || round % WAVE != 0 || completed_rounds.contains(&round) {
+        if round < WAVE || round % WAVE != 0 || processed_boundaries.contains(&round) {
             continue;
         }
 
@@ -137,8 +138,6 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             }
             continue;
         }
-        completed_rounds.insert(round);
-
         // ── Wave 到达，尝试提交 ──
         let commit_round = round;
 
@@ -168,6 +167,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
                 continue;
             }
         };
+        processed_boundaries.insert(round);
 
         #[cfg(feature = "benchmark")]
         info!(
@@ -418,7 +418,7 @@ fn causal_reachability(
 /// 中互相排除，内嵌 QC 链已验证它们的存在与唯一性。
 ///
 /// 最终按 (round, digest) 字典序输出，保证所有诚实节点复现完全相同的序列。
-fn collect_wave(
+pub(crate) fn collect_wave(
     commit_round: Round,
     state: &State,
     validity_threshold: usize,
@@ -473,6 +473,25 @@ fn collect_wave(
         .collect();
     let reachable = causal_reachability(&seeds, &index, &state.last_committed);
 
+    // Certification must be exposed by this fixed reachable header history.
+    // A QC learned elsewhere may update local state, but cannot retroactively
+    // add its target to an earlier anchor's output set.
+    let mut certified_targets: HashSet<Digest> = index
+        .values()
+        .filter(|cert| reachable.contains(&cert.header.id))
+        .filter_map(|cert| cert.header.qc.as_ref().map(|qc| qc.target.clone()))
+        .collect();
+    // Boundary headers are the fixed witnesses used above to anchor r-1.
+    // Their embedded QCs certify those frontier blocks in the same decision,
+    // so they must not be delayed to the next wave.
+    if let Some(boundary) = state.dag.get(&commit_round) {
+        certified_targets.extend(
+            boundary
+                .values()
+                .filter_map(|(_, cert)| cert.header.qc.as_ref().map(|qc| qc.target.clone())),
+        );
+    }
+
     // ── 收集并过滤 ──
     let mut blocks: Vec<&Certificate> = state
         .dag
@@ -485,6 +504,10 @@ fn collect_wave(
                 .get(&cert.origin())
                 .map_or(true, |last_r| cert.round() > *last_r)
         })
+        // A non-empty vote set is the Primary's local marker that this exact
+        // target has both a valid QC and a validated payload. Structural-only
+        // records, including bubbles, remain in the traversal but are not output.
+        .filter(|cert| certified_targets.contains(&cert.header.id) && !cert.votes.is_empty())
         .filter(|cert| {
             if cert.round() == commit_round - 1 {
                 // 锚定检查：必须被 ≥f+1 个 commit_round 块引用。
