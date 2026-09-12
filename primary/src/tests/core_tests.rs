@@ -7,11 +7,46 @@ use crate::common::{
 use crate::header_waiter::WaiterMessage;
 use crate::proposer::ProposerSignal;
 use config::DagProtocol;
-use crypto::Signature;
+use crypto::{SecretKey, Signature};
 use std::collections::BTreeSet;
 use std::fs;
 use tokio::sync::mpsc::channel;
 use tokio::time::{timeout, Duration};
+
+fn signed_mahi_header(
+    author: PublicKey,
+    secret: &SecretKey,
+    round: Round,
+    parents: BTreeSet<Digest>,
+) -> Header {
+    let header = Header {
+        author,
+        round,
+        parents,
+        ..Header::default()
+    };
+    Header {
+        id: header.digest(),
+        signature: Signature::new(&header.digest(), secret),
+        ..header
+    }
+}
+
+fn mahi_test_certificate(author: PublicKey, round: Round, salt: u8) -> Certificate {
+    let mut id = [0u8; 32];
+    id[..8].copy_from_slice(&round.to_le_bytes());
+    id[8..16].copy_from_slice(&author.0[..8]);
+    id[31] = salt;
+    Certificate {
+        header: Header {
+            author,
+            round,
+            id: Digest(id),
+            ..Header::default()
+        },
+        votes: Vec::new(),
+    }
+}
 
 #[tokio::test]
 async fn process_header() {
@@ -1358,4 +1393,135 @@ async fn process_certificate_rejects_vote_origin_mismatch() {
         .await
         .is_err());
     assert!(store.read(digest.to_vec()).await.unwrap().is_none());
+}
+
+#[test]
+fn mahi_parents_accept_weak_links_and_deduplicate_strong_authors() {
+    let committee = committee();
+    let authors = committee.authorities.keys().copied().collect::<Vec<_>>();
+    let header = Header {
+        round: 3,
+        id: Digest([0x33; 32]),
+        ..Header::default()
+    };
+
+    let mut valid = authors[0..3]
+        .iter()
+        .enumerate()
+        .map(|(index, author)| mahi_test_certificate(*author, 2, index as u8))
+        .collect::<Vec<_>>();
+    valid.push(mahi_test_certificate(authors[3], 1, 0));
+    assert!(Core::validate_mahi_parents(&header, &valid, &committee).is_ok());
+
+    let equivocations = (0..3)
+        .map(|salt| mahi_test_certificate(authors[0], 2, salt))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        Core::validate_mahi_parents(&header, &equivocations, &committee),
+        Err(DagError::HeaderRequiresQuorum(_))
+    ));
+
+    valid.push(mahi_test_certificate(authors[3], 3, 1));
+    assert!(matches!(
+        Core::validate_mahi_parents(&header, &valid, &committee),
+        Err(DagError::MalformedHeader(_))
+    ));
+}
+
+#[tokio::test]
+async fn mahi_carries_a_delayed_block_as_a_weak_link() {
+    let signing_keys = keys();
+    let (name, node_secret) = keys().pop().unwrap();
+    let signature_service = SignatureService::new(node_secret);
+    let committee = committee_with_base_port(13_900);
+    let genesis = Certificate::genesis(&committee)
+        .into_iter()
+        .map(|certificate| certificate.digest())
+        .collect::<BTreeSet<_>>();
+    let round_1 = signing_keys
+        .iter()
+        .map(|(author, secret)| signed_mahi_header(*author, secret, 1, genesis.clone()))
+        .collect::<Vec<_>>();
+
+    let (tx_sync_headers, _rx_sync_headers) = channel(8);
+    let (tx_sync_certificates, _rx_sync_certificates) = channel(8);
+    let (tx_primary_messages, rx_primary_messages) = channel(32);
+    let (_tx_headers_loopback, rx_headers_loopback) = channel(8);
+    let (_tx_certificates_loopback, rx_certificates_loopback) = channel(8);
+    let (_tx_headers, rx_headers) = channel(8);
+    let (tx_consensus, _rx_consensus) = channel(32);
+    let (tx_parents, mut rx_parents) = channel(8);
+
+    let path = ".db_test_mahi_weak_link";
+    let _ = fs::remove_dir_all(path);
+    let store = Store::new(path).unwrap();
+    let synchronizer = Synchronizer::new(
+        name,
+        &committee,
+        DagProtocol::MahiMahi,
+        store.clone(),
+        tx_sync_headers,
+        tx_sync_certificates,
+    );
+    Core::spawn(
+        name,
+        committee,
+        DagProtocol::MahiMahi,
+        store,
+        synchronizer,
+        signature_service,
+        Arc::new(AtomicU64::new(0)),
+        50,
+        rx_primary_messages,
+        rx_headers_loopback,
+        rx_certificates_loopback,
+        rx_headers,
+        tx_consensus,
+        tx_parents,
+    );
+
+    for header in round_1.iter().take(3) {
+        tx_primary_messages
+            .send(PrimaryMessage::Header(header.clone()))
+            .await
+            .unwrap();
+    }
+    let round_2_signal = timeout(Duration::from_secs(2), rx_parents.recv())
+        .await
+        .expect("timed out waiting for Mahi-Mahi round 2 signal")
+        .unwrap();
+    assert_eq!(round_2_signal.round, 2);
+    assert_eq!(round_2_signal.parents_1.len(), 3);
+
+    let delayed = round_1[3].clone();
+    let delayed_digest = Certificate {
+        header: delayed.clone(),
+        votes: Vec::new(),
+    }
+    .digest();
+    tx_primary_messages
+        .send(PrimaryMessage::Header(delayed))
+        .await
+        .unwrap();
+
+    let round_2_parents = round_2_signal
+        .parents_1
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for (author, secret) in signing_keys.iter().take(3) {
+        let header = signed_mahi_header(*author, secret, 2, round_2_parents.clone());
+        tx_primary_messages
+            .send(PrimaryMessage::Header(header))
+            .await
+            .unwrap();
+    }
+
+    let round_3_signal = timeout(Duration::from_secs(2), rx_parents.recv())
+        .await
+        .expect("timed out waiting for Mahi-Mahi round 3 signal")
+        .unwrap();
+    assert_eq!(round_3_signal.round, 3);
+    assert_eq!(round_3_signal.parents_1.len(), 4);
+    assert!(round_3_signal.parents_1.contains(&delayed_digest));
 }

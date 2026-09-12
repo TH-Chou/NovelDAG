@@ -7,14 +7,14 @@ use crate::proposer::ProposerSignal;
 use crate::synchronizer::Synchronizer;
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use config::{Committee, DagProtocol};
+use config::{Committee, DagProtocol, Stake};
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey, SignatureService};
 #[cfg(feature = "benchmark")]
 use log::info;
 use log::{debug, error, warn};
 use network::{CancelHandler, ReliableSender, SimpleSender};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "benchmark")]
@@ -92,6 +92,9 @@ pub struct Core {
     history_support_cache: HashMap<(Digest, Round), HashSet<PublicKey>>,
     /// Lazy cache for whether one target header id is reachable from one root.
     history_id_cache: HashMap<(Digest, Digest), bool>,
+    /// Mahi-Mahi blocks not yet covered by a later strong-parent frontier.
+    /// One deterministic digest per author-round bounds equivocation fanout.
+    mahi_pending_weak_refs: BTreeMap<(Round, PublicKey), Digest>,
     /// Votes for own blocks that arrived before the voter's block at
     /// `voter_round` was visible in our local DAG.
     pending_votes: HashMap<Digest, Vec<Vote>>,
@@ -180,6 +183,7 @@ impl Core {
                 headers_by_id: HashMap::with_capacity(2 * gc_depth as usize),
                 history_support_cache: HashMap::with_capacity(2 * gc_depth as usize),
                 history_id_cache: HashMap::with_capacity(2 * gc_depth as usize),
+                mahi_pending_weak_refs: BTreeMap::new(),
                 pending_votes: HashMap::with_capacity(2 * gc_depth as usize),
                 shortfin_states: HashMap::with_capacity(2 * gc_depth as usize),
                 shortfin_qcs: HashMap::with_capacity(2 * gc_depth as usize),
@@ -229,6 +233,82 @@ impl Core {
                     .map(|certificate| certificate.digest())
             })
             .collect()
+    }
+
+    fn record_mahi_weak_ref(&mut self, certificate: &Certificate) {
+        if !self.dag_protocol.is_mahi_mahi() || certificate.round() == 0 {
+            return;
+        }
+        let digest = certificate.digest();
+        self.mahi_pending_weak_refs
+            .entry((certificate.round(), certificate.origin()))
+            .and_modify(|current| {
+                if digest < *current {
+                    *current = digest.clone();
+                }
+            })
+            .or_insert(digest);
+    }
+
+    /// Add only Mahi-Mahi blocks that are not already in the causal history
+    /// of the strong previous-round frontier. Covered entries are retired;
+    /// uncovered entries remain pending until a later frontier covers them.
+    fn mahi_parent_digests(&mut self, strong: Vec<Digest>, round: Round) -> Vec<Digest> {
+        let roots = strong
+            .iter()
+            .filter_map(|digest| self.certificates_by_digest.get(digest).cloned())
+            .collect::<Vec<_>>();
+        let pending = self
+            .mahi_pending_weak_refs
+            .iter()
+            .filter(|((candidate_round, _), _)| *candidate_round <= round)
+            .map(|(slot, digest)| (*slot, digest.clone()))
+            .collect::<Vec<_>>();
+        let mut parents = strong.into_iter().collect::<BTreeSet<_>>();
+
+        for (slot, digest) in pending {
+            let Some(candidate) = self.certificates_by_digest.get(&digest).cloned() else {
+                self.mahi_pending_weak_refs.remove(&slot);
+                continue;
+            };
+            let covered = parents.contains(&digest)
+                || self.history_contains_header_from_roots(
+                    &roots,
+                    &candidate.header.id,
+                    candidate.origin(),
+                    candidate.round(),
+                );
+            if covered {
+                self.mahi_pending_weak_refs.remove(&slot);
+            } else {
+                parents.insert(digest);
+            }
+        }
+        parents.into_iter().collect()
+    }
+
+    fn validate_mahi_parents(
+        header: &Header,
+        parents: &[Certificate],
+        committee: &Committee,
+    ) -> DagResult<()> {
+        let mut previous_round_authors = HashSet::new();
+        let mut previous_round_stake: Stake = 0;
+        for parent in parents {
+            ensure!(
+                parent.round() < header.round,
+                DagError::MalformedHeader(header.id.clone())
+            );
+            if parent.round() + 1 == header.round && previous_round_authors.insert(parent.origin())
+            {
+                previous_round_stake += committee.stake(&parent.origin());
+            }
+        }
+        ensure!(
+            previous_round_stake >= committee.quorum_threshold(),
+            DagError::HeaderRequiresQuorum(header.id.clone())
+        );
+        Ok(())
     }
 
     fn index_certificate(&mut self, certificate: &Certificate) {
@@ -594,6 +674,7 @@ impl Core {
             let previous_round = if round == 1 { 0 } else { round - 1 };
 
             if self.dag_protocol.is_mahi_mahi() {
+                let parents_1 = self.mahi_parent_digests(parents_1, round);
                 let signal = ProposerSignal {
                     round: round + 1,
                     parents_1,
@@ -978,20 +1059,21 @@ impl Core {
                         }
                     }
                 }
-                DagProtocol::Narwhal
-                | DagProtocol::Bullshark
-                | DagProtocol::MahiMahi
-                | DagProtocol::MahiMahi4
-                | DagProtocol::MahiMahi5
-                | DagProtocol::Wahoo => {
+                DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
+                    Self::validate_mahi_parents(header, &parents_1, &self.committee)?;
+                }
+                DagProtocol::Narwhal | DagProtocol::Bullshark | DagProtocol::Wahoo => {
                     // Single-parent validation: r-1 parents must form a quorum.
+                    let mut authors = HashSet::new();
                     let mut stake_1 = 0;
                     for x in &parents_1 {
                         ensure!(
                             x.round() + 1 == header.round,
                             DagError::MalformedHeader(header.id.clone())
                         );
-                        stake_1 += self.committee.stake(&x.origin());
+                        if authors.insert(x.origin()) {
+                            stake_1 += self.committee.stake(&x.origin());
+                        }
                     }
                     if header.round > 0 {
                         ensure!(
@@ -1207,6 +1289,7 @@ impl Core {
                     .or_insert_with(HashMap::new)
                     .insert(certificate.origin(), certificate.clone());
                 self.index_certificate(&certificate);
+                self.record_mahi_weak_ref(&certificate);
 
                 self.process_pending_votes().await?;
                 self.try_signal_proposer().await;
@@ -1524,6 +1607,10 @@ impl Core {
                     .retain(|(digest, _), _| live_digests.contains(digest));
                 self.history_id_cache
                     .retain(|(digest, _), _| live_digests.contains(digest));
+                self.mahi_pending_weak_refs
+                    .retain(|(candidate_round, _), digest| {
+                        *candidate_round >= gc_round && live_digests.contains(digest)
+                    });
                 self.shortfin_states
                     .retain(|id, _| live_header_ids.contains(id));
                 self.shortfin_qcs
