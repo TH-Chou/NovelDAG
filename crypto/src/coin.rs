@@ -284,6 +284,12 @@ pub fn threshold(committee_size: usize) -> usize {
     committee_size.saturating_sub(1) / 3
 }
 
+/// Threshold parameter requiring 2f+1 shares to reconstruct. Mahi-Mahi and
+/// Wahoo use this gate for their paper-level coin reveal rounds.
+pub fn quorum_threshold(committee_size: usize) -> usize {
+    2 * threshold(committee_size)
+}
+
 fn coin_message(round: u64) -> Vec<u8> {
     let mut message = b"narwhal-common-coin-v1".to_vec();
     message.extend_from_slice(&round.to_le_bytes());

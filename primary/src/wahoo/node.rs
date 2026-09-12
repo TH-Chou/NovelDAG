@@ -187,12 +187,11 @@ impl Node {
         let quorum_num = (2 * node_num + 2) / 3;
         // f = (n - 1) / 3, threshold = 2f so that 2f+1 = quorum_num
         // partials suffice to combine the Elect QC.
-        let f = (node_num.saturating_sub(1)) / 3;
         let coin_committee = coin::CoinCommittee::new(&authorities_sorted);
         let elect_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin) {
             Some(coin::ThresholdCoin::from_committee(
                 coin_committee.clone(),
-                2 * f,
+                coin::quorum_threshold(node_num),
             ))
         } else {
             None

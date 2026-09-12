@@ -133,9 +133,14 @@ impl Consensus {
             let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
                 && !matches!(dag_protocol, DagProtocol::Wahoo)
             {
+                let threshold = if dag_protocol.is_mahi_mahi() {
+                    coin::quorum_threshold(committee.size())
+                } else {
+                    coin::threshold(committee.size())
+                };
                 Some(coin::ThresholdCoin::from_committee(
                     coin_committee.clone(),
-                    coin::threshold(committee.size()),
+                    threshold,
                 ))
             } else {
                 None
@@ -189,31 +194,66 @@ impl Consensus {
     }
 
     /// Combine BLS coin shares carried by the selected protocol at `round`.
-    /// Every DAG protocol reaches this method after observing a round quorum;
-    /// f+1 valid shares are enough to recover a view-independent value.
+    /// Every DAG protocol reaches this method after observing a round quorum.
+    /// The configured backend decides whether recovery needs f+1 or 2f+1
+    /// distinct valid shares.
     pub(crate) fn threshold_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
         let certificates = dag.get(&round)?;
-        let weight: Stake = certificates
+        let certificates = certificates
             .values()
-            .map(|(_, c)| self.committee.stake(&c.origin()))
+            .map(|(_, certificate)| certificate)
+            .collect::<Vec<_>>();
+        self.threshold_coin_from_certificates(round, &certificates)
+    }
+
+    fn threshold_coin_from_certificates(
+        &self,
+        round: Round,
+        certificates: &[&Certificate],
+    ) -> Option<Round> {
+        let mut authors = std::collections::HashSet::new();
+        let weight: Stake = certificates
+            .iter()
+            .filter_map(|certificate| {
+                authors
+                    .insert(certificate.origin())
+                    .then(|| self.committee.stake(&certificate.origin()))
+            })
             .sum();
         if weight < self.committee.quorum_threshold() {
             return None;
         }
         let threshold_coin = self.threshold_coin.as_ref()?;
         let shares: Vec<(PublicKey, Vec<u8>)> = certificates
-            .values()
-            .filter_map(|(_, cert)| {
-                if cert.header.coin_share.is_empty() {
+            .iter()
+            .filter_map(|certificate| {
+                if certificate.header.coin_share.is_empty() {
                     None
                 } else {
-                    Some((cert.origin(), cert.header.coin_share.clone()))
+                    Some((certificate.origin(), certificate.header.coin_share.clone()))
                 }
             })
             .collect();
         threshold_coin
             .recover(round, &shares)
             .map(|coin| coin as Round)
+    }
+
+    pub(crate) fn leader_authority_from_certificates(
+        &self,
+        leader_round: Round,
+        coin_round: Round,
+        offset: usize,
+        certificates: &[&Certificate],
+    ) -> Option<PublicKey> {
+        let value = match self.consensus_protocol {
+            ConsensusProtocol::RoundRobin => self.round_robin_coin(leader_round),
+            ConsensusProtocol::PseudoRandom => self.pseudo_random_coin(coin_round),
+            ConsensusProtocol::CommonCoin => {
+                self.threshold_coin_from_certificates(coin_round, certificates)?
+            }
+        };
+        Some(self.coin_committee.leader(value, offset))
     }
 
     pub(crate) fn coin_value(

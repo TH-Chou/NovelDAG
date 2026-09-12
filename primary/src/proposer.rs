@@ -102,9 +102,14 @@ impl Proposer {
         let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
             && !matches!(dag_protocol, DagProtocol::Wahoo)
         {
+            let threshold = if dag_protocol.is_mahi_mahi() {
+                coin::quorum_threshold(committee.size())
+            } else {
+                coin::threshold(committee.size())
+            };
             Some(coin::ThresholdCoin::from_committee(
                 coin_committee.clone(),
-                coin::threshold(committee.size()),
+                threshold,
             ))
         } else {
             None
