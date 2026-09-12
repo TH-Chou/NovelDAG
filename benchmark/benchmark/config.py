@@ -180,9 +180,12 @@ class NodeParameters:
 
         if 'consensus_protocol' in json:
             consensus_protocol = json['consensus_protocol']
-            if consensus_protocol not in ('round_robin', 'common_coin'):
+            if consensus_protocol not in (
+                'round_robin', 'pseudo_random', 'common_coin'
+            ):
                 raise ConfigError(
-                    'Invalid parameters: consensus_protocol must be round_robin or common_coin'
+                    'Invalid parameters: consensus_protocol must be round_robin, '
+                    'pseudo_random, or common_coin'
                 )
         else:
             json['consensus_protocol'] = 'round_robin'

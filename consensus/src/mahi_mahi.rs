@@ -37,7 +37,15 @@ pub(crate) async fn run(consensus: &mut Consensus) {
                 continue;
             }
             for leader_index in 0..LEADER_COUNT {
-                let leader_key = leader_for(consensus, leader_round, leader_index);
+                let Some(leader_key) = leader_for(
+                    consensus,
+                    leader_round,
+                    wave_length,
+                    leader_index,
+                    &state.dag,
+                ) else {
+                    continue;
+                };
                 let Some((_, leader)) = state
                     .dag
                     .get(&leader_round)
@@ -90,10 +98,15 @@ pub(crate) async fn run(consensus: &mut Consensus) {
     }
 }
 
-fn leader_for(consensus: &Consensus, round: Round, leader_index: usize) -> PublicKey {
-    let mut keys: Vec<_> = consensus.committee.authorities.keys().cloned().collect();
-    keys.sort();
-    keys[(round as usize + leader_index) % keys.len()]
+fn leader_for(
+    consensus: &Consensus,
+    round: Round,
+    wave_length: Round,
+    leader_index: usize,
+    dag: &Dag,
+) -> Option<PublicKey> {
+    let coin_round = round + wave_length - 1;
+    consensus.leader_authority(round, coin_round, leader_index, dag)
 }
 
 fn enough_leader_support(

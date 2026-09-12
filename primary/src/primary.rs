@@ -334,6 +334,7 @@ impl Primary {
         let node = WahooNode::new(
             name,
             committee,
+            parameters.consensus_protocol,
             signature_service,
             parameters.batch_size,
             parameters.header_size,

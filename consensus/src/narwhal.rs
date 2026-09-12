@@ -3,7 +3,7 @@
 use crate::Consensus;
 use crate::Dag;
 use crate::State;
-use config::{ConsensusProtocol, Stake};
+use config::Stake;
 use crypto::{Digest, Hash as _};
 use log::{debug, info, log_enabled, warn};
 use primary::{Certificate, Round};
@@ -108,19 +108,7 @@ fn leader<'a>(
     coin_round: Round,
     dag: &'a Dag,
 ) -> Option<&'a (Digest, Certificate)> {
-    let by_round = dag.get(&round)?;
-
-    let coin = match consensus.consensus_protocol {
-        ConsensusProtocol::RoundRobin => consensus.round_robin_coin(round),
-        ConsensusProtocol::CommonCoin => consensus
-            .common_coin(coin_round, dag)
-            .unwrap_or_else(|| consensus.round_robin_coin(round)),
-    };
-    let mut keys: Vec<_> = consensus.committee.authorities.keys().cloned().collect();
-    keys.sort();
-    let leader = keys[coin as usize % consensus.committee.size()];
-
-    by_round.get(&leader)
+    consensus.leader(round, coin_round, dag)
 }
 
 /// Order the past leaders that we didn't already commit.

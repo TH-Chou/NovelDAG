@@ -197,11 +197,52 @@ fn shared_threshold_coin_recovers_and_caches() {
 }
 
 #[test]
-fn pseudo_random_coin_is_order_independent() {
-    let first = Digest([1; 32]);
-    let second = Digest([2; 32]);
+fn shared_threshold_coin_output_is_threshold_independent() {
+    let authorities: Vec<_> = keys().into_iter().map(|(public, _)| public).collect();
+    let f_plus_one_coin = coin::ThresholdCoin::new(&authorities, 1);
+    let two_f_plus_one_coin = coin::ThresholdCoin::new(&authorities, 2);
+    let round = 11;
+
+    let f_plus_one_shares = authorities
+        .iter()
+        .take(2)
+        .map(|authority| {
+            (
+                *authority,
+                f_plus_one_coin.make_share(authority, round).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let two_f_plus_one_shares = authorities
+        .iter()
+        .take(3)
+        .map(|authority| {
+            (
+                *authority,
+                two_f_plus_one_coin.make_share(authority, round).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+
     assert_eq!(
-        coin::pseudo_random(9, vec![first.clone(), second.clone()]),
-        coin::pseudo_random(9, vec![second, first])
+        f_plus_one_coin.recover(round, &f_plus_one_shares),
+        two_f_plus_one_coin.recover(round, &two_f_plus_one_shares)
+    );
+}
+
+#[test]
+fn pseudo_random_coin_is_order_independent() {
+    let authorities: Vec<_> = keys().into_iter().map(|(public, _)| public).collect();
+    let mut reversed = authorities.clone();
+    reversed.reverse();
+    let first = coin::CoinCommittee::new(&authorities);
+    let second = coin::CoinCommittee::new(&reversed);
+
+    assert_eq!(first.pseudo_random(9), second.pseudo_random(9));
+    assert_ne!(first.pseudo_random(9), first.pseudo_random(10));
+    assert_eq!(first.round_robin(9), 9);
+    assert_eq!(
+        first.leader(first.pseudo_random(9), 0),
+        second.leader(second.pseudo_random(9), 0)
     );
 }

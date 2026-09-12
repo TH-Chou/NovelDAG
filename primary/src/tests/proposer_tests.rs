@@ -74,7 +74,11 @@ async fn propose_payload() {
 
 #[tokio::test]
 async fn shortfin_only_carries_shares_at_common_coin_wave_boundaries() {
-    for protocol in [ConsensusProtocol::RoundRobin, ConsensusProtocol::CommonCoin] {
+    for protocol in [
+        ConsensusProtocol::RoundRobin,
+        ConsensusProtocol::PseudoRandom,
+        ConsensusProtocol::CommonCoin,
+    ] {
         let (name, secret) = keys().pop().unwrap();
         let signature_service = SignatureService::new(secret);
         let (tx_parents, rx_parents) = channel(1);
@@ -115,4 +119,18 @@ async fn shortfin_only_carries_shares_at_common_coin_wave_boundaries() {
             matches!(protocol, ConsensusProtocol::CommonCoin)
         );
     }
+}
+
+#[test]
+fn coin_share_rounds_match_each_protocol_schedule() {
+    assert!(!Proposer::carries_coin_share(DagProtocol::Shortfin, 3));
+    assert!(Proposer::carries_coin_share(DagProtocol::Shortfin, 4));
+    assert!(!Proposer::carries_coin_share(DagProtocol::Narwhal, 3));
+    assert!(!Proposer::carries_coin_share(DagProtocol::Narwhal, 2));
+    assert!(Proposer::carries_coin_share(DagProtocol::Narwhal, 4));
+    assert!(!Proposer::carries_coin_share(DagProtocol::MahiMahi, 4));
+    assert!(Proposer::carries_coin_share(DagProtocol::MahiMahi, 5));
+    assert!(!Proposer::carries_coin_share(DagProtocol::MahiMahi4, 3));
+    assert!(Proposer::carries_coin_share(DagProtocol::MahiMahi4, 4));
+    assert!(!Proposer::carries_coin_share(DagProtocol::Wahoo, 4));
 }

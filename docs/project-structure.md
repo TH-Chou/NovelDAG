@@ -1,6 +1,6 @@
 # Project Structure
 
-NovelDAG is a Rust workspace with a Python benchmark suite. The codebase is derived from Narwhal/Tusk and extended with Shortfin-family and Wahoo experiments.
+NovelDAG is a Rust workspace with a Python benchmark suite. The main experiment matrix supports Narwhal/Tusk, Shortfin, Mahi-Mahi, and Wahoo.
 
 ## Top-Level Layout
 
@@ -46,9 +46,21 @@ Supported values:
 
 ```text
 narwhal
-bullshark
 shortfin
+mahi_mahi
+mahi_mahi_4
+mahi_mahi_5
 wahoo
+```
+
+The legacy `bullshark` implementation remains available outside the main experiment matrix.
+
+Leader election is selected independently with `consensus_protocol`:
+
+```text
+round_robin
+pseudo_random
+common_coin
 ```
 
 The selection is routed in `consensus/src/lib.rs`:
@@ -57,10 +69,28 @@ The selection is routed in `consensus/src/lib.rs`:
 DagProtocol::Narwhal   -> consensus/src/narwhal.rs
 DagProtocol::Bullshark -> consensus/src/bullshark.rs
 DagProtocol::Shortfin  -> consensus/src/shortfin.rs
+DagProtocol::MahiMahi  -> consensus/src/mahi_mahi.rs
 DagProtocol::Wahoo     -> consensus/src/wahoo.rs
 ```
 
 Wahoo has additional primary-side logic in `primary/src/wahoo/`.
+
+## Shared Leader Election
+
+All protocols use `crypto/src/coin.rs` for authority ordering, leader mapping,
+deterministic pseudorandom values, threshold-share generation and verification,
+coin recovery, and bounded caches. Protocols only determine when their coin is
+revealed and how it is transported:
+
+| Protocol | Common-coin material |
+| --- | --- |
+| Narwhal/Tusk | Shares in even-round headers used to reveal the preceding leader. |
+| Shortfin | Shares only in wave-boundary headers (`round % 4 == 0`). |
+| Mahi-Mahi | Shares in every decision-capable block after startup because its waves overlap. |
+| Wahoo | Shares in the existing even-round `Elect` messages. |
+
+`pseudo_random` performs no coin communication. It derives a deterministic value
+from the sorted committee and logical coin round through the same shared module.
 
 ## Shortfin-Family Data Path
 
@@ -87,7 +117,7 @@ Important fields:
 | `parents` | First-hop references to round `r-1`. |
 | `parents_2` | Second-hop references to round `r-2`; Shortfin-family protocols require quorum coverage. |
 | `qc` | Embedded quorum certificate for the author's previous-round block. |
-| `coin_share` | Threshold coin share used by Shortfin-family common-coin leader election. |
+| `coin_share` | Threshold coin share used by header-based common-coin leader election. |
 | `voter_round` | Used to reject QCs whose votes are not earlier than the commit boundary. |
 
 ## Core Runtime Flow
@@ -107,6 +137,7 @@ Important fields:
 | `narwhal.rs` | Classic Narwhal/Tusk-style ordering over certified DAG certificates. |
 | `bullshark.rs` | Bullshark-style leader ordering. |
 | `shortfin.rs` | Baseline 4-round Shortfin wave with same-author embedded-QC leader chain. |
+| `mahi_mahi.rs` | Mahi-Mahi five-stage uncertified-DAG ordering (plus four-stage variant). |
 | `wahoo.rs` | Passthrough for Wahoo primary-side decisions. |
 
 ## Shortfin Baseline

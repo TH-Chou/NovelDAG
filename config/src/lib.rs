@@ -122,6 +122,7 @@ impl DagProtocol {
 #[serde(rename_all = "snake_case")]
 pub enum ConsensusProtocol {
     RoundRobin,
+    PseudoRandom,
     CommonCoin,
 }
 
@@ -135,6 +136,7 @@ impl ConsensusProtocol {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::RoundRobin => "round_robin",
+            Self::PseudoRandom => "pseudo_random",
             Self::CommonCoin => "common_coin",
         }
     }
@@ -369,5 +371,35 @@ impl KeyPair {
 impl Default for KeyPair {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn four_main_protocols_accept_every_leader_mode() {
+        for dag_protocol in ["narwhal", "shortfin", "mahi_mahi", "wahoo"] {
+            for consensus_protocol in ["round_robin", "pseudo_random", "common_coin"] {
+                let json = format!(
+                    r#"{{
+                        "header_size": 1000,
+                        "max_header_delay": 1000,
+                        "gc_depth": 50,
+                        "sync_retry_delay": 5000,
+                        "sync_retry_nodes": 3,
+                        "batch_size": 500000,
+                        "max_batch_delay": 100,
+                        "dag_protocol": "{}",
+                        "consensus_protocol": "{}"
+                    }}"#,
+                    dag_protocol, consensus_protocol
+                );
+                let parameters: Parameters = serde_json::from_str(&json).unwrap();
+                assert_eq!(parameters.dag_protocol.as_str(), dag_protocol);
+                assert_eq!(parameters.consensus_protocol.as_str(), consensus_protocol);
+            }
+        }
     }
 }

@@ -10,7 +10,7 @@ use crate::wahoo::msg_send;
 use crate::wahoo::pb::{Pb, PbAction};
 use crate::wahoo::tools::unix_nano_now;
 use bytes::Bytes;
-use config::{Committee, Stake, WorkerId};
+use config::{Committee, ConsensusProtocol, Stake, WorkerId};
 use crypto::{coin, Digest, Hash as _, PublicKey, Signature, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
@@ -47,9 +47,11 @@ pub struct Node {
     authorities_sorted: Vec<PublicKey>,
     node_num: usize,
     quorum_num: usize,
+    consensus_protocol: ConsensusProtocol,
+    coin_committee: coin::CoinCommittee,
     /// Shared threshold-coin backend. Wahoo transports its shares in Elect
     /// messages, while Shortfin transports shares in headers.
-    elect_coin: coin::ThresholdCoin,
+    elect_coin: Option<coin::ThresholdCoin>,
     /// Threshold parameter for the RECP BLS pipeline (paper Section IV-B
     /// Step 4d). Equals f so that f+1 distinct partials recover the
     /// aggregate signature used by `LeaderProof::ExclusiveCommit`.
@@ -168,6 +170,7 @@ impl Node {
     pub fn new(
         name: PublicKey,
         committee: Committee,
+        consensus_protocol: ConsensusProtocol,
         signature_service: SignatureService,
         batch_size: usize,
         header_size: usize,
@@ -185,7 +188,15 @@ impl Node {
         // f = (n - 1) / 3, threshold = 2f so that 2f+1 = quorum_num
         // partials suffice to combine the Elect QC.
         let f = (node_num.saturating_sub(1)) / 3;
-        let elect_coin = coin::ThresholdCoin::new(&authorities_sorted, 2 * f);
+        let coin_committee = coin::CoinCommittee::new(&authorities_sorted);
+        let elect_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin) {
+            Some(coin::ThresholdCoin::from_committee(
+                coin_committee.clone(),
+                2 * f,
+            ))
+        } else {
+            None
+        };
         let recp_threshold = crypto::recp_threshold(node_num);
 
         let pb = Pb::new(name, committee.clone());
@@ -196,6 +207,8 @@ impl Node {
             authorities_sorted,
             node_num,
             quorum_num,
+            consensus_protocol,
+            coin_committee,
             elect_coin,
             recp_threshold,
             batch_size,
@@ -899,8 +912,9 @@ impl Node {
     async fn broadcast_elect(&mut self, round: Round) {
         let partial_sig = self
             .elect_coin
-            .make_share(&self.name, round)
-            .expect("Wahoo Elect: this authority is in the committee");
+            .as_ref()
+            .and_then(|coin| coin.make_share(&self.name, round))
+            .unwrap_or_default();
         let elect = WahooElect {
             sender: self.name,
             round,
@@ -1100,24 +1114,27 @@ impl Node {
         if elects.len() < self.quorum_num {
             return;
         }
-        self.leader_elect.insert(round);
-
-        let shares: Vec<(PublicKey, Vec<u8>)> =
-            elects.iter().map(|(k, v)| (*k, v.clone())).collect();
-
-        let coin = self.elect_coin.recover(round, &shares);
-        let coin = match coin {
-            Some(c) => c,
-            None => {
-                warn!("Wahoo: failed to recover Elect coin for round {}", round);
-                return;
+        let value = match self.consensus_protocol {
+            ConsensusProtocol::RoundRobin => self.coin_committee.round_robin(round),
+            ConsensusProtocol::PseudoRandom => self.coin_committee.pseudo_random(round),
+            ConsensusProtocol::CommonCoin => {
+                let shares: Vec<(PublicKey, Vec<u8>)> =
+                    elects.iter().map(|(k, v)| (*k, v.clone())).collect();
+                match self
+                    .elect_coin
+                    .as_ref()
+                    .and_then(|coin| coin.recover(round, &shares))
+                {
+                    Some(value) => value,
+                    None => {
+                        warn!("Wahoo: failed to recover Elect coin for round {}", round);
+                        return;
+                    }
+                }
             }
         };
-        // Wahoo Go: leaderId = qcAsInt % n.nodeNum (uses just the first 4
-        // bytes of the BLS sig). Our recover_coin already collapses the
-        // BLS signature to a u64 — we mod by node_num to match.
-        let leader_id = (coin as usize) % self.node_num;
-        let leader_name = self.authorities_sorted[leader_id];
+        self.leader_elect.insert(round);
+        let leader_name = self.coin_committee.leader(value, 0);
         let prev_round = round.saturating_sub(1);
         self.leader.insert(prev_round, leader_name);
         debug!(
@@ -1589,6 +1606,7 @@ mod tests {
         let node = Node::new(
             me,
             committee,
+            ConsensusProtocol::CommonCoin,
             sig_service,
             4,
             32,
@@ -1602,10 +1620,77 @@ mod tests {
         // ceil(2*4/3) = 3
         assert_eq!(node.quorum_num, 3);
         // f=1, threshold=2f=2 → 2f+1=3 partials recover.
-        assert_eq!(node.elect_coin.threshold(), 2);
+        assert_eq!(node.elect_coin.as_ref().unwrap().threshold(), 2);
         assert_eq!(node.batch_size, 4);
         assert_eq!(node.chain.round, 0);
         assert!(node.dag.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_election_modes_use_shared_leader_mapping() {
+        for protocol in [
+            ConsensusProtocol::RoundRobin,
+            ConsensusProtocol::PseudoRandom,
+            ConsensusProtocol::CommonCoin,
+        ] {
+            let (publics, mut secrets, committee) = make_test_committee(4);
+            let schedule = coin::CoinCommittee::new(&publics);
+            let sig_service = SignatureService::new(secrets.remove(0));
+            let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+            let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+            let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+            let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+            let mut node = Node::new(
+                publics[0],
+                committee,
+                protocol,
+                sig_service,
+                1,
+                32,
+                rx_msg,
+                rx_workers,
+                rx_recp,
+                tx_committed,
+            );
+            let round = 4;
+            for author in publics.iter().take(node.quorum_num) {
+                let partial_sig = node
+                    .elect_coin
+                    .as_ref()
+                    .and_then(|coin| coin.make_share(author, round))
+                    .unwrap_or_default();
+                node.store_elect(&WahooElect {
+                    sender: *author,
+                    round,
+                    partial_sig,
+                });
+            }
+
+            let expected_value = match protocol {
+                ConsensusProtocol::RoundRobin => schedule.round_robin(round),
+                ConsensusProtocol::PseudoRandom => schedule.pseudo_random(round),
+                ConsensusProtocol::CommonCoin => {
+                    let shares = node
+                        .elect
+                        .get(&round)
+                        .unwrap()
+                        .iter()
+                        .map(|(author, share)| (*author, share.clone()))
+                        .collect::<Vec<_>>();
+                    node.elect_coin
+                        .as_ref()
+                        .unwrap()
+                        .recover(round, &shares)
+                        .unwrap()
+                }
+            };
+
+            node.try_to_elect_leader(round).await;
+            assert_eq!(
+                node.leader.get(&(round - 1)),
+                Some(&schedule.leader(expected_value, 0))
+            );
+        }
     }
 
     /// Build a 4-round Wahoo DAG by hand, place a leader at round 1 with
@@ -1627,6 +1712,7 @@ mod tests {
         let mut node = Node::new(
             me,
             committee,
+            ConsensusProtocol::CommonCoin,
             sig_service,
             1,
             32,
@@ -1698,6 +1784,7 @@ mod tests {
         let mut node = Node::new(
             me,
             committee,
+            ConsensusProtocol::CommonCoin,
             sig_service,
             1,
             32,
@@ -1784,6 +1871,7 @@ mod tests {
         let mut node = Node::new(
             me,
             committee,
+            ConsensusProtocol::CommonCoin,
             sig_service,
             1,
             32,

@@ -77,6 +77,9 @@ pub struct Consensus {
     pub(crate) consensus_protocol: ConsensusProtocol,
     /// The public key of this authority, used by Shortfin-style round-completion detection.
     pub(crate) name: PublicKey,
+    /// Sorted authority set and communication-free leader schedules shared by
+    /// all consensus protocols.
+    coin_committee: coin::CoinCommittee,
     /// Shared threshold-coin backend for protocols that carry coin shares in
     /// their DAG units. The recovered-round cache lives inside this object.
     threshold_coin: Option<coin::ThresholdCoin>,
@@ -125,12 +128,13 @@ impl Consensus {
         tx_output: Sender<Certificate>,
     ) {
         tokio::spawn(async move {
+            let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
+            let coin_committee = coin::CoinCommittee::new(&authorities);
             let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
-                && matches!(dag_protocol, DagProtocol::Shortfin)
+                && !matches!(dag_protocol, DagProtocol::Wahoo)
             {
-                let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
-                Some(coin::ThresholdCoin::new(
-                    &authorities,
+                Some(coin::ThresholdCoin::from_committee(
+                    coin_committee.clone(),
                     coin::threshold(committee.size()),
                 ))
             } else {
@@ -142,6 +146,7 @@ impl Consensus {
                 dag_protocol,
                 consensus_protocol,
                 name,
+                coin_committee,
                 threshold_coin,
                 rx_primary,
                 tx_primary,
@@ -175,31 +180,17 @@ impl Consensus {
         }
         #[cfg(not(test))]
         {
-            round
+            self.coin_committee.round_robin(round)
         }
     }
 
-    pub(crate) fn common_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
-        let certificates = dag.get(&round)?;
-        let weight: Stake = certificates
-            .values()
-            .map(|(_, certificate)| self.committee.stake(&certificate.origin()))
-            .sum();
-        if weight < self.committee.quorum_threshold() {
-            return None;
-        }
-
-        let digests: Vec<_> = certificates
-            .values()
-            .map(|(digest, _)| digest.clone())
-            .collect();
-        Some(coin::pseudo_random(round, digests))
+    pub(crate) fn pseudo_random_coin(&self, round: Round) -> Round {
+        self.coin_committee.pseudo_random(round)
     }
 
-    /// Shortfin threshold coin: combines BLS coin_shares embedded in headers at
-    /// `round`. Requires f+1 valid shares, which is guaranteed by the 2f+1
-    /// quorum at `round`. Returns a deterministic u64 that all honest nodes
-    /// will reproduce, regardless of which specific 2f+1 certificates they hold.
+    /// Combine BLS coin shares carried by the selected protocol at `round`.
+    /// Every DAG protocol reaches this method after observing a round quorum;
+    /// f+1 valid shares are enough to recover a view-independent value.
     pub(crate) fn threshold_coin(&self, round: Round, dag: &Dag) -> Option<Round> {
         let certificates = dag.get(&round)?;
         let weight: Stake = certificates
@@ -225,6 +216,30 @@ impl Consensus {
             .map(|coin| coin as Round)
     }
 
+    pub(crate) fn coin_value(
+        &self,
+        leader_round: Round,
+        coin_round: Round,
+        dag: &Dag,
+    ) -> Option<Round> {
+        match self.consensus_protocol {
+            ConsensusProtocol::RoundRobin => Some(self.round_robin_coin(leader_round)),
+            ConsensusProtocol::PseudoRandom => Some(self.pseudo_random_coin(coin_round)),
+            ConsensusProtocol::CommonCoin => self.threshold_coin(coin_round, dag),
+        }
+    }
+
+    pub(crate) fn leader_authority(
+        &self,
+        leader_round: Round,
+        coin_round: Round,
+        offset: usize,
+        dag: &Dag,
+    ) -> Option<PublicKey> {
+        self.coin_value(leader_round, coin_round, dag)
+            .map(|value| self.coin_committee.leader(value, offset))
+    }
+
     /// Returns the certificate (and digest) originated by the leader.
     pub(crate) fn leader<'a>(
         &self,
@@ -234,26 +249,7 @@ impl Consensus {
     ) -> Option<&'a (Digest, Certificate)> {
         let by_round = dag.get(&round)?;
 
-        let leader = match self.consensus_protocol {
-            ConsensusProtocol::RoundRobin => {
-                let coin = self.round_robin_coin(round);
-                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
-                keys.sort();
-                keys[coin as usize % self.committee.size()]
-            }
-            ConsensusProtocol::CommonCoin => {
-                let coin = if matches!(self.dag_protocol, DagProtocol::Shortfin) {
-                    self.threshold_coin(coin_round, dag)
-                        .unwrap_or_else(|| self.round_robin_coin(round))
-                } else {
-                    self.common_coin(coin_round, dag)
-                        .unwrap_or_else(|| self.round_robin_coin(round))
-                };
-                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
-                keys.sort();
-                keys[coin as usize % self.committee.size()]
-            }
-        };
+        let leader = self.leader_authority(round, coin_round, 0, dag)?;
 
         by_round.get(&leader)
     }

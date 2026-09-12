@@ -44,8 +44,9 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
-    /// Shared threshold-coin backend, enabled only when Shortfin-family
-    /// protocols are configured to use the common coin.
+    /// Shared deterministic schedules used by every generic DAG protocol.
+    coin_committee: coin::CoinCommittee,
+    /// Shared threshold-coin backend, enabled in common-coin mode.
     threshold_coin: Option<coin::ThresholdCoin>,
     /// Threshold for parents_2 (dual-hop) references. Shortfin-family protocols require
     /// the second-hop references to cover a quorum from round r-2.
@@ -96,12 +97,13 @@ impl Proposer {
             .map(|x| x.digest())
             .collect();
         let genesis_certs = Certificate::genesis(committee);
-        let threshold_coin = if dag_protocol.is_shortfin_family()
-            && matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
+        let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
+        let coin_committee = coin::CoinCommittee::new(&authorities);
+        let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
+            && !matches!(dag_protocol, DagProtocol::Wahoo)
         {
-            let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
-            Some(coin::ThresholdCoin::new(
-                &authorities,
+            Some(coin::ThresholdCoin::from_committee(
+                coin_committee.clone(),
                 coin::threshold(committee.size()),
             ))
         } else {
@@ -132,6 +134,7 @@ impl Proposer {
                 signature_service,
                 header_size,
                 max_header_delay,
+                coin_committee,
                 threshold_coin,
                 parents_2_threshold,
                 rx_core,
@@ -155,7 +158,7 @@ impl Proposer {
         let coin_share = self
             .threshold_coin
             .as_ref()
-            .filter(|_| self.round % SHORTFIN_WAVE_LENGTH == 0)
+            .filter(|_| Self::carries_coin_share(self.dag_protocol, self.round))
             .and_then(|coin| coin.make_share(&self.name, self.round))
             .unwrap_or_default();
 
@@ -216,6 +219,17 @@ impl Proposer {
 
     // ---------------- Bullshark helpers ----------------
 
+    fn carries_coin_share(dag_protocol: DagProtocol, round: Round) -> bool {
+        match dag_protocol {
+            DagProtocol::Shortfin => round % SHORTFIN_WAVE_LENGTH == 0,
+            DagProtocol::Narwhal => round >= 4 && round % 2 == 0,
+            DagProtocol::Bullshark => round % 2 == 0,
+            DagProtocol::MahiMahi | DagProtocol::MahiMahi5 => round >= 5,
+            DagProtocol::MahiMahi4 => round >= 4,
+            DagProtocol::Wahoo => false,
+        }
+    }
+
     fn round_robin_coin(&self, round: Round) -> Round {
         #[cfg(test)]
         {
@@ -224,11 +238,11 @@ impl Proposer {
         }
         #[cfg(not(test))]
         {
-            round
+            self.coin_committee.round_robin(round)
         }
     }
 
-    fn common_coin_from_parents(&self) -> Option<Round> {
+    fn threshold_coin_from_parents(&self) -> Option<Round> {
         if self.last_parent_certs.is_empty() {
             return None;
         }
@@ -242,37 +256,34 @@ impl Proposer {
             return None;
         }
 
-        let digests: Vec<_> = self
+        let shares: Vec<_> = self
             .last_parent_certs
             .iter()
-            .map(|certificate| certificate.digest())
+            .filter_map(|certificate| {
+                if certificate.header.coin_share.is_empty() {
+                    None
+                } else {
+                    Some((certificate.origin(), certificate.header.coin_share.clone()))
+                }
+            })
             .collect();
-        Some(coin::pseudo_random(self.round, digests))
+        self.threshold_coin.as_ref()?.recover(self.round, &shares)
     }
 
     /// Update the last leader (Bullshark even-round logic).
     fn update_leader(&mut self) -> bool {
-        let leader_name = match self.consensus_protocol {
-            ConsensusProtocol::RoundRobin => self.committee.leader(self.round as usize),
-            ConsensusProtocol::CommonCoin => {
-                let mut keys: Vec<_> = self
-                    .last_parent_certs
-                    .iter()
-                    .map(|certificate| certificate.origin())
-                    .collect();
-                keys.sort();
-                keys.dedup();
-                if keys.is_empty() {
+        let value = match self.consensus_protocol {
+            ConsensusProtocol::RoundRobin => self.round_robin_coin(self.round),
+            ConsensusProtocol::PseudoRandom => self.coin_committee.pseudo_random(self.round),
+            ConsensusProtocol::CommonCoin => match self.threshold_coin_from_parents() {
+                Some(value) => value,
+                None => {
                     self.last_leader = None;
                     return false;
                 }
-
-                let coin = self
-                    .common_coin_from_parents()
-                    .unwrap_or_else(|| self.round_robin_coin(self.round));
-                keys[coin as usize % keys.len()]
-            }
+            },
         };
+        let leader_name = self.coin_committee.leader(value, 0);
         self.last_leader = self
             .last_parent_certs
             .iter()

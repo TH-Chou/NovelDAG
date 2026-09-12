@@ -15,12 +15,23 @@ from benchmark.local import LocalBench
 from benchmark.logs import ParseError, LogParser
 from benchmark.utils import Print, BenchError, PathMaker
 
+CONSENSUS_PROTOCOLS = ('round_robin', 'pseudo_random', 'common_coin')
+
 
 @task
-def local(ctx, debug=True, protocol='round_robin', dag_protocol='shortfin', rate=50_000):
+def local(
+    ctx,
+    debug=True,
+    protocol='round_robin',
+    dag_protocol='shortfin',
+    rate=50_000,
+    duration=20,
+):
     ''' Run benchmarks on localhost '''
-    if protocol not in ('round_robin', 'common_coin'):
-        raise BenchError('Invalid protocol: must be round_robin or common_coin')
+    if protocol not in CONSENSUS_PROTOCOLS:
+        raise BenchError(
+            'Invalid protocol: must be round_robin, pseudo_random, or common_coin'
+        )
 
     bench_params = {
         'faults': 0,
@@ -28,7 +39,7 @@ def local(ctx, debug=True, protocol='round_robin', dag_protocol='shortfin', rate
         'workers': 1,
         'rate': int(rate),
         'tx_size': 512,
-        'duration': 20,
+        'duration': int(duration),
     }
     node_params = {
         'header_size': 1_000,  # bytes
@@ -50,7 +61,7 @@ def local(ctx, debug=True, protocol='round_robin', dag_protocol='shortfin', rate
 
 @task
 def compare_consensus(ctx, duration=50, debug=True):
-    ''' Compare round_robin vs common_coin on localhost '''
+    ''' Compare all leader-election modes on localhost '''
     bench_params = {
         'faults': 0,
         'nodes': 4,
@@ -70,7 +81,7 @@ def compare_consensus(ctx, duration=50, debug=True):
     }
 
     try:
-        protocols = ['round_robin', 'common_coin']
+        protocols = list(CONSENSUS_PROTOCOLS)
         results = {}
         for protocol in protocols:
             Print.heading(
@@ -592,8 +603,10 @@ def remote(
     ''' Run benchmarks on a remote cloud testbed '''
     from benchmark.remote import Bench
 
-    if protocol not in ('round_robin', 'common_coin'):
-        raise BenchError('Invalid protocol: must be round_robin or common_coin')
+    if protocol not in CONSENSUS_PROTOCOLS:
+        raise BenchError(
+            'Invalid protocol: must be round_robin, pseudo_random, or common_coin'
+        )
 
     bench_params = {
         'faults': int(faults),
@@ -644,8 +657,10 @@ def remote_run_batch(
     ''' Run benchmarks remotely and keep logs on machines for later collection '''
     from benchmark.remote import Bench
 
-    if protocol not in ('round_robin', 'common_coin'):
-        raise BenchError('Invalid protocol: must be round_robin or common_coin')
+    if protocol not in CONSENSUS_PROTOCOLS:
+        raise BenchError(
+            'Invalid protocol: must be round_robin, pseudo_random, or common_coin'
+        )
 
     rate_values = [int(x.strip()) for x in str(rates).split(',') if x.strip()]
     if not rate_values:

@@ -1,4 +1,4 @@
-use crate::{Digest, PublicKey};
+use crate::PublicKey;
 use ed25519_dalek::{Digest as _, Sha512};
 use rand::SeedableRng as _;
 use std::collections::{BTreeMap, HashMap};
@@ -7,6 +7,55 @@ use std::sync::{Arc, Mutex};
 use threshold_crypto::{PublicKeySet, SecretKeySet, SignatureShare};
 
 const CACHE_ROUNDS: usize = 256;
+
+/// Shared deterministic leader schedule used by every protocol in modes that
+/// do not reconstruct a threshold signature.
+#[derive(Clone)]
+pub struct CoinCommittee {
+    authorities: Arc<Vec<PublicKey>>,
+}
+
+impl CoinCommittee {
+    pub fn new(authorities: &[PublicKey]) -> Self {
+        let mut authorities = authorities.to_vec();
+        authorities.sort();
+        authorities.dedup();
+        assert!(!authorities.is_empty(), "coin committee must not be empty");
+        Self {
+            authorities: Arc::new(authorities),
+        }
+    }
+
+    pub fn authorities(&self) -> &[PublicKey] {
+        self.authorities.as_slice()
+    }
+
+    pub fn round_robin(&self, round: u64) -> u64 {
+        round
+    }
+
+    /// Deterministic, communication-free pseudorandom value. The committee is
+    /// included in the domain so every protocol derives the same value for the
+    /// same committee and logical coin round.
+    pub fn pseudo_random(&self, round: u64) -> u64 {
+        let mut hasher = Sha512::new();
+        hasher.update(b"noveldag-pseudo-random-coin-v1");
+        for authority in self.authorities.iter() {
+            hasher.update(authority);
+        }
+        hasher.update(&round.to_le_bytes());
+        let digest = hasher.finalize();
+        u64::from_le_bytes(
+            digest[..8]
+                .try_into()
+                .expect("SHA-512 output is long enough"),
+        )
+    }
+
+    pub fn leader(&self, value: u64, offset: usize) -> PublicKey {
+        self.authorities[(value as usize + offset) % self.authorities.len()]
+    }
+}
 
 /// Shared threshold-coin backend used by every protocol.
 ///
@@ -37,20 +86,22 @@ struct CachedShare {
 
 impl ThresholdCoin {
     pub fn new(authorities: &[PublicKey], threshold: usize) -> Self {
-        let mut sorted_authorities = authorities.to_vec();
-        sorted_authorities.sort();
-        sorted_authorities.dedup();
+        Self::from_committee(CoinCommittee::new(authorities), threshold)
+    }
+
+    pub fn from_committee(committee: CoinCommittee, threshold: usize) -> Self {
         assert!(
-            threshold < sorted_authorities.len(),
+            threshold < committee.authorities().len(),
             "coin threshold must be smaller than the committee"
         );
 
-        let authority_indices = sorted_authorities
+        let authority_indices = committee
+            .authorities()
             .iter()
             .enumerate()
             .map(|(index, authority)| (*authority, index))
             .collect();
-        let secret_key_set = deterministic_key_set(&sorted_authorities, threshold);
+        let secret_key_set = deterministic_key_set(committee.authorities(), threshold);
         let public_key_set = secret_key_set.public_keys();
 
         Self {
@@ -227,20 +278,6 @@ impl ThresholdCoin {
         retain_recent_verified_shares(&mut cache, round);
         share
     }
-}
-
-/// The existing no-cryptography coin used by Narwhal and Bullshark. Keeping
-/// it here ensures every protocol uses the same deterministic implementation.
-pub fn pseudo_random(round: u64, mut digests: Vec<Digest>) -> u64 {
-    digests.sort();
-    let mut seed = round;
-    for digest in digests {
-        let mut chunk = [0u8; 8];
-        chunk.copy_from_slice(&digest.0[..8]);
-        seed ^= u64::from_le_bytes(chunk);
-        seed = seed.rotate_left(13).wrapping_mul(0x9E37_79B1_85EB_CA87);
-    }
-    seed
 }
 
 pub fn threshold(committee_size: usize) -> usize {

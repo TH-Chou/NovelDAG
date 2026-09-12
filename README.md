@@ -124,7 +124,7 @@ A node advances from round `r` to `r+1` when:
 
 Each wave spans 4 rounds. At every `r % 4 == 0`:
 
-1. Elect leader of round `r-3` (via RoundRobin or CommonCoin)
+1. Elect leader of round `r-3` (via RoundRobin, PseudoRandom, or CommonCoin)
 2. Verify the **b₃ → b₂ → b₁** chain from the same author:
    - b₃: leader's block at `r-3`
    - b₂: same author at `r-2` (carries QC(b₃))
