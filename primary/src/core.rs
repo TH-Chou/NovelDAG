@@ -251,8 +251,9 @@ impl Core {
     }
 
     /// Add only Mahi-Mahi blocks that are not already in the causal history
-    /// of the strong previous-round frontier. Covered entries are retired;
-    /// uncovered entries remain pending until a later frontier covers them.
+    /// of the strong previous-round frontier. Every weak reference is carried
+    /// once: the new block then represents that history and will itself be
+    /// carried if it is absent from a later strong frontier.
     fn mahi_parent_digests(&mut self, strong: Vec<Digest>, round: Round) -> Vec<Digest> {
         let roots = strong
             .iter()
@@ -282,6 +283,7 @@ impl Core {
                 self.mahi_pending_weak_refs.remove(&slot);
             } else {
                 parents.insert(digest);
+                self.mahi_pending_weak_refs.remove(&slot);
             }
         }
         parents.into_iter().collect()
