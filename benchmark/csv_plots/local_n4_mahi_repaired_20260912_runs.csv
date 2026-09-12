@@ -1,0 +1,5 @@
+run,protocol,consensus_protocol,fault_mode,faults,delay_ms,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms
+1,mahi_mahi,round_robin,none,0,0,30000,20,23195.119273,4797.793024,21995.288068,5371.276385
+1,mahi_mahi,round_robin,silence,1,0,30000,20,24347.565409,4555.509888,23081.735659,5131.328448
+1,mahi_mahi,round_robin,none,0,0,60000,30,44888,5400,43401,6067
+1,mahi_mahi,common_coin,none,0,0,30000,20,24792,3715,23787,4291

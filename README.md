@@ -21,7 +21,7 @@ NovelDAG/
     src/wahoo/       # Wahoo protocol state machine (full port from Go reference)
   consensus/         # Protocol consensus modules
     src/shortfin.rs  # Shortfin: 4-round wave, b3→b2→b1 leader chain, pipelined commits
-    src/mahi_mahi.rs # Mahi-Mahi: uncertified five-stage DAG baseline
+    src/mahi_mahi.rs # Mahi-Mahi: uncertified DAG with full commit/skip paths
     src/narwhal.rs   # Narwhal: r-2 leader, f+1 support, linked-path ordering
     src/bullshark.rs # Bullshark: r leader, f+1 support, linked-path ordering
     src/wahoo.rs     # Wahoo passthrough (commit decisions made in primary)
@@ -56,7 +56,7 @@ Protocol-specific logic is isolated in the consensus layer:
 | --- | --- | --- | --- |
 | Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
 | Shortfin | [consensus/src/shortfin.rs](consensus/src/shortfin.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
-| Mahi-Mahi | [consensus/src/mahi_mahi.rs](consensus/src/mahi_mahi.rs) | Two leaders per overlapping wave | Five-stage uncertified-DAG direct commit |
+| Mahi-Mahi | [consensus/src/mahi_mahi.rs](consensus/src/mahi_mahi.rs) | Two leaders per overlapping wave | Five-stage uncertified DAG with direct/indirect commit, skip, and prefix decisions |
 | Wahoo | [primary/src/wahoo/](primary/src/wahoo/) (state machine) + [consensus/src/wahoo.rs](consensus/src/wahoo.rs) (passthrough) | Even-round Elect: 2f+1 BLS partial sigs → coin for odd-round leader | `leader[r] ∧ done[r][leader] ∧ dag[r][leader]` at odd rounds, transitive ancestor commit. 1:1 port of [Go reference](Wahoo-main/wahoo/) |
 
 The legacy Bullshark module remains available for compatibility but is outside the four-protocol paper matrix.

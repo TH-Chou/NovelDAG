@@ -137,7 +137,13 @@ Important fields:
 | `narwhal.rs` | Classic Narwhal/Tusk-style ordering over certified DAG certificates. |
 | `bullshark.rs` | Bullshark-style leader ordering. |
 | `shortfin.rs` | Baseline 4-round Shortfin wave with same-author embedded-QC leader chain. |
-| `mahi_mahi.rs` | Mahi-Mahi five-stage uncertified-DAG ordering (plus four-stage variant). |
+| `mahi_mahi.rs` | Mahi-Mahi uncertified-DAG ordering with direct/indirect commit, direct/indirect skip, longest-prefix decisions, deterministic linearization, and a four-stage variant. |
+
+Mahi-Mahi keeps every observed equivocation in its consensus DAG and evaluates
+votes through deterministic graph traversal. Quorums count distinct authors,
+not block digests. Its incremental support, certificate, and link caches avoid
+repeating full-DAG traversals, while weak links carry otherwise uncovered
+history forward without repeatedly attaching the same old reference.
 | `wahoo.rs` | Passthrough for Wahoo primary-side decisions. |
 
 ## Shortfin Baseline
