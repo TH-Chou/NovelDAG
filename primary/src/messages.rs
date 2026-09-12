@@ -323,7 +323,7 @@ impl Header {
 
         // Structural rules vary by protocol.
         match dag_protocol {
-            DagProtocol::Shortfin | DagProtocol::Sailfin => {
+            DagProtocol::Shortfin => {
                 if self.round == 0 {
                     ensure!(
                         self.parents.is_empty() && self.parents_2.is_empty() && self.qc.is_none(),

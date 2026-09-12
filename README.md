@@ -5,7 +5,7 @@
 [![python](https://img.shields.io/badge/python-3.9-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/release/python-390/)
 [![license](https://img.shields.io/badge/license-Apache-blue.svg?style=flat-square)](LICENSE)
 
-Research-oriented DAG consensus codebase derived from Narwhal/Tusk, adapted for protocol experimentation. **Five DAG consensus protocols — Narwhal, Bullshark, Shortfin, Sailfin, and Wahoo — unified in a single workspace**, selected at runtime via configuration.
+Research-oriented DAG consensus codebase derived from Narwhal/Tusk, adapted for protocol experimentation. The main experiment matrix supports **Narwhal/Tusk, Shortfin, Mahi-Mahi, and Wahoo** in one workspace, selected at runtime via configuration.
 
 - **Language:** Rust (consensus), Python + Fabric (benchmarks)
 - **License:** Apache 2.0
@@ -21,7 +21,7 @@ NovelDAG/
     src/wahoo/       # Wahoo protocol state machine (full port from Go reference)
   consensus/         # Protocol consensus modules
     src/shortfin.rs  # Shortfin: 4-round wave, b3→b2→b1 leader chain, pipelined commits
-    src/sailfin.rs   # Sailfin: experimental Shortfin-family variant
+    src/mahi_mahi.rs # Mahi-Mahi: uncertified five-stage DAG baseline
     src/narwhal.rs   # Narwhal: r-2 leader, f+1 support, linked-path ordering
     src/bullshark.rs # Bullshark: r leader, f+1 support, linked-path ordering
     src/wahoo.rs     # Wahoo passthrough (commit decisions made in primary)
@@ -48,19 +48,20 @@ NovelDAG/
 
 ---
 
-## Five Protocols, One Codebase
+## Four Main Protocols, One Codebase
 
 Protocol-specific logic is isolated in the consensus layer:
 
 | Protocol | Consensus module | Leader rule | Commit rule |
 | --- | --- | --- | --- |
 | Narwhal | [consensus/src/narwhal.rs](consensus/src/narwhal.rs) | Elected at round `r-2` | f+1 support from `r-1` children, linked-path ordering |
-| Bullshark | [consensus/src/bullshark.rs](consensus/src/bullshark.rs) | Elected at round `r` | f+1 support from `r+1` children, linked-path ordering |
 | Shortfin | [consensus/src/shortfin.rs](consensus/src/shortfin.rs) | Elected at round `r-3` | Same-author b3→b2→b1 chain with embedded QC links, pipelined commits |
-| Sailfin | [consensus/src/sailfin.rs](consensus/src/sailfin.rs) | Experimental | Rolling-discovery Shortfin variant with conservative barrier finalization |
+| Mahi-Mahi | [consensus/src/mahi_mahi.rs](consensus/src/mahi_mahi.rs) | Two leaders per overlapping wave | Five-stage uncertified-DAG direct commit |
 | Wahoo | [primary/src/wahoo/](primary/src/wahoo/) (state machine) + [consensus/src/wahoo.rs](consensus/src/wahoo.rs) (passthrough) | Even-round Elect: 2f+1 BLS partial sigs → coin for odd-round leader | `leader[r] ∧ done[r][leader] ∧ dag[r][leader]` at odd rounds, transitive ancestor commit. 1:1 port of [Go reference](Wahoo-main/wahoo/) |
 
-Leader election modes (`consensus_protocol`): **RoundRobin** or **CommonCoin** — selectable independently of the DAG protocol.
+The legacy Bullshark module remains available for compatibility but is outside the four-protocol paper matrix.
+
+Leader election modes (`consensus_protocol`): **RoundRobin**, **PseudoRandom**, or **CommonCoin** — selectable independently of the DAG protocol.
 
 ### Runtime selection
 
@@ -72,8 +73,8 @@ In `parameters.json`:
 }
 ```
 
-- `dag_protocol`: `"narwhal"` | `"bullshark"` | `"shortfin"` | `"sailfin"` | `"wahoo"` (default: `"shortfin"`)
-- `consensus_protocol`: `"round_robin"` | `"common_coin"` (default: `"round_robin"`)
+- `dag_protocol`: `"narwhal"` | `"shortfin"` | `"mahi_mahi"` | `"wahoo"` (default: `"shortfin"`)
+- `consensus_protocol`: `"round_robin"` | `"pseudo_random"` | `"common_coin"` (default: `"round_robin"`)
 
 The `Header`, `Certificate`, and `Vote` wire formats use the Shortfin-family extended structure (with `parents_2`, `embedded_qc`, `coin_share`, `voter_round`) as the universal format. Narwhal/Bullshark modes leave extension fields at their default/empty values.
 
@@ -242,7 +243,6 @@ fab paper-plot-all
 - Project structure: [docs/project-structure.md](docs/project-structure.md)
 - Benchmark runbook: [docs/benchmark-runbook.md](docs/benchmark-runbook.md)
 - Experiment data notes: [docs/experiment-data-notes.md](docs/experiment-data-notes.md)
-- Sailfin rolling discovery notes: [docs/sailfin-rolling-discovery.md](docs/sailfin-rolling-discovery.md)
 - **Benchmark guide:** [benchmark/README.md](benchmark/README.md) — full workflow, scripts, entry points, parameters, plotting
 - Primary module notes: [primary/README.md](primary/README.md)
 - Worker module notes: [worker/README.md](worker/README.md)

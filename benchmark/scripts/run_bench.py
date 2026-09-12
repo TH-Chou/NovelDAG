@@ -106,7 +106,7 @@ def main() -> None:
     run_p.add_argument(
         "--dag-protocol",
         type=str,
-        help="DAG protocol (narwhal/shortfin/sailfin/mahi_mahi/mahi_mahi_4/mahi_mahi_5/wahoo)",
+        help="DAG protocol (narwhal/shortfin/mahi_mahi/mahi_mahi_4/mahi_mahi_5/wahoo)",
     )
     run_p.add_argument("--output-prefix", type=str, help="Output CSV prefix")
     run_p.add_argument(

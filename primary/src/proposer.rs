@@ -380,7 +380,7 @@ impl Proposer {
 
         loop {
             match self.dag_protocol {
-                DagProtocol::Shortfin | DagProtocol::Sailfin => {
+                DagProtocol::Shortfin => {
                     // Check if we can propose a new header. We propose a new header when one of
                     // the following conditions is met:
                     // 1. We have a quorum of certificates from the previous round and enough
@@ -585,7 +585,7 @@ impl Proposer {
             tokio::select! {
                 Some(signal) = self.rx_core.recv() => {
                     match self.dag_protocol {
-                        DagProtocol::Shortfin | DagProtocol::Sailfin => {
+                        DagProtocol::Shortfin => {
                             if signal.round < self.round {
                                 continue;
                             }

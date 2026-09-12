@@ -190,14 +190,14 @@ class NodeParameters:
         if 'dag_protocol' in json:
             dag_protocol = json['dag_protocol']
             if dag_protocol not in (
-                'narwhal', 'bullshark', 'shortfin', 'sailfin',
+                'narwhal', 'bullshark', 'shortfin',
                 'mahi_mahi', 'mahi-mahi',
                 'mahi_mahi_4', 'mahi-mahi-4',
                 'mahi_mahi_5', 'mahi-mahi-5',
                 'wahoo'
             ):
                 raise ConfigError(
-                    'Invalid parameters: dag_protocol must be narwhal, bullshark, shortfin, sailfin, mahi_mahi, mahi_mahi_4, mahi_mahi_5, or wahoo'
+                    'Invalid parameters: dag_protocol must be narwhal, bullshark, shortfin, mahi_mahi, mahi_mahi_4, mahi_mahi_5, or wahoo'
                 )
         else:
             json['dag_protocol'] = 'shortfin'

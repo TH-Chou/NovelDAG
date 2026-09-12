@@ -78,8 +78,8 @@ fab paper-plot-all
 | `--tx-size` | 512 | Transaction size (bytes) |
 | `--duration` | 50 | Benchmark duration cap is 50 seconds; paper helpers default to 30 seconds |
 | `--runs` | 2 | Runs per config |
-| `--dag-protocol` | shortfin | narwhal / bullshark / shortfin / sailfin / wahoo |
-| `--protocol` | round_robin | round_robin / common_coin (leader election) |
+| `--dag-protocol` | shortfin | narwhal / shortfin / mahi_mahi / wahoo |
+| `--protocol` | round_robin | round_robin / pseudo_random / common_coin (leader election) |
 | `--benchmark-delay` | 20 | Delay before timed phase (seconds, for P2P warmup) |
 | `--max-header-delay` | 1000 | Proposer timer interval (ms, increase for cross-region) |
 
@@ -89,7 +89,7 @@ fab paper-plot-all
 cd benchmark
 python scripts/dagtest-TUI
 python scripts/dagtest-TUI run --mode local --protocol shortfin --rates 60000 --faults 0 --delays 0 --runs 1
-python scripts/dagtest-TUI full --mode local --protocols narwhal,shortfin,sailfin,wahoo --rates 60000,130000 --faults 0,1 --delays 0,100 --runs 3
+python scripts/dagtest-TUI full --mode local --protocols narwhal,shortfin,mahi_mahi,wahoo --rates 60000,130000 --faults 0,1 --delays 0,100 --runs 3
 python scripts/dagtest-TUI run --mode aws --settings settings.json --config scripts/configs/full_sweep.yaml --group all_smoke
 ```
 

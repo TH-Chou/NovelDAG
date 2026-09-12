@@ -1,6 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use super::*;
-use config::{Authority, ConsensusProtocol, DagProtocol, PrimaryAddresses};
+use config::{Authority, PrimaryAddresses};
 use crypto::{generate_keypair, SecretKey};
 use primary::{EmbeddedQc, Header, Vote};
 use rand::rngs::StdRng;
@@ -215,66 +215,6 @@ async fn commit_one() {
         .expect("commit timed out")
         .expect("consensus output closed");
     assert_eq!(committed.round(), 1);
-}
-
-// Sailfin no longer uses the old edge-voted fast path. Rounds 1..=2 may reveal
-// a candidate chain prefix, but nothing is output until the deterministic
-// Shortfin barrier at r=4 safely finalizes the anchor.
-#[tokio::test]
-async fn sailfin_waits_for_barrier_finalization() {
-    let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
-    keys.sort();
-    let genesis = Certificate::genesis(&mock_committee())
-        .iter()
-        .map(|x| x.digest())
-        .collect::<BTreeSet<_>>();
-    let (certificates, _) = make_certificates(1, 4, &genesis, &keys);
-    let mut early = certificates
-        .iter()
-        .filter(|certificate| certificate.round() <= 2)
-        .cloned()
-        .collect::<VecDeque<_>>();
-    let mut barrier = certificates
-        .into_iter()
-        .filter(|certificate| certificate.round() > 2)
-        .collect::<VecDeque<_>>();
-
-    let (tx_waiter, rx_waiter) = channel(1);
-    let (tx_primary, mut rx_primary) = channel(1);
-    let (tx_output, mut rx_output) = channel(1);
-    Consensus::spawn_with_protocol(
-        keys[0],
-        mock_committee(),
-        /* gc_depth */ 50,
-        DagProtocol::Sailfin,
-        ConsensusProtocol::RoundRobin,
-        rx_waiter,
-        tx_primary,
-        tx_output,
-    );
-    tokio::spawn(async move { while rx_primary.recv().await.is_some() {} });
-
-    while let Some(certificate) = early.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
-
-    let no_early_commit = timeout(Duration::from_millis(300), rx_output.recv()).await;
-    match no_early_commit {
-        Err(_) => {}
-        Ok(None) => panic!("consensus output closed before barrier"),
-        Ok(Some(certificate)) => panic!("unexpected pre-barrier commit: {}", certificate.header),
-    }
-
-    while let Some(certificate) = barrier.pop_front() {
-        tx_waiter.send(certificate).await.unwrap();
-    }
-
-    let committed = timeout(Duration::from_secs(1), rx_output.recv())
-        .await
-        .expect("barrier commit timed out")
-        .expect("consensus output closed");
-    assert_eq!(committed.round(), 1);
-    assert_eq!(committed.origin(), keys[0]);
 }
 
 // Rounds 1..=8 with one dead non-leader node. Two wave boundaries fire:

@@ -916,7 +916,7 @@ impl Core {
             // Genesis/initialization headers have no parent quorum requirements.
         } else {
             match self.dag_protocol {
-                DagProtocol::Shortfin | DagProtocol::Sailfin => {
+                DagProtocol::Shortfin => {
                     let support_round = header.round.saturating_sub(1);
                     let stake_1 = self.history_support_weight_from_roots(&parents_1, support_round);
                     ensure!(
@@ -1191,10 +1191,7 @@ impl Core {
                 self.emit_shortfin_record(&certificate.header.id).await?;
                 return Ok(());
             }
-            DagProtocol::Sailfin
-            | DagProtocol::MahiMahi
-            | DagProtocol::MahiMahi4
-            | DagProtocol::MahiMahi5 => {
+            DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
                 // Uncertified DAG certificates are never broadcast: peer blocks
                 // arrive as headers and are synthesized locally with empty votes.
                 // Store them after local header validation so HeaderWaiter

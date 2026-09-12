@@ -11,7 +11,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 mod bullshark;
 mod mahi_mahi;
 mod narwhal;
-mod sailfin;
 mod shortfin;
 mod wahoo;
 
@@ -127,7 +126,7 @@ impl Consensus {
     ) {
         tokio::spawn(async move {
             let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
-                && matches!(dag_protocol, DagProtocol::Shortfin | DagProtocol::Sailfin)
+                && matches!(dag_protocol, DagProtocol::Shortfin)
             {
                 let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
                 Some(coin::ThresholdCoin::new(
@@ -159,7 +158,6 @@ impl Consensus {
             DagProtocol::Narwhal => narwhal::run(self).await,
             DagProtocol::Bullshark => bullshark::run(self).await,
             DagProtocol::Shortfin => shortfin::run(self).await,
-            DagProtocol::Sailfin => sailfin::run(self).await,
             DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
                 mahi_mahi::run(self).await
             }
@@ -244,10 +242,7 @@ impl Consensus {
                 keys[coin as usize % self.committee.size()]
             }
             ConsensusProtocol::CommonCoin => {
-                let coin = if matches!(
-                    self.dag_protocol,
-                    DagProtocol::Shortfin | DagProtocol::Sailfin
-                ) {
+                let coin = if matches!(self.dag_protocol, DagProtocol::Shortfin) {
                     self.threshold_coin(coin_round, dag)
                         .unwrap_or_else(|| self.round_robin_coin(round))
                 } else {

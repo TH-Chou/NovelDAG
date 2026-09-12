@@ -48,7 +48,7 @@ MODES = [
 PROTOCOLS = [
     questionary.Choice("narwhal   — 经典 Narwhal DAG", value="narwhal"),
     questionary.Choice("shortfin  — Shortfin (优化版)", value="shortfin"),
-    questionary.Choice("sailfin   — Sailfin experimental", value="sailfin"),
+    questionary.Choice("mahi_mahi — Mahi-Mahi (5-stage)", value="mahi_mahi"),
     questionary.Choice("wahoo     — Wahoo 双路径", value="wahoo"),
 ]
 

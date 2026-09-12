@@ -879,7 +879,7 @@ def sweep_dag_rates(
     rate_start=30_000,
     rate_step=30_000,
     rate_end=240_000,
-    protocols='narwhal,bullshark,shortfin,sailfin',
+    protocols='narwhal,shortfin,mahi_mahi,wahoo',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/remote_dag_sweep.csv',
@@ -1000,8 +1000,8 @@ def plot_dag_sweep(
             'lats': [sum(l for _, l in by_rate[r]) / len(by_rate[r]) for r in rates],
         }
 
-    markers = {'narwhal': 's', 'bullshark': '^', 'shortfin': 'o', 'sailfin': 'P'}
-    colors = {'narwhal': '#2196F3', 'bullshark': '#4CAF50', 'shortfin': '#FF9800', 'sailfin': '#E69F00'}
+    markers = {'narwhal': 's', 'bullshark': '^', 'shortfin': 'o', 'mahi_mahi': 'P', 'wahoo': 'D'}
+    colors = {'narwhal': '#2196F3', 'bullshark': '#4CAF50', 'shortfin': '#FF9800', 'mahi_mahi': '#E69F00', 'wahoo': '#9C27B0'}
 
     # Chart 1: Consensus Latency vs End-to-End Throughput
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -1059,7 +1059,7 @@ def full_dag_bench(
     rate_start=30_000,
     rate_step=30_000,
     rate_end=240_000,
-    protocols='narwhal,bullshark,shortfin,sailfin',
+    protocols='narwhal,shortfin,mahi_mahi,wahoo',
     consensus='round_robin',
     output_csv='csv_plots/remote_dag_sweep.csv',
     debug=True,
@@ -1282,7 +1282,7 @@ def paper_fig1_fig2(
     rate_start=30_000,
     rate_step=30_000,
     rate_end=240_000,
-    protocols='shortfin,narwhal,wahoo',
+    protocols='shortfin,narwhal,mahi_mahi,wahoo',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/paper_fig1_fig2.csv',
@@ -1290,7 +1290,7 @@ def paper_fig1_fig2(
 ):
     ''' Figure 1 & 2: Rate sweep across node counts (10, 20, 50), faults=0.
 
-    Compares Shortfin, Narwhal (Tusk), and Wahoo.
+    Compares Shortfin, Narwhal (Tusk), Mahi-Mahi, and Wahoo.
     - WAN measurements (remote cloud testbed)
     - 500KB max block size, 512B transaction size
     '''
@@ -1299,7 +1299,7 @@ def paper_fig1_fig2(
     rate_list = list(range(int(rate_start), int(rate_end) + 1, int(rate_step)))
 
     for proto in protocol_list:
-        if proto not in ('narwhal', 'bullshark', 'shortfin', 'sailfin', 'wahoo'):
+        if proto not in ('narwhal', 'bullshark', 'shortfin', 'mahi_mahi', 'mahi_mahi_4', 'mahi_mahi_5', 'wahoo'):
             raise BenchError(f'Invalid dag_protocol: {proto}')
 
     node_params = {
@@ -1376,7 +1376,7 @@ def paper_fig3(
     rate_start=30_000,
     rate_step=30_000,
     rate_end=240_000,
-    protocols='shortfin,narwhal,wahoo',
+    protocols='shortfin,narwhal,mahi_mahi,wahoo',
     consensus='round_robin',
     benchmark_delay=20,
     output_csv='csv_plots/paper_fig3.csv',
@@ -1384,7 +1384,7 @@ def paper_fig3(
 ):
     ''' Figure 3: Rate sweep across crash faults (0, 1, 3), nodes=10.
 
-    Compares Shortfin, Narwhal (Tusk), and Wahoo.
+    Compares Shortfin, Narwhal (Tusk), Mahi-Mahi, and Wahoo.
     - WAN measurements (remote cloud testbed)
     - 500KB max block size, 512B transaction size
     '''
@@ -1393,7 +1393,7 @@ def paper_fig3(
     rate_list = list(range(int(rate_start), int(rate_end) + 1, int(rate_step)))
 
     for proto in protocol_list:
-        if proto not in ('narwhal', 'bullshark', 'shortfin', 'sailfin', 'wahoo'):
+        if proto not in ('narwhal', 'bullshark', 'shortfin', 'mahi_mahi', 'mahi_mahi_4', 'mahi_mahi_5', 'wahoo'):
             raise BenchError(f'Invalid dag_protocol: {proto}')
 
     node_params = {
@@ -1464,13 +1464,13 @@ def paper_plot_fig1(
     import matplotlib.pyplot as plt
 
     rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
-    protocol_order = ['narwhal', 'wahoo', 'shortfin', 'sailfin']
+    protocol_order = ['narwhal', 'mahi_mahi', 'wahoo', 'shortfin']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
 
-    markers = {'narwhal': 's', 'shortfin': 'o', 'sailfin': 'P', 'wahoo': '^'}
-    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'sailfin': '#CC79A7', 'wahoo': '#009E73'}
-    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin', 'sailfin': 'Sailfin'}
+    markers = {'narwhal': 's', 'shortfin': 'o', 'mahi_mahi': 'P', 'wahoo': '^'}
+    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'mahi_mahi': '#CC79A7', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'mahi_mahi': 'Mahi-Mahi', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin'}
 
     fig, axes = plt.subplots(1, len(node_list), figsize=(6 * len(node_list), 5.5))
     if len(node_list) == 1:
@@ -1528,12 +1528,12 @@ def paper_plot_fig2(
     import matplotlib.pyplot as plt
 
     rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
-    protocol_order = ['narwhal', 'wahoo', 'shortfin', 'sailfin']
+    protocol_order = ['narwhal', 'mahi_mahi', 'wahoo', 'shortfin']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     node_list = sorted({int(r['nodes']) for r in rows})
 
-    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'sailfin': '#CC79A7', 'wahoo': '#009E73'}
-    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin', 'sailfin': 'Sailfin'}
+    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'mahi_mahi': '#CC79A7', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'mahi_mahi': 'Mahi-Mahi', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin'}
 
     # For each (protocol, nodes), interpolate consensus TPS at max_latency_ms.
     best = {p: [] for p in protocols}
@@ -1612,13 +1612,13 @@ def paper_plot_fig3(
     import matplotlib.pyplot as plt
 
     rows = _filter_paper_plot_outliers(_read_paper_csv(csv_path))
-    protocol_order = ['narwhal', 'wahoo', 'shortfin', 'sailfin']
+    protocol_order = ['narwhal', 'mahi_mahi', 'wahoo', 'shortfin']
     protocols = [p for p in protocol_order if any(r['protocol'] == p for r in rows)]
     fault_list = sorted({int(r['faults']) for r in rows})
 
-    markers = {'narwhal': 's', 'shortfin': 'o', 'sailfin': 'P', 'wahoo': '^'}
-    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'sailfin': '#CC79A7', 'wahoo': '#009E73'}
-    labels = {'narwhal': 'Narwhal/Tusk', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin', 'sailfin': 'Sailfin'}
+    markers = {'narwhal': 's', 'shortfin': 'o', 'mahi_mahi': 'P', 'wahoo': '^'}
+    colors = {'narwhal': '#0072B2', 'shortfin': '#E69F00', 'mahi_mahi': '#CC79A7', 'wahoo': '#009E73'}
+    labels = {'narwhal': 'Narwhal/Tusk', 'mahi_mahi': 'Mahi-Mahi', 'wahoo': 'Wahoo', 'shortfin': 'Shortfin'}
 
     fig, axes = plt.subplots(1, len(fault_list), figsize=(6 * len(fault_list), 5.5))
     if len(fault_list) == 1:
