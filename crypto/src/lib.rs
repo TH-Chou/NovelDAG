@@ -16,6 +16,8 @@ use threshold_crypto::{PublicKeySet, SecretKeySet, SignatureShare};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 
+pub mod coin;
+
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
 pub mod crypto_tests;
@@ -296,27 +298,6 @@ impl SignatureService {
     }
 }
 
-fn coin_message(round: u64) -> Vec<u8> {
-    let mut message = b"narwhal-common-coin-v1".to_vec();
-    message.extend_from_slice(&round.to_le_bytes());
-    message
-}
-
-fn deterministic_coin_key_set(authorities: &[PublicKey], threshold: usize) -> SecretKeySet {
-    let mut sorted_authorities = authorities.to_vec();
-    sorted_authorities.sort();
-    let mut hasher = Sha512::new();
-    hasher.update(b"narwhal-threshold-coin-seed-v1");
-    for authority in sorted_authorities {
-        hasher.update(&authority);
-    }
-    let digest = hasher.finalize();
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&digest[..32]);
-    let mut rng = rand::rngs::StdRng::from_seed(seed);
-    SecretKeySet::random(threshold, &mut rng)
-}
-
 fn authority_index(authorities: &[PublicKey], authority: &PublicKey) -> Option<usize> {
     let mut sorted_authorities = authorities.to_vec();
     sorted_authorities.sort();
@@ -324,7 +305,7 @@ fn authority_index(authorities: &[PublicKey], authority: &PublicKey) -> Option<u
 }
 
 pub fn coin_threshold(committee_size: usize) -> usize {
-    committee_size.saturating_sub(1) / 3
+    coin::threshold(committee_size)
 }
 
 pub fn make_coin_share(
@@ -333,10 +314,7 @@ pub fn make_coin_share(
     authority: &PublicKey,
     round: u64,
 ) -> Option<Vec<u8>> {
-    let index = authority_index(authorities, authority)?;
-    let key_set = deterministic_coin_key_set(authorities, threshold);
-    let share = key_set.secret_key_share(index).sign(coin_message(round));
-    bincode::serialize(&share).ok()
+    coin::ThresholdCoin::new(authorities, threshold).make_share(authority, round)
 }
 
 pub fn recover_coin(
@@ -345,43 +323,7 @@ pub fn recover_coin(
     round: u64,
     shares: &[(PublicKey, Vec<u8>)],
 ) -> Option<u64> {
-    let key_set = deterministic_coin_key_set(authorities, threshold);
-    let public_key_set: PublicKeySet = key_set.public_keys();
-    let message = coin_message(round);
-
-    let mut unique_shares = BTreeMap::new();
-    for (authority, bytes) in shares {
-        let index = match authority_index(authorities, authority) {
-            Some(index) => index,
-            None => continue,
-        };
-        let share: SignatureShare = match bincode::deserialize(bytes) {
-            Ok(share) => share,
-            Err(_) => continue,
-        };
-        if !public_key_set
-            .public_key_share(index)
-            .verify(&share, &message)
-        {
-            continue;
-        }
-        unique_shares.entry(index).or_insert(share);
-    }
-
-    if unique_shares.len() < threshold + 1 {
-        return None;
-    }
-
-    let signature = public_key_set.combine_signatures(&unique_shares).ok()?;
-    if !public_key_set.public_key().verify(&signature, &message) {
-        return None;
-    }
-    let bytes = signature.to_bytes();
-    let mut hasher = Sha512::new();
-    hasher.update(b"narwhal-common-coin-output-v1");
-    hasher.update(&bytes);
-    let digest = hasher.finalize();
-    Some(u64::from_le_bytes(digest[..8].try_into().ok()?))
+    coin::ThresholdCoin::new(authorities, threshold).recover(round, shares)
 }
 
 // ---------------------------------------------------------------------------
@@ -393,10 +335,9 @@ pub fn recover_coin(
 //  * RECP shares sign over (round, block_hash), not just round — so the
 //    block being attested to is bound into the signature.
 //
-// Key material is regenerated deterministically on every node from the
-// committee's authority set, identical to the coin path. This is a
-// research benchmark concession: in a real deployment, the RECP key
-// set would be produced by a DKG once at committee installation.
+// RECP key material is still regenerated from the committee per call. This
+// path is separate from leader-election coin handling and can move to the
+// same cached threshold primitive in a later RECP-specific cleanup.
 // ---------------------------------------------------------------------------
 
 fn deterministic_recp_key_set(authorities: &[PublicKey], threshold: usize) -> SecretKeySet {

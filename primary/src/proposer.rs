@@ -3,7 +3,7 @@ use crate::messages::{Certificate, EmbeddedQc, Header};
 use crate::primary::Round;
 use config::{Committee, ConsensusProtocol, DagProtocol, WorkerId};
 use crypto::Hash as _;
-use crypto::{coin_threshold, make_coin_share, Digest, PublicKey, SignatureService};
+use crypto::{coin, Digest, PublicKey, SignatureService};
 use log::debug;
 #[cfg(feature = "benchmark")]
 use log::info;
@@ -11,6 +11,8 @@ use log::{log_enabled, warn};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
+
+const SHORTFIN_WAVE_LENGTH: Round = 4;
 
 #[cfg(test)]
 #[path = "tests/proposer_tests.rs"]
@@ -42,10 +44,9 @@ pub struct Proposer {
     header_size: usize,
     /// The maximum delay to wait for batches' digests.
     max_header_delay: u64,
-    /// Authorities used for threshold-coin shares (Shortfin-family only).
-    coin_authorities: Vec<PublicKey>,
-    /// Threshold used for threshold-coin shares (Shortfin-family only).
-    coin_threshold: usize,
+    /// Shared threshold-coin backend, enabled only when Shortfin-family
+    /// protocols are configured to use the common coin.
+    threshold_coin: Option<coin::ThresholdCoin>,
     /// Threshold for parents_2 (dual-hop) references. Shortfin-family protocols require
     /// the second-hop references to cover a quorum from round r-2.
     #[cfg_attr(not(feature = "benchmark"), allow(dead_code))]
@@ -95,8 +96,17 @@ impl Proposer {
             .map(|x| x.digest())
             .collect();
         let genesis_certs = Certificate::genesis(committee);
-        let coin_authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
-        let coin_threshold = coin_threshold(committee.size());
+        let threshold_coin = if dag_protocol.is_shortfin_family()
+            && matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
+        {
+            let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
+            Some(coin::ThresholdCoin::new(
+                &authorities,
+                coin::threshold(committee.size()),
+            ))
+        } else {
+            None
+        };
         let parents_2_threshold = committee.quorum_threshold() as usize;
         let committee = committee.clone();
 
@@ -122,8 +132,7 @@ impl Proposer {
                 signature_service,
                 header_size,
                 max_header_delay,
-                coin_authorities,
-                coin_threshold,
+                threshold_coin,
                 parents_2_threshold,
                 rx_core,
                 rx_workers,
@@ -143,17 +152,12 @@ impl Proposer {
     }
 
     async fn make_header(&mut self) {
-        let coin_share = if self.dag_protocol.is_shortfin_family() {
-            make_coin_share(
-                &self.coin_authorities,
-                self.coin_threshold,
-                &self.name,
-                self.round,
-            )
-            .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let coin_share = self
+            .threshold_coin
+            .as_ref()
+            .filter(|_| self.round % SHORTFIN_WAVE_LENGTH == 0)
+            .and_then(|coin| coin.make_share(&self.name, self.round))
+            .unwrap_or_default();
 
         let mut selected_size = 0usize;
         let mut take_count = 0usize;
@@ -238,21 +242,12 @@ impl Proposer {
             return None;
         }
 
-        let mut digests: Vec<_> = self
+        let digests: Vec<_> = self
             .last_parent_certs
             .iter()
             .map(|certificate| certificate.digest())
             .collect();
-        digests.sort();
-
-        let mut seed = self.round;
-        for digest in digests {
-            let mut chunk = [0u8; 8];
-            chunk.copy_from_slice(&digest.0[..8]);
-            seed ^= u64::from_le_bytes(chunk);
-            seed = seed.rotate_left(13).wrapping_mul(0x9E37_79B1_85EB_CA87);
-        }
-        Some(seed)
+        Some(coin::pseudo_random(self.round, digests))
     }
 
     /// Update the last leader (Bullshark even-round logic).

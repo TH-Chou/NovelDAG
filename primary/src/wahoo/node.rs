@@ -11,7 +11,7 @@ use crate::wahoo::pb::{Pb, PbAction};
 use crate::wahoo::tools::unix_nano_now;
 use bytes::Bytes;
 use config::{Committee, Stake, WorkerId};
-use crypto::{Digest, Hash as _, PublicKey, Signature, SignatureService};
+use crypto::{coin, Digest, Hash as _, PublicKey, Signature, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -47,9 +47,9 @@ pub struct Node {
     authorities_sorted: Vec<PublicKey>,
     node_num: usize,
     quorum_num: usize,
-    /// Threshold parameter for the Elect coin. Equals 2f so that 2f+1
-    /// distinct partials recover the combined signature.
-    elect_threshold: usize,
+    /// Shared threshold-coin backend. Wahoo transports its shares in Elect
+    /// messages, while Shortfin transports shares in headers.
+    elect_coin: coin::ThresholdCoin,
     /// Threshold parameter for the RECP BLS pipeline (paper Section IV-B
     /// Step 4d). Equals f so that f+1 distinct partials recover the
     /// aggregate signature used by `LeaderProof::ExclusiveCommit`.
@@ -185,7 +185,7 @@ impl Node {
         // f = (n - 1) / 3, threshold = 2f so that 2f+1 = quorum_num
         // partials suffice to combine the Elect QC.
         let f = (node_num.saturating_sub(1)) / 3;
-        let elect_threshold = 2 * f;
+        let elect_coin = coin::ThresholdCoin::new(&authorities_sorted, 2 * f);
         let recp_threshold = crypto::recp_threshold(node_num);
 
         let pb = Pb::new(name, committee.clone());
@@ -196,7 +196,7 @@ impl Node {
             authorities_sorted,
             node_num,
             quorum_num,
-            elect_threshold,
+            elect_coin,
             recp_threshold,
             batch_size,
             header_size,
@@ -897,13 +897,10 @@ impl Node {
 
     /// `msg_send.go::broadcastElect`.
     async fn broadcast_elect(&mut self, round: Round) {
-        let partial_sig = crypto::make_coin_share(
-            &self.authorities_sorted,
-            self.elect_threshold,
-            &self.name,
-            round,
-        )
-        .expect("Wahoo Elect: this authority is in the committee");
+        let partial_sig = self
+            .elect_coin
+            .make_share(&self.name, round)
+            .expect("Wahoo Elect: this authority is in the committee");
         let elect = WahooElect {
             sender: self.name,
             round,
@@ -1108,12 +1105,7 @@ impl Node {
         let shares: Vec<(PublicKey, Vec<u8>)> =
             elects.iter().map(|(k, v)| (*k, v.clone())).collect();
 
-        let coin = crypto::recover_coin(
-            &self.authorities_sorted,
-            self.elect_threshold,
-            round,
-            &shares,
-        );
+        let coin = self.elect_coin.recover(round, &shares);
         let coin = match coin {
             Some(c) => c,
             None => {
@@ -1610,7 +1602,7 @@ mod tests {
         // ceil(2*4/3) = 3
         assert_eq!(node.quorum_num, 3);
         // f=1, threshold=2f=2 → 2f+1=3 partials recover.
-        assert_eq!(node.elect_threshold, 2);
+        assert_eq!(node.elect_coin.threshold(), 2);
         assert_eq!(node.batch_size, 4);
         assert_eq!(node.chain.round, 0);
         assert!(node.dag.is_empty());

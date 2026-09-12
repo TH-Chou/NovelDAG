@@ -71,3 +71,48 @@ async fn propose_payload() {
     assert_eq!(header.payload.get(&digest), Some(&worker_id));
     assert!(header.verify(&committee(), DagProtocol::Narwhal).is_ok());
 }
+
+#[tokio::test]
+async fn shortfin_only_carries_shares_at_common_coin_wave_boundaries() {
+    for protocol in [ConsensusProtocol::RoundRobin, ConsensusProtocol::CommonCoin] {
+        let (name, secret) = keys().pop().unwrap();
+        let signature_service = SignatureService::new(secret);
+        let (tx_parents, rx_parents) = channel(1);
+        let (_tx_our_digests, rx_our_digests) = channel(1);
+        let (tx_headers, mut rx_headers) = channel(1);
+
+        Proposer::spawn(
+            name,
+            &committee(),
+            DagProtocol::Shortfin,
+            protocol,
+            signature_service,
+            1_000,
+            20,
+            rx_parents,
+            rx_our_digests,
+            tx_headers,
+        );
+
+        let header = rx_headers.recv().await.unwrap();
+        assert_eq!(header.round, 1);
+        assert!(header.coin_share.is_empty());
+
+        tx_parents
+            .send(ProposerSignal {
+                round: 4,
+                parents_1: vec![Digest::default()],
+                parents_2: Vec::new(),
+                qc: Some(EmbeddedQc::default()),
+                certificates_1: Vec::new(),
+            })
+            .await
+            .unwrap();
+        let header = rx_headers.recv().await.unwrap();
+        assert_eq!(header.round, 4);
+        assert_eq!(
+            !header.coin_share.is_empty(),
+            matches!(protocol, ConsensusProtocol::CommonCoin)
+        );
+    }
+}

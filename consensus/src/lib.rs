@@ -2,7 +2,7 @@
 // Unified consensus router: dispatches based on dag_protocol.
 use config::{Committee, ConsensusProtocol, DagProtocol, Stake};
 use crypto::Hash as _;
-use crypto::{Digest, PublicKey};
+use crypto::{coin, Digest, PublicKey};
 use primary::{Certificate, Round};
 use std::cmp::max;
 use std::collections::HashMap;
@@ -78,6 +78,9 @@ pub struct Consensus {
     pub(crate) consensus_protocol: ConsensusProtocol,
     /// The public key of this authority, used by Shortfin-style round-completion detection.
     pub(crate) name: PublicKey,
+    /// Shared threshold-coin backend for protocols that carry coin shares in
+    /// their DAG units. The recovered-round cache lives inside this object.
+    threshold_coin: Option<coin::ThresholdCoin>,
 
     /// Receives new certificates from the primary. The primary should send us new certificates only
     /// if it already sent us its whole history.
@@ -123,12 +126,24 @@ impl Consensus {
         tx_output: Sender<Certificate>,
     ) {
         tokio::spawn(async move {
+            let threshold_coin = if matches!(consensus_protocol, ConsensusProtocol::CommonCoin)
+                && matches!(dag_protocol, DagProtocol::Shortfin | DagProtocol::Sailfin)
+            {
+                let authorities: Vec<PublicKey> = committee.authorities.keys().cloned().collect();
+                Some(coin::ThresholdCoin::new(
+                    &authorities,
+                    coin::threshold(committee.size()),
+                ))
+            } else {
+                None
+            };
             Self {
                 committee: committee.clone(),
                 gc_depth,
                 dag_protocol,
                 consensus_protocol,
                 name,
+                threshold_coin,
                 rx_primary,
                 tx_primary,
                 tx_output,
@@ -176,20 +191,11 @@ impl Consensus {
             return None;
         }
 
-        let mut digests: Vec<_> = certificates
+        let digests: Vec<_> = certificates
             .values()
             .map(|(digest, _)| digest.clone())
             .collect();
-        digests.sort();
-
-        let mut seed = round;
-        for digest in digests {
-            let mut chunk = [0u8; 8];
-            chunk.copy_from_slice(&digest.0[..8]);
-            seed ^= u64::from_le_bytes(chunk);
-            seed = seed.rotate_left(13).wrapping_mul(0x9E37_79B1_85EB_CA87);
-        }
-        Some(seed)
+        Some(coin::pseudo_random(round, digests))
     }
 
     /// Shortfin threshold coin: combines BLS coin_shares embedded in headers at
@@ -205,8 +211,7 @@ impl Consensus {
         if weight < self.committee.quorum_threshold() {
             return None;
         }
-        let authorities: Vec<PublicKey> = self.committee.authorities.keys().cloned().collect();
-        let threshold = crypto::coin_threshold(self.committee.size());
+        let threshold_coin = self.threshold_coin.as_ref()?;
         let shares: Vec<(PublicKey, Vec<u8>)> = certificates
             .values()
             .filter_map(|(_, cert)| {
@@ -217,7 +222,9 @@ impl Consensus {
                 }
             })
             .collect();
-        crypto::recover_coin(&authorities, threshold, round, &shares).map(|coin| coin as Round)
+        threshold_coin
+            .recover(round, &shares)
+            .map(|coin| coin as Round)
     }
 
     /// Returns the certificate (and digest) originated by the leader.

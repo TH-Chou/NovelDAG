@@ -166,3 +166,42 @@ async fn signature_service() {
     // Verify the signature we received.
     assert!(signature.verify(&digest, &public_key).is_ok());
 }
+
+#[test]
+fn shared_threshold_coin_recovers_and_caches() {
+    let authorities: Vec<_> = keys().into_iter().map(|(public, _)| public).collect();
+    let coin = coin::ThresholdCoin::new(&authorities, coin::threshold(authorities.len()));
+    let round = 7;
+    let first = coin.make_share(&authorities[0], round).unwrap();
+    let second = coin.make_share(&authorities[1], round).unwrap();
+
+    assert!(coin
+        .recover(round, &[(authorities[0], first.clone())])
+        .is_none());
+    let recovered = coin
+        .recover(
+            round,
+            &[
+                (authorities[0], vec![0; first.len()]),
+                (authorities[0], first),
+                (authorities[1], second),
+            ],
+        )
+        .expect("two valid shares recover an f+1 coin for n=4");
+
+    assert_eq!(coin.recover(round, &[]), Some(recovered));
+    assert_eq!(
+        coin.make_share(&authorities[0], round),
+        coin.make_share(&authorities[0], round)
+    );
+}
+
+#[test]
+fn pseudo_random_coin_is_order_independent() {
+    let first = Digest([1; 32]);
+    let second = Digest([2; 32]);
+    assert_eq!(
+        coin::pseudo_random(9, vec![first.clone(), second.clone()]),
+        coin::pseudo_random(9, vec![second, first])
+    );
+}
