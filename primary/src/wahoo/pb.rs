@@ -140,7 +140,13 @@ impl Pb {
         let mut actions = Vec::new();
         let round = certificate.round();
         let sender = certificate.origin();
-        self.store_block_msg(&certificate.header);
+        // A valid certificate binds one exact digest. If an equivocation
+        // arrived first, replace it with the certified header instead of
+        // delivering the first block seen for this author-round.
+        self.pending_blocks
+            .entry(round)
+            .or_insert_with(HashMap::new)
+            .insert(sender, certificate.header.clone());
         self.store_certificate(certificate);
         if let Some(out) = self.try_to_output(round, sender) {
             actions.push(PbAction::OutputBlock(out));
@@ -405,5 +411,23 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn certificate_replaces_an_uncertified_equivocation() {
+        let (committee, keys) = committee_keys();
+        let me = keys[0];
+        let proposer = keys[1];
+        let mut pb = Pb::new(me, committee);
+        let canonical = proposal_block(proposer, 2);
+        let mut variant = canonical.clone();
+        variant.equivocation_tag = 1;
+        variant.id = crypto::Hash::digest(&variant);
+
+        pb.handle_block(variant);
+        let actions = pb.handle_certificate(pbc_certificate(&canonical));
+        assert!(actions.iter().any(
+            |action| matches!(action, PbAction::OutputBlock(block) if block.id == canonical.id)
+        ));
     }
 }
