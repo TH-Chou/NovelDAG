@@ -142,6 +142,11 @@ fn shortfin_structural_only_record_is_not_output() {
         }
     }
 
+    let records = certificates
+        .iter()
+        .cloned()
+        .map(|certificate| (certificate.digest(), certificate))
+        .collect();
     let mut state = State::new(genesis);
     for certificate in certificates {
         state
@@ -168,11 +173,69 @@ fn shortfin_structural_only_record_is_not_output() {
         &state,
         committee.validity_threshold() as usize,
         &leader_blocks,
+        &records,
     );
 
     assert!(!sequence
         .iter()
         .any(|certificate| certificate.header.id == bubble_id));
+    assert!(sequence
+        .iter()
+        .any(|certificate| certificate.round() == 1 && certificate.origin() == leader));
+}
+
+#[test]
+fn shortfin_can_commit_a_lagging_authors_block_below_the_global_frontier() {
+    let mut authorities: Vec<_> = keys().into_iter().map(|(key, _)| key).collect();
+    authorities.sort();
+    let committee = mock_committee();
+    let genesis = Certificate::genesis(&committee);
+    let genesis_digests = genesis
+        .iter()
+        .map(|certificate| certificate.digest())
+        .collect::<BTreeSet<_>>();
+    let (certificates, _) = make_certificates(1, 4, &genesis_digests, &authorities);
+    let records = certificates
+        .iter()
+        .cloned()
+        .map(|certificate| (certificate.digest(), certificate))
+        .collect();
+    let mut state = State::new(genesis);
+    for certificate in certificates {
+        state
+            .dag
+            .entry(certificate.round())
+            .or_insert_with(HashMap::new)
+            .insert(certificate.origin(), (certificate.digest(), certificate));
+    }
+
+    let leader = authorities[0];
+    state.last_committed_round = 2;
+    for author in &authorities {
+        state.last_committed.insert(*author, 2);
+    }
+    state.last_committed.insert(leader, 0);
+
+    let leader_blocks = [1, 2, 3]
+        .iter()
+        .map(|round| {
+            state
+                .dag
+                .get(round)
+                .unwrap()
+                .get(&leader)
+                .map(|(_, certificate)| certificate)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let sequence = crate::shortfin::collect_wave(
+        4,
+        &state,
+        committee.validity_threshold() as usize,
+        &leader_blocks,
+        &records,
+    );
+
     assert!(sequence
         .iter()
         .any(|certificate| certificate.round() == 1 && certificate.origin() == leader));

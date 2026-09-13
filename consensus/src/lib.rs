@@ -305,17 +305,6 @@ impl Consensus {
         weight >= self.committee.quorum_threshold()
     }
 
-    pub(crate) fn certificate_by_author<'a>(
-        &self,
-        round: Round,
-        author: PublicKey,
-        dag: &'a Dag,
-    ) -> Option<&'a Certificate> {
-        dag.get(&round)
-            .and_then(|by_authority| by_authority.get(&author))
-            .map(|(_, certificate)| certificate)
-    }
-
     pub(crate) fn embedded_qc_links(
         &self,
         child: &Certificate,

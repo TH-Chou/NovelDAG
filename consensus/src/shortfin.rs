@@ -78,10 +78,57 @@ mod diag {
 
 use diag::Diag;
 
+/// Exact Shortfin records indexed by certificate digest. Unlike the generic
+/// Narwhal DAG, this index retains every equivocation at `(author, round)`.
+type ShortfinRecords = HashMap<Digest, Certificate>;
+
+fn insert_record(state: &mut State, records: &mut ShortfinRecords, certificate: Certificate) {
+    let digest = certificate.digest();
+    let origin = certificate.origin();
+    let round = certificate.round();
+
+    records
+        .entry(digest.clone())
+        .and_modify(|stored| {
+            if stored.votes.is_empty() && !certificate.votes.is_empty() {
+                *stored = certificate.clone();
+            }
+        })
+        .or_insert_with(|| certificate.clone());
+
+    // The generic round index is still useful for distinct-author quorum and
+    // coin recovery. Keep its first branch stable, but allow the exact same
+    // structural record to be upgraded when its QC becomes available.
+    let by_author = state.dag.entry(round).or_insert_with(HashMap::new);
+    match by_author.get_mut(&origin) {
+        Some((stored_digest, stored)) if *stored_digest == digest => {
+            if stored.votes.is_empty() && !certificate.votes.is_empty() {
+                *stored = certificate;
+            }
+        }
+        Some(_) => {}
+        None => {
+            by_author.insert(origin, (digest, certificate));
+        }
+    }
+}
+
+fn records_at_round(records: &ShortfinRecords, round: Round) -> impl Iterator<Item = &Certificate> {
+    records
+        .values()
+        .filter(move |certificate| certificate.round() == round)
+}
+
 // ── 主循环 ──────────────────────────────────────────────────
 
 pub(crate) async fn run(consensus: &mut Consensus) {
     let mut state = State::new(consensus.genesis.clone());
+    let mut records = consensus
+        .genesis
+        .iter()
+        .cloned()
+        .map(|certificate| (certificate.digest(), certificate))
+        .collect::<ShortfinRecords>();
     let name = consensus.name;
 
     // Boundaries that have already produced a decision. Failed checks remain
@@ -118,12 +165,10 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             continue;
         }
 
-        // 存入本地 DAG。
-        state
-            .dag
-            .entry(round)
-            .or_insert_with(HashMap::new)
-            .insert(certificate.origin(), (certificate.digest(), certificate));
+        // Store the exact branch without allowing a sibling equivocation to
+        // overwrite it. Structural records are upgraded in place once the QC
+        // and payload have both been validated by Primary.
+        insert_record(&mut state, &mut records, certificate);
 
         // ── Wave 边界闸门 ──
         if round < WAVE || round % WAVE != 0 || processed_boundaries.contains(&round) {
@@ -152,7 +197,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         }
 
         // ── Section 6 提交规则：验证 Leader 的 b3→b2→b1 链 ──
-        let (b3, b2, b1) = match verify_leader_chain(consensus, commit_round, &state) {
+        let (b3, b2, b1) = match verify_leader_chain(consensus, commit_round, &state, &records) {
             Ok(triple) => triple,
             Err(reason) => {
                 #[cfg(feature = "benchmark")]
@@ -191,6 +236,7 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             &state,
             consensus.committee.validity_threshold() as usize,
             &[&b3, &b2, &b1],
+            &records,
         );
 
         #[cfg(feature = "benchmark")]
@@ -208,6 +254,11 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         for x in sequence.iter() {
             state.update(x, consensus.gc_depth);
         }
+
+        let min_round = state
+            .last_committed_round
+            .saturating_sub(consensus.gc_depth);
+        records.retain(|_, certificate| certificate.round() >= min_round);
 
         for certificate in sequence {
             #[cfg(feature = "benchmark")]
@@ -310,32 +361,63 @@ enum ChainError {
 fn verify_leader_chain<'a>(
     consensus: &Consensus,
     commit_round: Round,
-    state: &'a State,
+    state: &State,
+    records: &'a ShortfinRecords,
 ) -> Result<(&'a Certificate, &'a Certificate, &'a Certificate), ChainError> {
     debug_assert!(commit_round >= WAVE, "commit_round must be >= WAVE");
     let leader_round = commit_round - 3;
 
-    let (_, b3) = consensus
-        .leader(leader_round, commit_round, &state.dag)
+    let coin_certificates = state
+        .dag
+        .get(&commit_round)
+        .into_iter()
+        .flat_map(|by_author| by_author.values())
+        .map(|(_, certificate)| certificate)
+        .collect::<Vec<_>>();
+    let leader = consensus
+        .leader_authority_from_certificates(leader_round, commit_round, 0, &coin_certificates)
         .ok_or(ChainError::LeaderUnavailable)?;
 
-    let b2 = consensus
-        .certificate_by_author(leader_round + 1, b3.origin(), &state.dag)
-        .ok_or(ChainError::MissingB2)?;
-
-    let b1 = consensus
-        .certificate_by_author(leader_round + 2, b3.origin(), &state.dag)
-        .ok_or(ChainError::MissingB1)?;
-
-    if !consensus.embedded_qc_links(b2, b3, commit_round)
-        || !consensus.embedded_qc_links(b1, b2, commit_round)
-    {
-        debug!("Leader {:?} 不满足 b3→b2→b1 QC 链", b3);
-        return Err(ChainError::QcChainInvalid);
+    let mut b3_candidates = records_at_round(records, leader_round)
+        .filter(|certificate| certificate.origin() == leader)
+        .collect::<Vec<_>>();
+    b3_candidates.sort_by_key(|certificate| certificate.digest());
+    if b3_candidates.is_empty() {
+        return Err(ChainError::LeaderUnavailable);
     }
 
-    debug!("Leader {:?} 满足 Section-6 提交规则", b3);
-    Ok((b3, b2, b1))
+    let mut b2_candidates = records_at_round(records, leader_round + 1)
+        .filter(|certificate| certificate.origin() == leader)
+        .collect::<Vec<_>>();
+    b2_candidates.sort_by_key(|certificate| certificate.digest());
+    if b2_candidates.is_empty() {
+        return Err(ChainError::MissingB2);
+    }
+
+    let mut b1_candidates = records_at_round(records, leader_round + 2)
+        .filter(|certificate| certificate.origin() == leader)
+        .collect::<Vec<_>>();
+    b1_candidates.sort_by_key(|certificate| certificate.digest());
+    if b1_candidates.is_empty() {
+        return Err(ChainError::MissingB1);
+    }
+
+    for b3 in b3_candidates {
+        for b2 in &b2_candidates {
+            if !consensus.embedded_qc_links(b2, b3, commit_round) {
+                continue;
+            }
+            for b1 in &b1_candidates {
+                if consensus.embedded_qc_links(b1, b2, commit_round) {
+                    debug!("Leader {:?} 满足 Section-6 提交规则", b3);
+                    return Ok((b3, b2, b1));
+                }
+            }
+        }
+    }
+
+    debug!("Leader {} 不满足 b3→b2→b1 QC 链", leader);
+    Err(ChainError::QcChainInvalid)
 }
 
 // ── 因果可达性 BFS ──────────────────────────────────────────
@@ -425,53 +507,51 @@ pub(crate) fn collect_wave(
     state: &State,
     validity_threshold: usize,
     leader_blocks: &[&Certificate],
+    records: &ShortfinRecords,
 ) -> Vec<Certificate> {
-    // ── 锚定计数：统计每个 r-1 摘要被 commit_round 块引用的次数 ──
-    let anchored: HashMap<Digest, usize> = match state.dag.get(&commit_round) {
-        Some(by_auth) => {
-            let mut counts = HashMap::new();
-            for (_, cert) in by_auth.values() {
-                for parent in &cert.header.parents {
-                    *counts.entry(parent.clone()).or_insert(0) += 1;
-                }
-            }
-            counts
+    // Count distinct authors rather than blocks, so one equivocating author
+    // cannot amplify its anchoring weight by emitting multiple variants.
+    let mut anchored_authors: HashMap<Digest, HashSet<PublicKey>> = HashMap::new();
+    let mut refs_by_author: HashMap<PublicKey, HashSet<Digest>> = HashMap::new();
+    for certificate in records_at_round(records, commit_round) {
+        refs_by_author
+            .entry(certificate.origin())
+            .or_default()
+            .extend(certificate.header.parents.iter().cloned());
+    }
+    for (author, parents) in refs_by_author {
+        for parent in parents {
+            anchored_authors.entry(parent).or_default().insert(author);
         }
-        None => HashMap::new(),
-    };
+    }
+    let anchored = anchored_authors
+        .into_iter()
+        .map(|(digest, authors)| (digest, authors.len()))
+        .collect::<HashMap<_, _>>();
 
     // ── 锚定的 r-1 块（引用数 ≥ f+1） ──
-    let anchored_r1: Vec<&Certificate> = state
-        .dag
-        .get(&(commit_round - 1))
-        .map(|by_auth| {
-            by_auth
-                .values()
-                .filter(|(_, cert)| {
-                    anchored
-                        .get(&cert.digest())
-                        .map_or(false, |&count| count >= validity_threshold)
-                })
-                .map(|(_, cert)| cert)
-                .collect()
+    let anchored_r1 = records_at_round(records, commit_round - 1)
+        .filter(|certificate| {
+            anchored
+                .get(&certificate.digest())
+                .map_or(false, |&count| count >= validity_threshold)
         })
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
 
     // ── 提交前沿 = Leader 链 + 锚定 r-1 块 ──
     let mut seeds: Vec<&Certificate> = leader_blocks.to_vec();
     seeds.extend(anchored_r1.iter().copied());
     // 构建反向索引：Digest → &Certificate，使 causal_reachability O(1) 查找。
-    let index: HashMap<Digest, &Certificate> = state
-        .dag
+    let index: HashMap<Digest, &Certificate> = records
         .iter()
-        .filter(|(r, _)| **r >= state.last_committed_round && **r < commit_round)
-        .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| (cert.digest(), cert)))
+        .filter(|(_, certificate)| certificate.round() < commit_round)
         .filter(|(_, cert)| {
             state
                 .last_committed
                 .get(&cert.origin())
                 .map_or(true, |last_r| cert.round() > *last_r)
         })
+        .map(|(digest, certificate)| (digest.clone(), certificate))
         .collect();
     let reachable = causal_reachability(&seeds, &index, &state.last_committed);
 
@@ -486,20 +566,16 @@ pub(crate) fn collect_wave(
     // Boundary headers are the fixed witnesses used above to anchor r-1.
     // Their embedded QCs certify those frontier blocks in the same decision,
     // so they must not be delayed to the next wave.
-    if let Some(boundary) = state.dag.get(&commit_round) {
-        certified_targets.extend(
-            boundary
-                .values()
-                .filter_map(|(_, cert)| cert.header.qc.as_ref().map(|qc| qc.target.clone())),
-        );
-    }
+    certified_targets.extend(
+        records_at_round(records, commit_round)
+            .filter_map(|certificate| certificate.header.qc.as_ref())
+            .map(|qc| qc.target.clone()),
+    );
 
     // ── 收集并过滤 ──
-    let mut blocks: Vec<&Certificate> = state
-        .dag
-        .iter()
-        .filter(|(r, _)| **r >= state.last_committed_round && **r < commit_round)
-        .flat_map(|(_, by_auth)| by_auth.values().map(|(_, cert)| cert))
+    let mut blocks: Vec<&Certificate> = records
+        .values()
+        .filter(|certificate| certificate.round() < commit_round)
         .filter(|cert| {
             state
                 .last_committed
@@ -526,4 +602,48 @@ pub(crate) fn collect_wave(
     // 确定性排序：先按轮次，再按 header.id 字典序。
     blocks.sort_by_key(|c| (c.round(), c.header.id.clone()));
     blocks.into_iter().cloned().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consensus_tests::mock_committee;
+    use primary::{Header, Vote};
+
+    fn record(author: PublicKey, round: Round, salt: u8, certified: bool) -> Certificate {
+        let mut id = [0u8; 32];
+        id[..8].copy_from_slice(&round.to_le_bytes());
+        id[8..16].copy_from_slice(&author.0[..8]);
+        id[31] = salt;
+        Certificate {
+            header: Header {
+                author,
+                round,
+                id: Digest(id),
+                ..Header::default()
+            },
+            votes: certified.then(Vote::default).into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn exact_index_retains_equivocations_and_never_downgrades_a_qc() {
+        let committee = mock_committee();
+        let author = *committee.authorities.keys().next().unwrap();
+        let mut state = State::new(Certificate::genesis(&committee));
+        let mut records = ShortfinRecords::new();
+        let first = record(author, 1, 1, false);
+        let second = record(author, 1, 2, false);
+        let certified_first = record(author, 1, 1, true);
+
+        insert_record(&mut state, &mut records, first.clone());
+        insert_record(&mut state, &mut records, second.clone());
+        insert_record(&mut state, &mut records, certified_first.clone());
+        insert_record(&mut state, &mut records, first.clone());
+
+        assert_eq!(records.len(), 2);
+        assert!(!records.get(&first.digest()).unwrap().votes.is_empty());
+        assert!(records.get(&second.digest()).unwrap().votes.is_empty());
+        assert_eq!(state.dag.get(&1).unwrap().len(), 1);
+    }
 }
