@@ -1,0 +1,5 @@
+run,protocol,faults,fault_mode,delay_ms,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms
+1,narwhal,1,equivocation,0,30000,20,18769.909634,4702.731340,18064.657677,5277.167043
+1,shortfin,1,equivocation,0,30000,20,17746.533473,2790.985564,16745.148039,3364.148822
+1,mahi_mahi,1,equivocation,0,30000,20,14233.166968,6212.317364,13491.327320,6770.746533
+1,wahoo,1,equivocation,0,30000,20,22466.058205,105.215591,22288.539876,408.832014

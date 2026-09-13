@@ -17,6 +17,20 @@ chain can continue. It then creates `n-f` additional blocks with the same
 payload and parents but different signed digests. Every honest peer receives a
 different variant; Byzantine peers receive and vote for every variant.
 
+The original sweep reused valid worker batches in the Byzantine canonical and
+conflicting blocks, so its equivocation TPS counted Byzantine transactions as
+useful output. That accounting is retained below only as a historical raw
+committed-payload result. It must not be used as the attack's effective TPS.
+
+The corrected workload keeps those payload bytes, batch synchronization,
+signature checks, DAG insertion, voting, and ordering work. Every block from
+an equivocating authority is instead marked as containing execution-invalid or
+duplicate transactions. The marker is covered by the block digest and
+signature. Consensus may still order the block so the Byzantine chain keeps
+advancing, but benchmark commit logs exclude all of its batches from useful
+TPS. With n=4 and f=1, useful input is therefore capped at 75% of the displayed
+offered rate.
+
 Honest replicas retain the first-vote rule and the normal `2f+1` certificate
 threshold. Therefore only the canonical block can normally become fully
 certified. The variants still force signature checks, dependency and payload
@@ -46,7 +60,7 @@ uncertified DAG semantics.
 | 45k | 38,132 | 44,318 | 35,651 | 45,329 |
 | 60k | 0** | 59,519 | 47,527 | 59,760 |
 
-### One equivocating authority
+### One equivocating authority (legacy raw payload TPS, superseded)
 
 | Offered TPS | Narwhal/Tusk | Shortfin | Mahi-Mahi | Wahoo |
 | ---: | ---: | ---: | ---: | ---: |
@@ -55,6 +69,22 @@ uncertified DAG semantics.
 | 30k | 25,324 | 24,975 | 22,365 | 22,506 |
 | 45k | 31,592 | 42,304 | 34,042 | 33,668 |
 | 60k | 38,886 | 44,165 | 44,743 | 42,056 |
+
+### One equivocating authority (corrected useful TPS)
+
+| Offered TPS | Honest input cap | Narwhal/Tusk | Shortfin | Mahi-Mahi | Wahoo |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 30k | 22,500 | 18,770 | 17,747 | 14,233 | 22,466 |
+| 45k | 33,750 | 29,415 | 26,809 | 27,349 | 33,325 |
+| 60k | 45,000 | 0*** | 0*** | 35,931 | 42,891 |
+
+The corrected 30k and 45k points use one 30-second run, except the 30k point
+uses 20 seconds. Relative to the legacy 30k accounting, useful TPS decreases
+by 25.9% for Narwhal/Tusk, 28.9% for Shortfin, 36.4% for Mahi-Mahi, and 0.2%
+for Wahoo. Wahoo was already throughput-limited near the three-honest-worker
+input cap, so honest payload fills nearly all of its committed capacity; its
+attack signal appears mainly in latency and resource use rather than a further
+TPS reduction.
 
 `*` Shortfin's four-round commit chain did not finish inside the 20-second
 window at low input. A 45-second check measured 4,815 TPS without faults and
@@ -66,10 +96,17 @@ round 1 at 60k because the three active collocated clients and workers starved
 the quorum-critical primary tasks. It reached 44,545 TPS at 50k and 49,427 TPS
 at 55k. Treat 60k as the local-machine overload cliff.
 
+`***` Under the heavier corrected equivocation workload, collocated Narwhal
+and Shortfin did not finish a commit inside the 60k/30-second measurement
+window. Both make progress at 45k, so these zeroes are another local CPU
+scheduling/measurement-window cliff rather than evidence of protocol-level
+liveness failure.
+
 ## High-load paired checks
 
-Longer 30-second runs reduce startup bias and compare active equivocation with
-four normally active authorities:
+These older 30-second checks compare active equivocation with four normally
+active authorities, but their attack TPS includes Byzantine payload and is now
+superseded for useful-throughput claims:
 
 | Protocol | No-fault TPS | Equivocation TPS | TPS change | No-fault latency | Equivocation latency |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -102,8 +139,9 @@ small 3.4% high-load paired loss.
 Mahi-Mahi avoids vote and certificate broadcasts, but its five-stage decision
 rule waits longer than Shortfin. It also intentionally retains multiple blocks
 per author-round and evaluates deterministic support through the uncertified
-DAG. Consequently equivocation affects tail/decision latency more reliably
-than raw throughput in this small four-node test.
+DAG. The corrected 30k test reaches 14.2k useful TPS rather than the legacy
+22.4k: Byzantine payload no longer masks the cost of retaining and traversing
+the conflicting uncertified DAG.
 
 Wahoo's local fast path advances without the one-second header timer used by
 the generic proposer, explaining its very low localhost consensus latency.
@@ -128,3 +166,6 @@ resource-release effect.
 - `benchmark/csv_plots/local_n4_nsm_equivocation_highrate_30s_20260913_runs.csv`
 - `benchmark/csv_plots/local_n4_wahoo_f0_highrate_30s_20260913_runs.csv`
 - `benchmark/csv_plots/local_n4_wahoo_equivocation_highrate_30s_20260913_runs.csv`
+- `benchmark/csv_plots/local_n4_equivocation_invalid_tps_30k_20260913_runs.csv`
+- `benchmark/csv_plots/local_n4_equivocation_invalid_tps_45k_20260913_runs.csv`
+- `benchmark/csv_plots/local_n4_equivocation_invalid_tps_60k_20260913_runs.csv`
