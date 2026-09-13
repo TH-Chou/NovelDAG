@@ -18,8 +18,10 @@ pub(crate) async fn run(consensus: &mut Consensus) {
         info!("Wahoo committed {}", certificate.header);
 
         #[cfg(feature = "benchmark")]
-        for digest in certificate.header.payload.keys() {
-            info!("Committed {} -> {:?}", certificate.header, digest);
+        if !certificate.header.benchmark_invalid_payload {
+            for digest in certificate.header.payload.keys() {
+                info!("Committed {} -> {:?}", certificate.header, digest);
+            }
         }
 
         if let Err(e) = consensus.tx_output.send(certificate).await {

@@ -99,7 +99,7 @@ Local runs support three `--fault-mode` values:
 
 - `silence`: do not start the last `f` authorities.
 - `invalid_payload`: start the last `f` authorities and inject unavailable batch digests.
-- `equivocation`: start the last `f` authorities, broadcast one canonical block for progress, and send a different signed conflicting block to each honest authority. Byzantine authorities endorse every distinct conflict, while honest authorities vote only once per author and round.
+- `equivocation`: start the last `f` authorities, broadcast one canonical block for progress, and send a different signed conflicting block to each honest authority. Byzantine authorities endorse every distinct conflict, while honest authorities vote only once per author and round. All blocks from equivocating authorities retain normal payload bytes and validation work but model invalid or duplicate transactions, so their payload is excluded from useful committed TPS.
 
 The equivocation launcher creates `n-f` variants per Byzantine proposer. Each
 honest authority receives one variant and all Byzantine peers receive all

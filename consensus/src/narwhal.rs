@@ -82,8 +82,10 @@ pub(crate) async fn run(consensus: &mut Consensus) {
             info!("Committed {}", certificate.header);
 
             #[cfg(feature = "benchmark")]
-            for digest in certificate.header.payload.keys() {
-                info!("Committed {} -> {:?}", certificate.header, digest);
+            if !certificate.header.benchmark_invalid_payload {
+                for digest in certificate.header.payload.keys() {
+                    info!("Committed {} -> {:?}", certificate.header, digest);
+                }
             }
 
             consensus

@@ -392,6 +392,7 @@ fn wahoo_block_to_certificate(block: &crate::wahoo::messages::WahooBlock) -> Cer
     header.author = block.author;
     header.round = block.round;
     header.payload = block.payload.clone();
+    header.benchmark_invalid_payload = block.benchmark_invalid_payload;
     header.id = header.digest();
     Certificate {
         header,

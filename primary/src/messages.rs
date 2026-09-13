@@ -248,6 +248,11 @@ pub struct Header {
     /// blocks from one author and round. Zero is the normal protocol value.
     #[serde(default)]
     pub equivocation_tag: u64,
+    /// Benchmark-only execution result. Equivocation attackers still carry
+    /// and disseminate a normal payload, but its transactions model invalid
+    /// or duplicate work and therefore do not contribute to useful TPS.
+    #[serde(default)]
+    pub benchmark_invalid_payload: bool,
     pub id: Digest,
     pub signature: Signature,
 }
@@ -261,6 +266,7 @@ impl Header {
         parents_2: BTreeSet<Digest>,
         qc: Option<EmbeddedQc>,
         coin_share: Vec<u8>,
+        benchmark_invalid_payload: bool,
         signature_service: &mut SignatureService,
     ) -> Self {
         // Non-Wahoo constructor. Forwards through `new_with_wahoo` with both
@@ -277,12 +283,13 @@ impl Header {
             coin_share,
             /* wahoo_tag */ None,
             /* leader_link */ None,
+            benchmark_invalid_payload,
             signature_service,
         )
         .await
     }
 
-    /// Wahoo-aware constructor. The first nine positional arguments match
+    /// Wahoo-aware constructor. The common positional arguments match
     /// `Header::new`; `wahoo_tag` and `leader_link` are populated by the
     /// Wahoo proposer when running EPBC/PBC rounds. For all other DAG
     /// protocols, pass `None` for both (or just call `Header::new`).
@@ -297,6 +304,7 @@ impl Header {
         coin_share: Vec<u8>,
         wahoo_tag: Option<WahooTag>,
         leader_link: Option<LeaderLink>,
+        benchmark_invalid_payload: bool,
         signature_service: &mut SignatureService,
     ) -> Self {
         let header = Self {
@@ -310,6 +318,7 @@ impl Header {
             wahoo_tag,
             leader_link,
             equivocation_tag: 0,
+            benchmark_invalid_payload,
             id: Digest::default(),
             signature: Signature::default(),
         };
@@ -607,6 +616,9 @@ impl Hash for Header {
             hasher.update(b"EQVC");
             hasher.update(self.equivocation_tag.to_le_bytes());
         }
+        if self.benchmark_invalid_payload {
+            hasher.update(b"BINV");
+        }
         let digest = hasher.finalize();
         Digest(digest[..32].try_into().unwrap())
     }
@@ -874,6 +886,25 @@ impl PartialEq for Certificate {
 mod novel_verify_tests {
     use super::*;
     use crate::common::{committee, header, keys};
+
+    #[test]
+    fn benchmark_invalid_payload_marker_is_signed() {
+        let committee = committee();
+        let valid = header();
+        let mut invalid = valid.clone();
+        invalid.benchmark_invalid_payload = true;
+
+        assert_ne!(invalid.digest(), valid.id);
+        assert!(invalid.verify(&committee, DagProtocol::Narwhal).is_err());
+
+        let (_, secret) = keys()
+            .into_iter()
+            .find(|(author, _)| *author == invalid.author)
+            .unwrap();
+        invalid.id = invalid.digest();
+        invalid.signature = Signature::new(&invalid.id, &secret);
+        assert!(invalid.verify(&committee, DagProtocol::Narwhal).is_ok());
+    }
 
     #[test]
     fn shortfin_round_1_rejects_embedded_qc() {

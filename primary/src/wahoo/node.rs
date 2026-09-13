@@ -1566,6 +1566,7 @@ impl Node {
             payload: payload_digests,
             wahoo_tag: Some(tag),
             leader_link,
+            benchmark_invalid_payload: self.byzantine.invalidates_payload(),
             ..WahooBlock::default()
         };
         // Lock in the canonical digest. Phase B Step 3d (post-cutover):

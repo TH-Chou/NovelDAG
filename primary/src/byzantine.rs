@@ -50,6 +50,13 @@ impl ByzantineConfig {
         self.equivocation
     }
 
+    /// Equivocation traffic models syntactically valid blocks whose payload
+    /// is invalid or duplicate at execution time. The payload remains on the
+    /// wire so the attack still consumes normal data-plane resources.
+    pub(crate) fn invalidates_payload(&self) -> bool {
+        self.equivocation
+    }
+
     #[cfg(test)]
     pub(crate) fn equivocation_for_test() -> Self {
         Self {

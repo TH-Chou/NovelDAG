@@ -204,6 +204,7 @@ impl Proposer {
                 None
             },
             coin_share,
+            std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("equivocation"),
             &mut self.signature_service,
         )
         .await;
