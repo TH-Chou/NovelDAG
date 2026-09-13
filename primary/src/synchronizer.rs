@@ -29,6 +29,11 @@ pub struct Synchronizer {
     genesis: Vec<(Digest, Certificate)>,
     /// In-memory cache of recently-read certificates, avoiding repeated RocksDB reads.
     certificate_cache: HashMap<Digest, Certificate>,
+    /// A block reference proves that the carrier has seen the referenced
+    /// certificate. Remember that honest carrier as a preferred sync source.
+    certificate_holders: HashMap<Digest, PublicKey>,
+    /// Preferred payload holders learned when a referenced certificate arrives.
+    header_holders: HashMap<Digest, PublicKey>,
 }
 
 impl Synchronizer {
@@ -57,6 +62,8 @@ impl Synchronizer {
             tx_certificate_waiter,
             genesis,
             certificate_cache,
+            certificate_holders: HashMap::new(),
+            header_holders: HashMap::new(),
         }
     }
 
@@ -103,10 +110,15 @@ impl Synchronizer {
             return Ok(false);
         }
 
+        let source = self
+            .header_holders
+            .get(&payload_header.id)
+            .copied()
+            .unwrap_or(payload_header.author);
         self.tx_header_waiter
             .send(WaiterMessage::SyncBatches {
                 missing,
-                source: payload_header.author,
+                source,
                 deliver: deliver.clone(),
             })
             .await
@@ -121,6 +133,11 @@ impl Synchronizer {
         &mut self,
         header: &Header,
     ) -> DagResult<(Vec<Certificate>, Vec<Certificate>)> {
+        for digest in header.parents.iter().chain(header.parents_2.iter()) {
+            self.certificate_holders
+                .entry(digest.clone())
+                .or_insert(header.author);
+        }
         let mut missing = Vec::new();
         let mut parents_1 = Vec::new();
         let mut parents_2 = Vec::new();
@@ -260,5 +277,15 @@ impl Synchronizer {
     pub fn cache_certificate(&mut self, certificate: &Certificate) {
         self.certificate_cache
             .insert(certificate.digest(), certificate.clone());
+    }
+
+    /// Link a fetched certificate to the honest carrier that advertised its
+    /// digest. Payload recovery can then avoid the Byzantine author.
+    pub fn observe_certificate(&mut self, certificate: &Certificate) {
+        if let Some(holder) = self.certificate_holders.get(&certificate.digest()) {
+            self.header_holders
+                .entry(certificate.header.id.clone())
+                .or_insert(*holder);
+        }
     }
 }

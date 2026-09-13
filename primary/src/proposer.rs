@@ -167,15 +167,34 @@ impl Proposer {
             .and_then(|coin| coin.make_share(&self.name, self.round))
             .unwrap_or_default();
 
-        let mut selected_size = 0usize;
-        let mut take_count = 0usize;
-        for (digest, _) in &self.digests {
-            if take_count > 0 && selected_size >= self.header_size {
-                break;
+        let mahi_attack_width = (self.dag_protocol.is_mahi_mahi()
+            && std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("equivocation"))
+        .then(|| {
+            std::env::var("NOVELDAG_EQUIVOCATION_VARIANTS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|count| *count > 0)
+                .unwrap_or(1)
+        });
+        let (take_count, selected_size) = if let Some(width) = mahi_attack_width {
+            let count = width.min(self.digests.len());
+            let size = self.digests[..count]
+                .iter()
+                .map(|(digest, _)| digest.size())
+                .sum();
+            (count, size)
+        } else {
+            let mut selected_size = 0usize;
+            let mut take_count = 0usize;
+            for (digest, _) in &self.digests {
+                if take_count > 0 && selected_size >= self.header_size {
+                    break;
+                }
+                selected_size += digest.size();
+                take_count += 1;
             }
-            selected_size += digest.size();
-            take_count += 1;
-        }
+            (take_count, selected_size)
+        };
         let mut payload: BTreeMap<Digest, WorkerId> = self.digests.drain(..take_count).collect();
         self.payload_size = self.payload_size.saturating_sub(selected_size);
         if std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("invalid_payload") {

@@ -103,6 +103,8 @@ class LocalBench:
             primary_addresses = committee.primary_addresses(silent_faults)
             all_primary_addresses = committee.primary_addresses(0)
             byzantine_start = nodes - self.faults
+            dag_protocol = self.node_parameters.json['dag_protocol'].replace('-', '_')
+            mahi_mahi = dag_protocol.startswith('mahi_mahi')
             for i, address in enumerate(primary_addresses):
                 env = None
                 if self.fault_mode == 'invalid_payload' and i >= byzantine_start:
@@ -111,9 +113,10 @@ class LocalBench:
                     byzantine_addresses = ','.join(
                         all_primary_addresses[byzantine_start:]
                     )
-                    variants = max(1, nodes - self.faults)
+                    variants = max(1, nodes - self.faults if mahi_mahi else self.faults)
                     env = (
                         'NOVELDAG_BYZANTINE_ATTACK=equivocation '
+                        f'NOVELDAG_DAG_PROTOCOL={dag_protocol} '
                         f'NOVELDAG_BYZANTINE_PRIMARY_ADDRS={byzantine_addresses} '
                         f'NOVELDAG_EQUIVOCATION_VARIANTS={variants}'
                     )
@@ -131,6 +134,22 @@ class LocalBench:
             # Run the workers (except the faulty ones in silence mode).
             for i, addresses in enumerate(workers_addresses):
                 for id, address in addresses:
+                    env = None
+                    if self.fault_mode == 'equivocation' and i >= byzantine_start:
+                        authorities = list(committee.json['authorities'].values())
+                        byzantine_worker_addresses = ','.join(
+                            authority['workers'][id]['worker_to_worker']
+                            for authority in authorities[byzantine_start:]
+                        )
+                        variants = max(
+                            1, nodes - self.faults if mahi_mahi else self.faults
+                        )
+                        env = (
+                            'NOVELDAG_BYZANTINE_ATTACK=equivocation '
+                            f'NOVELDAG_DAG_PROTOCOL={dag_protocol} '
+                            f'NOVELDAG_BYZANTINE_WORKER_ADDRS={byzantine_worker_addresses} '
+                            f'NOVELDAG_EQUIVOCATION_VARIANTS={variants}'
+                        )
                     cmd = CommandMaker.run_worker(
                         PathMaker.key_file(i),
                         PathMaker.committee_file(),
@@ -138,6 +157,7 @@ class LocalBench:
                         PathMaker.parameters_file(),
                         id,  # The worker's id.
                         debug=debug,
+                        env=env,
                     )
                     log_file = PathMaker.worker_log_file(i, id)
                     self._background_run(cmd, log_file)

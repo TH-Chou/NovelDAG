@@ -166,8 +166,8 @@ impl HeaderWaiter {
                             }
                             for (worker_id, digests) in requires_sync {
                                 let address = self.committee
-                                    .worker(&source, &worker_id)
-                                    .expect("Author of valid header is not in the committee")
+                                    .worker(&self.name, &worker_id)
+                                    .expect("Our worker id is not in the committee")
                                     .primary_to_worker;
                                 let message = PrimaryWorkerMessage::Synchronize(digests, source);
                                 let bytes = bincode::serialize(&message)

@@ -94,8 +94,9 @@ pub struct Core {
     /// Lazy cache for whether one target header id is reachable from one root.
     history_id_cache: HashMap<(Digest, Digest), bool>,
     /// Mahi-Mahi blocks not yet covered by a later strong-parent frontier.
-    /// One deterministic digest per author-round bounds equivocation fanout.
-    mahi_pending_weak_refs: BTreeMap<(Round, PublicKey), Digest>,
+    /// The digest is part of the key so equivocations remain distinct DAG
+    /// units and can be exposed by different honest carriers.
+    mahi_pending_weak_refs: BTreeMap<(Round, PublicKey, Digest), Digest>,
     /// Votes for own blocks that arrived before the voter's block at
     /// `voter_round` was visible in our local DAG.
     pending_votes: HashMap<Digest, Vec<Vote>>,
@@ -246,14 +247,10 @@ impl Core {
             return;
         }
         let digest = certificate.digest();
-        self.mahi_pending_weak_refs
-            .entry((certificate.round(), certificate.origin()))
-            .and_modify(|current| {
-                if digest < *current {
-                    *current = digest.clone();
-                }
-            })
-            .or_insert(digest);
+        self.mahi_pending_weak_refs.insert(
+            (certificate.round(), certificate.origin(), digest.clone()),
+            digest,
+        );
     }
 
     /// Add only Mahi-Mahi blocks that are not already in the causal history
@@ -268,8 +265,8 @@ impl Core {
         let pending = self
             .mahi_pending_weak_refs
             .iter()
-            .filter(|((candidate_round, _), _)| *candidate_round <= round)
-            .map(|(slot, digest)| (*slot, digest.clone()))
+            .filter(|((candidate_round, _, _), _)| *candidate_round <= round)
+            .map(|(slot, digest)| (slot.clone(), digest.clone()))
             .collect::<Vec<_>>();
         let mut parents = strong.into_iter().collect::<BTreeSet<_>>();
 
@@ -935,66 +932,61 @@ impl Core {
     }
 
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
-        let variants = self
+        let headers = self
             .byzantine
-            .signed_variants(&header, &mut self.signature_service)
+            .signed_attack_headers(&header, self.dag_protocol, &mut self.signature_service)
             .await;
-        // Track the own header so late votes can still assemble its QC after
-        // the proposer has moved on.
         if self.dag_protocol.is_shortfin_family() {
             self.local_round = self.local_round.max(header.round);
         }
         self.current_header = header.clone();
-        self.own_headers.insert(header.id.clone(), header.clone());
-        self.votes_aggregators
-            .entry(header.id.clone())
-            .or_insert_with(VotesAggregator::new);
 
-        // Broadcast the new header in a reliable manner.
-        let addresses = self
-            .committee
-            .others_primaries(&self.name)
-            .iter()
-            .map(|(_, x)| x.primary_to_primary)
-            .collect();
-        let bytes = bincode::serialize(&PrimaryMessage::Header(header.clone()))
-            .expect("Failed to serialize our own header");
-        let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
-        self.cancel_handlers
-            .entry(header.round)
-            .or_insert_with(Vec::new)
-            .extend(handlers);
-
-        // Process the canonical header first. ReliableSender preserves FIFO
-        // order per peer, so honest replicas vote for it before seeing their
-        // targeted conflicting variant.
-        self.process_header(&header).await?;
-
-        for variant in variants {
-            self.own_headers.insert(variant.id.clone(), variant.clone());
+        for attack_header in headers {
+            // Keep every own version so Byzantine votes for conflicting
+            // digests are accepted. Honest configurations produce one entry.
+            self.own_headers
+                .insert(attack_header.id.clone(), attack_header.clone());
             self.votes_aggregators
-                .entry(variant.id.clone())
+                .entry(attack_header.id.clone())
                 .or_insert_with(VotesAggregator::new);
 
-            let targets = self.byzantine.variant_targets(
-                &self.committee,
-                &self.name,
-                variant.equivocation_tag,
-            );
-            let bytes = bincode::serialize(&PrimaryMessage::Header(variant.clone()))
-                .expect("Failed to serialize equivocation header");
+            let targets = if !self.byzantine.is_equivocating() {
+                self.byzantine
+                    .canonical_targets(&self.committee, &self.name)
+            } else if self.dag_protocol.is_mahi_mahi() {
+                self.byzantine.variant_targets(
+                    &self.committee,
+                    &self.name,
+                    attack_header.equivocation_tag,
+                    true,
+                )
+            } else if attack_header.equivocation_tag == 0 {
+                self.byzantine
+                    .canonical_targets(&self.committee, &self.name)
+            } else {
+                self.byzantine.variant_targets(
+                    &self.committee,
+                    &self.name,
+                    attack_header.equivocation_tag,
+                    false,
+                )
+            };
+            let bytes = bincode::serialize(&PrimaryMessage::Header(attack_header.clone()))
+                .expect("Failed to serialize own header");
             let handlers = self.network.broadcast(targets, Bytes::from(bytes)).await;
             self.cancel_handlers
-                .entry(variant.round)
+                .entry(attack_header.round)
                 .or_insert_with(Vec::new)
                 .extend(handlers);
-            warn!(
-                "Byzantine equivocation: sent variant {} for round {} as {:?}",
-                variant.equivocation_tag, variant.round, variant.id
-            );
+            if self.byzantine.is_equivocating() {
+                warn!(
+                    "Byzantine equivocation: sent version {} for round {} as {:?}",
+                    attack_header.equivocation_tag, attack_header.round, attack_header.id
+                );
+            }
 
-            self.process_header(&variant).await?;
-            self.maybe_synthesize_uncertified_cert(&variant).await;
+            self.process_header(&attack_header).await?;
+            self.maybe_synthesize_uncertified_cert(&attack_header).await;
         }
 
         Ok(())
@@ -1273,6 +1265,7 @@ impl Core {
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
+        self.synchronizer.observe_certificate(&certificate);
 
         if self.dag_protocol == DagProtocol::Shortfin && !certificate.votes.is_empty() {
             self.headers_by_id
@@ -1590,11 +1583,7 @@ impl Core {
 
                 // We also receive here our new headers created by the `Proposer`.
                 Some(header) = self.rx_proposer.recv() => {
-                    let result = self.process_own_header(header.clone()).await;
-                    if result.is_ok() {
-                        self.maybe_synthesize_uncertified_cert(&header).await;
-                    }
-                    result
+                    self.process_own_header(header).await
                 },
             };
             match result {
@@ -1651,7 +1640,7 @@ impl Core {
                 self.history_id_cache
                     .retain(|(digest, _), _| live_digests.contains(digest));
                 self.mahi_pending_weak_refs
-                    .retain(|(candidate_round, _), digest| {
+                    .retain(|(candidate_round, _, _), digest| {
                         *candidate_round >= gc_round && live_digests.contains(digest)
                     });
                 self.shortfin_states

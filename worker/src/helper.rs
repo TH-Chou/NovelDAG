@@ -23,6 +23,9 @@ pub struct Helper {
     rx_request: Receiver<(Vec<Digest>, PublicKey)>,
     /// A network sender to send the batches to the other workers.
     network: SimpleSender,
+    /// Byzantine workers acknowledge initial targeted sends but refuse all
+    /// later payload pulls, forcing peers to use an honest holder.
+    refuse_requests: bool,
 }
 
 impl Helper {
@@ -33,12 +36,15 @@ impl Helper {
         rx_request: Receiver<(Vec<Digest>, PublicKey)>,
     ) {
         tokio::spawn(async move {
+            let refuse_requests =
+                std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("equivocation");
             Self {
                 id,
                 committee,
                 store,
                 rx_request,
                 network: SimpleSender::new(),
+                refuse_requests,
             }
             .run()
             .await;
@@ -47,6 +53,15 @@ impl Helper {
 
     async fn run(&mut self) {
         while let Some((digests, origin)) = self.rx_request.recv().await {
+            if self.refuse_requests {
+                warn!(
+                    "Byzantine worker {} refused {} requested payloads from {}",
+                    self.id,
+                    digests.len(),
+                    origin
+                );
+                continue;
+            }
             // TODO [issue #7]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.

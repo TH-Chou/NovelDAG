@@ -11,7 +11,7 @@ use crate::wahoo::msg_send;
 use crate::wahoo::pb::{Pb, PbAction};
 use crate::wahoo::tools::unix_nano_now;
 use bytes::Bytes;
-use config::{Committee, ConsensusProtocol, Stake, WorkerId};
+use config::{Committee, ConsensusProtocol, DagProtocol, Stake, WorkerId};
 use crypto::{coin, Digest, Hash as _, PublicKey, Signature, SignatureService};
 use log::{debug, info, warn};
 use network::{CancelHandler, ReliableSender};
@@ -821,74 +821,50 @@ impl Node {
                 .signature_service
                 .request_signature(block.id.clone())
                 .await;
-            let variants = self
+            let attack_headers = self
                 .byzantine
-                .signed_variants(&block, &mut self.signature_service)
+                .signed_attack_headers(&block, DagProtocol::Wahoo, &mut self.signature_service)
                 .await;
-            if round % 2 == 0 {
-                // Even round: PB phase 1 broadcast.
-                self.pb.broadcast_block(&block);
-                let hs = msg_send::broadcast_header(
-                    &mut self.sender,
-                    &self.committee,
-                    &self.name,
-                    block.clone(),
-                )
-                .await;
-                self.cancel_handlers.extend(hs);
-                // Self-deliver the proposal to PB so handle_block_msg
-                // paths are exercised symmetrically with peers.
-                let actions = self.pb.handle_block(block);
-                self.dispatch_pb_actions(actions).await;
-                // Elect for the leader of the previous (odd) round.
-                self.broadcast_elect(round).await;
-            } else {
-                // Odd round: fast path, direct broadcast.
-                // Phase C Step 4c: at the START of each EPBC phase, paper
-                // Section IV-B Algorithm 2 line 5 says every node broadcasts
-                // a RECP share for the block it delivered at the previous
-                // EPBC wave (round - 2). This lets the NEXT wave's proposer
-                // build a leader_link out of `recp_pool[round]` two rounds
-                // later. Broadcast for every delivered round-(round-2)
-                // block in our DAG so peers see the full reception fan-in.
-                if round >= 3 {
-                    self.broadcast_self_recps(round - 2).await;
-                }
-                let hs = msg_send::broadcast_header(
-                    &mut self.sender,
-                    &self.committee,
-                    &self.name,
-                    block.clone(),
-                )
-                .await;
-                self.cancel_handlers.extend(hs);
-                // Self-deliver to keep our own DAG and Ready logic in sync.
-                self.handle_fast_block(block).await;
+            if round >= 3 && round % 2 == 1 {
+                self.broadcast_self_recps(round - 2).await;
             }
 
-            for variant in variants {
-                let targets = self.byzantine.variant_targets(
-                    &self.committee,
-                    &self.name,
-                    variant.equivocation_tag,
-                );
+            for attack_header in attack_headers {
+                let targets = if attack_header.equivocation_tag == 0 {
+                    self.byzantine
+                        .canonical_targets(&self.committee, &self.name)
+                } else {
+                    self.byzantine.variant_targets(
+                        &self.committee,
+                        &self.name,
+                        attack_header.equivocation_tag,
+                        false,
+                    )
+                };
                 let hs =
-                    msg_send::broadcast_header_to(&mut self.sender, targets, variant.clone()).await;
+                    msg_send::broadcast_header_to(&mut self.sender, targets, attack_header.clone())
+                        .await;
                 self.cancel_handlers.extend(hs);
-                warn!(
-                    "Byzantine equivocation: sent Wahoo variant {} for round {} as {:?}",
-                    variant.equivocation_tag, round, variant.id
-                );
+                if self.byzantine.is_equivocating() {
+                    warn!(
+                        "Byzantine equivocation: sent Wahoo version {} for round {} as {:?}",
+                        attack_header.equivocation_tag, round, attack_header.id
+                    );
+                }
 
-                // Byzantine replicas endorse their own distinct blocks too.
-                // The first block remains the canonical state entry, so this
-                // extra work cannot replace the block that advances the node.
                 if round % 2 == 0 {
-                    let actions = self.pb.handle_block(variant);
+                    if attack_header.equivocation_tag == 0 {
+                        self.pb.broadcast_block(&attack_header);
+                    }
+                    let actions = self.pb.handle_block(attack_header);
                     self.dispatch_pb_actions(actions).await;
                 } else {
-                    self.handle_fast_block(variant).await;
+                    self.handle_fast_block(attack_header).await;
                 }
+            }
+
+            if round % 2 == 0 {
+                self.broadcast_elect(round).await;
             }
         })
     }

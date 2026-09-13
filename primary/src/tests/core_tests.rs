@@ -49,6 +49,58 @@ fn mahi_test_certificate(author: PublicKey, round: Round, salt: u8) -> Certifica
 }
 
 #[tokio::test]
+async fn payload_sync_prefers_the_honest_block_carrier() {
+    let committee = committee();
+    let names = committee.authorities.keys().cloned().collect::<Vec<_>>();
+    let local = names[0];
+    let carrier_author = names[1];
+    let byzantine_author = names[3];
+    let path = ".db_test_honest_payload_carrier";
+    let _ = fs::remove_dir_all(path);
+    let store = Store::new(path).unwrap();
+    let (tx_headers, mut rx_headers) = channel(4);
+    let (tx_certificates, _rx_certificates) = channel(1);
+    let mut synchronizer = Synchronizer::new(
+        local,
+        &committee,
+        DagProtocol::MahiMahi5,
+        store,
+        tx_headers,
+        tx_certificates,
+    );
+
+    let mut equivocation = mahi_test_certificate(byzantine_author, 1, 7);
+    equivocation.header.payload.insert(Digest([9u8; 32]), 0);
+    let parent_digest = equivocation.digest();
+    let carrier = Header {
+        author: carrier_author,
+        round: 2,
+        parents: [parent_digest].iter().cloned().collect(),
+        ..Header::default()
+    };
+
+    assert!(synchronizer
+        .get_parents(&carrier)
+        .await
+        .unwrap()
+        .0
+        .is_empty());
+    assert!(matches!(
+        rx_headers.recv().await.unwrap(),
+        WaiterMessage::SyncParents(_, ref header) if header.author == carrier_author
+    ));
+    synchronizer.observe_certificate(&equivocation);
+    assert!(synchronizer
+        .missing_payload_for(&equivocation.header, &equivocation.header)
+        .await
+        .unwrap());
+    assert!(matches!(
+        rx_headers.recv().await.unwrap(),
+        WaiterMessage::SyncBatches { source, .. } if source == carrier_author
+    ));
+}
+
+#[tokio::test]
 async fn process_header() {
     let mut keys = keys();
     let _ = keys.pop().unwrap(); // Skip the header' author.

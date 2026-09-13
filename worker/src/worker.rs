@@ -160,6 +160,7 @@ impl Worker {
             self.parameters.max_batch_delay,
             /* rx_transaction */ rx_batch_maker,
             /* tx_message */ tx_quorum_waiter,
+            /* direct tx_processor */ tx_processor.clone(),
             /* workers_addresses */
             self.committee
                 .others_workers(&self.name, &self.id)
