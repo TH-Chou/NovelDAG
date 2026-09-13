@@ -18,8 +18,6 @@ pub struct Helper {
     rx_primaries: Receiver<(Vec<Digest>, PublicKey)>,
     /// A network sender to reply to the sync requests.
     network: SimpleSender,
-    /// Byzantine primaries do not help peers recover equivocated blocks.
-    refuse_requests: bool,
 }
 
 impl Helper {
@@ -29,14 +27,11 @@ impl Helper {
         rx_primaries: Receiver<(Vec<Digest>, PublicKey)>,
     ) {
         tokio::spawn(async move {
-            let refuse_requests =
-                std::env::var("NOVELDAG_BYZANTINE_ATTACK").as_deref() == Ok("equivocation");
             Self {
                 committee,
                 store,
                 rx_primaries,
                 network: SimpleSender::new(),
-                refuse_requests,
             }
             .run()
             .await;
@@ -45,14 +40,6 @@ impl Helper {
 
     async fn run(&mut self) {
         while let Some((digests, origin)) = self.rx_primaries.recv().await {
-            if self.refuse_requests {
-                warn!(
-                    "Byzantine primary refused {} certificate requests from {}",
-                    digests.len(),
-                    origin
-                );
-                continue;
-            }
             // TODO [issue #195]: Do some accounting to prevent bad nodes from monopolizing our resources.
 
             // get the requestors address.
