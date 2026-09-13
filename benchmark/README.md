@@ -95,6 +95,18 @@ python scripts/dagtest-TUI run --mode aws --settings settings.json --config scri
 
 `dagtest-TUI` works both as an interactive terminal UI and as a non-interactive CLI. Use `--runs` (or `--groups`) for the number of repetitions per matrix point, `--faults`/`--byzantine` for Byzantine node counts, `--delays` for local one-way dummynet delay in ms, and `--mode local|aws|gcp` for local vs cloud execution.
 
+Local runs support three `--fault-mode` values:
+
+- `silence`: do not start the last `f` authorities.
+- `invalid_payload`: start the last `f` authorities and inject unavailable batch digests.
+- `equivocation`: start the last `f` authorities, broadcast one canonical block for progress, and send a different signed conflicting block to each honest authority. Byzantine authorities endorse every distinct conflict, while honest authorities vote only once per author and round.
+
+The equivocation launcher creates `n-f` variants per Byzantine proposer. Each
+honest authority receives one variant and all Byzantine peers receive all
+variants. The normal quorum threshold is unchanged, so conflicting variants
+consume resources but cannot obtain a second full certificate from honest
+double-votes.
+
 ### 3. Unified CLI (`run_bench.py`) — Matrix runner with YAML configs
 
 ```bash

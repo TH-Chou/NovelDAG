@@ -1,0 +1,2 @@
+run,protocol,faults,delay_ms,rate,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms
+1,wahoo,0,0,60000,43226.864914,96.478816,43080.387107,285.568589

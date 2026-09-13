@@ -1,0 +1,3 @@
+run,protocol,faults,delay_ms,rate,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms
+1,narwhal,1,0,50000,44545.438339,4205.379444,43569.777715,4735.335315
+1,narwhal,1,0,55000,49426.702561,4137.469519,47952.775478,4661.101249
