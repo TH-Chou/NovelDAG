@@ -8,3 +8,6 @@ paper/
 **/.db_test_*
 benchmark/.checkpoints/
 benchmark/scripts/.checkpoints/
+profile_output/**/*.log
+profile_output/**/.committee.json
+profile_output/**/.parameters.json
