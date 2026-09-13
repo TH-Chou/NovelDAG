@@ -978,6 +978,12 @@ impl Core {
                 .entry(attack_header.id.clone())
                 .or_insert_with(VotesAggregator::new);
 
+            // Make the block locally recoverable before advertising it. A peer can
+            // otherwise request one of its parents immediately after delivery and
+            // observe a transient store miss, forcing a full sync-retry interval.
+            self.process_header(&attack_header).await?;
+            self.maybe_synthesize_uncertified_cert(&attack_header).await;
+
             let targets = if !self.byzantine.is_equivocating() {
                 self.byzantine
                     .canonical_targets(&self.committee, &self.name)
@@ -1012,9 +1018,6 @@ impl Core {
                     attack_header.equivocation_tag, attack_header.round, attack_header.id
                 );
             }
-
-            self.process_header(&attack_header).await?;
-            self.maybe_synthesize_uncertified_cert(&attack_header).await;
         }
 
         Ok(())
