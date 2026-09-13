@@ -246,6 +246,18 @@ impl WahooVotesAggregator {
         committee: &Committee,
         header: &Header,
     ) -> DagResult<Option<WahooQuorum>> {
+        ensure!(
+            vote.id == header.id,
+            DagError::MalformedHeader(header.id.clone())
+        );
+        ensure!(
+            vote.round == header.round,
+            DagError::MalformedHeader(header.id.clone())
+        );
+        ensure!(
+            vote.origin == header.author,
+            DagError::MalformedHeader(header.id.clone())
+        );
         let phase = vote
             .wahoo_phase
             .ok_or_else(|| DagError::MalformedHeader(vote.id.clone()))?;
@@ -308,17 +320,49 @@ mod tests {
     // This unit test verifies the Wahoo per-phase AuthorityReuse guard.
     #[test]
     fn duplicate_authority_rejected() {
-        let header = Header::default();
-        let mut agg = WahooVotesAggregator::new();
         let committee = crate::common::committee();
         let author = *committee.authorities.keys().next().unwrap();
-        let v1 = dummy_vote(author, WahooVotePhase::Pbc);
-        let v2 = dummy_vote(author, WahooVotePhase::Pbc);
+        let mut header = Header {
+            author,
+            round: 2,
+            ..Header::default()
+        };
+        header.id = header.digest();
+        let mut v1 = dummy_vote(author, WahooVotePhase::Pbc);
+        v1.id = header.id.clone();
+        v1.round = header.round;
+        v1.origin = header.author;
+        let v2 = v1.clone();
+        let mut agg = WahooVotesAggregator::new();
         assert!(agg.append(v1, &committee, &header).is_ok());
         assert!(matches!(
             agg.append(v2, &committee, &header),
             Err(DagError::AuthorityReuse(_))
         ));
+    }
+
+    #[test]
+    fn votes_from_an_equivocating_header_cannot_poison_a_bucket() {
+        let committee = crate::common::committee();
+        let author = *committee.authorities.keys().next().unwrap();
+        let mut header = Header {
+            author,
+            round: 2,
+            ..Header::default()
+        };
+        header.id = header.digest();
+
+        let mut conflicting = dummy_vote(author, WahooVotePhase::Pbc);
+        conflicting.id = Digest([9; 32]);
+        conflicting.round = header.round;
+        conflicting.origin = header.author;
+
+        let mut aggregator = WahooVotesAggregator::new();
+        assert!(matches!(
+            aggregator.append(conflicting, &committee, &header),
+            Err(DagError::MalformedHeader(_))
+        ));
+        assert!(aggregator.pbc.used.is_empty());
     }
 
     #[test]
