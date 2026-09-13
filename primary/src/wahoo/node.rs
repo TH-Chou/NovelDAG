@@ -626,19 +626,15 @@ impl Node {
             self.block_query += 1;
             return;
         }
-        // EPBC merged fast/slow path: receivers return TS1 and TF shares
-        // on the raw proposal. TS1 may later trigger a TS2 share.
-        if !self.block_send.contains(&(round + 1)) {
-            self.send_epbc_vote(round, hash.clone(), sender, WahooVotePhase::Ts1)
-                .await;
-            self.send_epbc_vote(round, hash, sender, WahooVotePhase::Tf)
-                .await;
-        } else {
-            info!(
-                "Wahoo epbc proposal: skip votes for round={} (already sent r+1)",
-                round
-            );
-        }
+        // EPBC merged fast/slow path: receivers return TS1 and TF shares on
+        // every valid proposal, including one that arrives after this node
+        // proposed in r+1. `should_send_vote` still prevents an honest node
+        // from voting twice for equivocations, while this late vote lets a
+        // lagging honest proposer finish the slow path.
+        self.send_epbc_vote(round, hash.clone(), sender, WahooVotePhase::Ts1)
+            .await;
+        self.send_epbc_vote(round, hash, sender, WahooVotePhase::Tf)
+            .await;
     }
 
     fn handle_epbc_vote(&mut self, vote: WahooVote) -> futures::future::BoxFuture<'_, ()> {
@@ -1706,6 +1702,46 @@ mod tests {
         assert!(node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &first));
         assert!(node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &second));
         assert!(!node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &second));
+    }
+
+    #[tokio::test]
+    async fn late_epbc_block_still_receives_slow_path_votes() {
+        let (publics, mut secrets, committee) = make_test_committee(4);
+        let me = publics[0];
+        let sig_service = SignatureService::new(secrets.remove(0));
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            me,
+            committee,
+            ConsensusProtocol::RoundRobin,
+            sig_service,
+            1,
+            32,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+        let mut block = WahooBlock {
+            author: me,
+            round: 1,
+            wahoo_tag: Some(WahooTag::EpbcTf),
+            ..WahooBlock::default()
+        };
+        block.id = block.digest();
+        node.block_send.insert(2);
+
+        node.handle_fast_block(block.clone()).await;
+
+        for phase in [WahooVotePhase::Ts1, WahooVotePhase::Tf] {
+            assert!(node
+                .sent_votes
+                .get(&(block.round, block.author, phase))
+                .is_some_and(|digests| digests.contains(&block.id)));
+        }
     }
 
     #[tokio::test]
