@@ -29,8 +29,12 @@ impl VotesAggregator {
     ) -> DagResult<Option<Certificate>> {
         let author = vote.author;
 
-        // Ensure it is the first time this authority votes.
-        ensure!(self.used.insert(author), DagError::AuthorityReuse(author));
+        // Duplicate delivery of the same authority's vote is idempotent.
+        // Certificate verification still rejects duplicate signers, while the
+        // live aggregator simply ignores retries and loopback reprocessing.
+        if !self.used.insert(author) {
+            return Ok(None);
+        }
 
         self.votes.push(vote);
         self.weight += committee.stake(&author);
@@ -301,7 +305,7 @@ mod tests {
 
     // NB: a full multi-authority test fixture lives in `tests/core_tests.rs`
     // and is exercised once Phase B step 2 wires the aggregator into Core.
-    // This unit test just verifies the AuthorityReuse guard and the latch.
+    // This unit test verifies the Wahoo per-phase AuthorityReuse guard.
     #[test]
     fn duplicate_authority_rejected() {
         let header = Header::default();
@@ -315,5 +319,19 @@ mod tests {
             agg.append(v2, &committee, &header),
             Err(DagError::AuthorityReuse(_))
         ));
+    }
+
+    #[test]
+    fn certificate_vote_aggregation_ignores_duplicate_delivery() {
+        let header = Header::default();
+        let mut agg = VotesAggregator::new();
+        let committee = crate::common::committee();
+        let author = *committee.authorities.keys().next().unwrap();
+        let vote = dummy_vote(author, WahooVotePhase::Pbc);
+        assert!(agg
+            .append(vote.clone(), &committee, &header)
+            .unwrap()
+            .is_none());
+        assert!(agg.append(vote, &committee, &header).unwrap().is_none());
     }
 }

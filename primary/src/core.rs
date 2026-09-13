@@ -69,6 +69,10 @@ pub struct Core {
     gc_round: Round,
     /// The authors of the last voted headers.
     last_voted: HashMap<Round, HashSet<PublicKey>>,
+    /// Exact header ids already voted for by this primary. Byzantine mode may
+    /// vote for multiple equivocations from one author/round, but retries of
+    /// the same branch must remain idempotent.
+    voted_headers: HashMap<Digest, Round>,
     /// The set of headers we are currently processing.
     processing: HashMap<Round, HashSet<Digest>>,
     /// The last header we proposed (for which we are waiting votes).
@@ -177,6 +181,7 @@ impl Core {
                 tx_proposer,
                 gc_round: 0,
                 last_voted: HashMap::with_capacity(2 * gc_depth as usize),
+                voted_headers: HashMap::with_capacity(2 * gc_depth as usize),
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
                 current_header: Header::default(),
                 local_round: 1,
@@ -894,6 +899,10 @@ impl Core {
     }
 
     async fn vote_for_header(&mut self, header: &Header) -> DagResult<()> {
+        if self.voted_headers.contains_key(&header.id) {
+            return Ok(());
+        }
+
         let first_vote_for_author = self
             .last_voted
             .entry(header.round)
@@ -902,6 +911,7 @@ impl Core {
         if !first_vote_for_author && !self.byzantine.allows_multiple_votes() {
             return Ok(());
         }
+        self.voted_headers.insert(header.id.clone(), header.round);
 
         let voter_round = if self.dag_protocol.is_shortfin_family() {
             self.local_round
@@ -1619,6 +1629,8 @@ impl Core {
             if round > self.gc_depth {
                 let gc_round = round - self.gc_depth;
                 self.last_voted.retain(|k, _| k >= &gc_round);
+                self.voted_headers
+                    .retain(|_, header_round| *header_round >= gc_round);
                 self.processing.retain(|k, _| k >= &gc_round);
                 self.own_headers
                     .retain(|_, header| header.round >= gc_round);
