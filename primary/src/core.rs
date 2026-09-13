@@ -932,9 +932,27 @@ impl Core {
     }
 
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
+        let mahi_parent_branches = if self.dag_protocol.is_mahi_mahi() {
+            header
+                .parents
+                .iter()
+                .filter_map(|digest| {
+                    let certificate = self.certificates_by_digest.get(digest)?;
+                    (certificate.origin() == self.name && certificate.header.equivocation_tag > 0)
+                        .then(|| (certificate.header.equivocation_tag, digest.clone()))
+                })
+                .collect::<BTreeMap<_, _>>()
+        } else {
+            BTreeMap::new()
+        };
         let headers = self
             .byzantine
-            .signed_attack_headers(&header, self.dag_protocol, &mut self.signature_service)
+            .signed_attack_headers(
+                &header,
+                self.dag_protocol,
+                &mahi_parent_branches,
+                &mut self.signature_service,
+            )
             .await;
         if self.dag_protocol.is_shortfin_family() {
             self.local_round = self.local_round.max(header.round);

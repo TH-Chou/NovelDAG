@@ -1,6 +1,6 @@
 use crate::messages::Header;
 use config::{Committee, DagProtocol, Stake};
-use crypto::{Hash as _, PublicKey, SignatureService};
+use crypto::{Digest, Hash as _, PublicKey, SignatureService};
 use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
 
@@ -82,6 +82,7 @@ impl ByzantineConfig {
         &self,
         canonical: &Header,
         dag_protocol: DagProtocol,
+        mahi_parent_branches: &BTreeMap<u64, Digest>,
         signature_service: &mut SignatureService,
     ) -> Vec<Header> {
         if !self.equivocation || canonical.round == 0 {
@@ -97,9 +98,20 @@ impl ByzantineConfig {
 
             let mut headers = Vec::with_capacity(count);
             for (index, payload) in payloads.into_iter().enumerate() {
+                let tag = (index + 1) as u64;
                 let mut variant = canonical.clone();
                 variant.payload = payload;
-                variant.equivocation_tag = (index + 1) as u64;
+                // Keep each recipient on a live branch without forcing it to
+                // fetch all sibling equivocations from the refusing author.
+                // Honest carriers still expose the sibling branches through
+                // their own weak references.
+                variant
+                    .parents
+                    .retain(|digest| !mahi_parent_branches.values().any(|x| x == digest));
+                if let Some(parent) = mahi_parent_branches.get(&tag) {
+                    variant.parents.insert(parent.clone());
+                }
+                variant.equivocation_tag = tag;
                 variant.id = variant.digest();
                 variant.signature = signature_service
                     .request_signature(variant.id.clone())
@@ -304,7 +316,12 @@ mod tests {
             variant_count: 3,
             byzantine_addresses: HashSet::new(),
         }
-        .signed_attack_headers(&canonical, DagProtocol::MahiMahi5, &mut signature_service)
+        .signed_attack_headers(
+            &canonical,
+            DagProtocol::MahiMahi5,
+            &BTreeMap::new(),
+            &mut signature_service,
+        )
         .await;
         assert_eq!(mahi.len(), 3);
         assert!(mahi.iter().all(|header| header.payload.len() == 1));
@@ -321,10 +338,64 @@ mod tests {
             variant_count: 1,
             byzantine_addresses: HashSet::new(),
         }
-        .signed_attack_headers(&canonical, DagProtocol::Narwhal, &mut signature_service)
+        .signed_attack_headers(
+            &canonical,
+            DagProtocol::Narwhal,
+            &BTreeMap::new(),
+            &mut signature_service,
+        )
         .await;
         assert_eq!(certified.len(), 2);
         assert_eq!(certified[0].payload.len(), 3);
         assert_eq!(certified[1].payload.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn mahi_successors_only_reference_their_matching_attack_branch() {
+        let mut keys = crate::common::keys();
+        let (author, secret) = keys.pop().unwrap();
+        let mut signature_service = SignatureService::new(secret);
+        let common = Digest([20u8; 32]);
+        let branches = (1u64..=3)
+            .map(|tag| (tag, Digest([tag as u8; 32])))
+            .collect::<BTreeMap<_, _>>();
+        let canonical = Header {
+            author,
+            round: 2,
+            parents: branches
+                .values()
+                .cloned()
+                .chain(std::iter::once(common.clone()))
+                .collect(),
+            ..Header::default()
+        };
+
+        let headers = ByzantineConfig {
+            equivocation: true,
+            variant_count: 3,
+            byzantine_addresses: HashSet::new(),
+        }
+        .signed_attack_headers(
+            &canonical,
+            DagProtocol::MahiMahi5,
+            &branches,
+            &mut signature_service,
+        )
+        .await;
+
+        for header in headers {
+            assert!(header.parents.contains(&common));
+            assert!(header
+                .parents
+                .contains(branches.get(&header.equivocation_tag).unwrap()));
+            assert_eq!(
+                header
+                    .parents
+                    .iter()
+                    .filter(|digest| branches.values().any(|branch| branch == *digest))
+                    .count(),
+                1
+            );
+        }
     }
 }

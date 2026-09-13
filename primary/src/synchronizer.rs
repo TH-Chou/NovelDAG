@@ -31,7 +31,7 @@ pub struct Synchronizer {
     certificate_cache: HashMap<Digest, Certificate>,
     /// A block reference proves that the carrier has seen the referenced
     /// certificate. Remember that honest carrier as a preferred sync source.
-    certificate_holders: HashMap<Digest, PublicKey>,
+    certificate_holders: HashMap<Digest, Vec<PublicKey>>,
     /// Preferred payload holders learned when a referenced certificate arrives.
     header_holders: HashMap<Digest, PublicKey>,
 }
@@ -134,9 +134,7 @@ impl Synchronizer {
         header: &Header,
     ) -> DagResult<(Vec<Certificate>, Vec<Certificate>)> {
         for digest in header.parents.iter().chain(header.parents_2.iter()) {
-            self.certificate_holders
-                .entry(digest.clone())
-                .or_insert(header.author);
+            self.record_reference_holder(digest, header.author);
         }
         let mut missing = Vec::new();
         let mut parents_1 = Vec::new();
@@ -275,6 +273,7 @@ impl Synchronizer {
     /// Used by Shortfin-family protocols to register synthetic peer certificates that carry empty
     /// votes and would fail `Certificate::verify()` if read back from disk.
     pub fn cache_certificate(&mut self, certificate: &Certificate) {
+        self.observe_certificate(certificate);
         self.certificate_cache
             .insert(certificate.digest(), certificate.clone());
     }
@@ -282,10 +281,37 @@ impl Synchronizer {
     /// Link a fetched certificate to the honest carrier that advertised its
     /// digest. Payload recovery can then avoid the Byzantine author.
     pub fn observe_certificate(&mut self, certificate: &Certificate) {
-        if let Some(holder) = self.certificate_holders.get(&certificate.digest()) {
+        if let Some(holder) = self.preferred_reference_holder(certificate) {
             self.header_holders
                 .entry(certificate.header.id.clone())
-                .or_insert(*holder);
+                .and_modify(|current| {
+                    if *current == certificate.header.author && holder != certificate.header.author
+                    {
+                        *current = holder;
+                    }
+                })
+                .or_insert(holder);
         }
+    }
+
+    fn record_reference_holder(&mut self, digest: &Digest, holder: PublicKey) {
+        let holders = self.certificate_holders.entry(digest.clone()).or_default();
+        if !holders.contains(&holder) {
+            holders.push(holder);
+        }
+
+        if let Some(certificate) = self.certificate_cache.get(digest).cloned() {
+            self.observe_certificate(&certificate);
+        }
+    }
+
+    fn preferred_reference_holder(&self, certificate: &Certificate) -> Option<PublicKey> {
+        let holders = self.certificate_holders.get(&certificate.digest())?;
+        holders
+            .iter()
+            .rev()
+            .find(|holder| **holder != certificate.header.author)
+            .or_else(|| holders.last())
+            .copied()
     }
 }

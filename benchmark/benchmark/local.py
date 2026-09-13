@@ -31,7 +31,8 @@ class LocalBench:
 
     def _background_run(self, command, log_file):
         name = splitext(basename(log_file))[0]
-        cmd = f"RUST_LOG=info {command} 2> {log_file}"
+        log_level = 'debug' if '-vvv' in command else 'info'
+        cmd = f"RUST_LOG={log_level} {command} 2> {log_file}"
         subprocess.run(["tmux", "new", "-d", "-s", name, cmd], check=True)
 
     def _kill_nodes(self):

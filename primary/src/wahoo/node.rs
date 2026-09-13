@@ -823,7 +823,12 @@ impl Node {
                 .await;
             let attack_headers = self
                 .byzantine
-                .signed_attack_headers(&block, DagProtocol::Wahoo, &mut self.signature_service)
+                .signed_attack_headers(
+                    &block,
+                    DagProtocol::Wahoo,
+                    &BTreeMap::new(),
+                    &mut self.signature_service,
+                )
                 .await;
             if round >= 3 && round % 2 == 1 {
                 self.broadcast_self_recps(round - 2).await;

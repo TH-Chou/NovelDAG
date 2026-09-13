@@ -101,6 +101,52 @@ async fn payload_sync_prefers_the_honest_block_carrier() {
 }
 
 #[tokio::test]
+async fn cached_certificate_learns_a_later_honest_payload_carrier() {
+    let committee = committee();
+    let names = committee.authorities.keys().cloned().collect::<Vec<_>>();
+    let local = names[0];
+    let carrier_author = names[1];
+    let byzantine_author = names[3];
+    let path = ".db_test_cached_payload_carrier";
+    let _ = fs::remove_dir_all(path);
+    let store = Store::new(path).unwrap();
+    let (tx_headers, mut rx_headers) = channel(4);
+    let (tx_certificates, _rx_certificates) = channel(1);
+    let mut synchronizer = Synchronizer::new(
+        local,
+        &committee,
+        DagProtocol::MahiMahi5,
+        store,
+        tx_headers,
+        tx_certificates,
+    );
+
+    let mut equivocation = mahi_test_certificate(byzantine_author, 1, 9);
+    equivocation.header.payload.insert(Digest([11u8; 32]), 0);
+    synchronizer.cache_certificate(&equivocation);
+
+    let carrier = Header {
+        author: carrier_author,
+        round: 2,
+        parents: [equivocation.digest()].iter().cloned().collect(),
+        ..Header::default()
+    };
+    assert_eq!(
+        synchronizer.get_parents(&carrier).await.unwrap().0,
+        vec![equivocation.clone()]
+    );
+
+    assert!(synchronizer
+        .missing_payload_for(&equivocation.header, &equivocation.header)
+        .await
+        .unwrap());
+    assert!(matches!(
+        rx_headers.recv().await.unwrap(),
+        WaiterMessage::SyncBatches { source, .. } if source == carrier_author
+    ));
+}
+
+#[tokio::test]
 async fn process_header() {
     let mut keys = keys();
     let _ = keys.pop().unwrap(); // Skip the header' author.

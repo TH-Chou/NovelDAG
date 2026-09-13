@@ -106,7 +106,7 @@ def _point_hash(point: dict[str, Any]) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 
-def _run_one_local(point: dict[str, Any]) -> dict[str, Any] | None:
+def _run_one_local(point: dict[str, Any], *, debug: bool = False) -> dict[str, Any] | None:
     """Execute a single config point locally and return metrics dict."""
     bench = point["bench"]
     node = point["node"]
@@ -130,7 +130,7 @@ except RuntimeError:
 bench = {bench_code!r}
 node = {node!r}
 try:
-    m = LocalBench(bench, node).run(debug=False).metrics()
+    m = LocalBench(bench, node).run(debug={debug!r}).metrics()
     print('METRICS_JSON:' + json.dumps(m))
 except Exception as e:
     print(f'FAILED: {{e}}')
@@ -200,7 +200,7 @@ def run_local(
                     end="",
                     flush=True,
                 )
-                m = _run_one_local(pt)
+                m = _run_one_local(pt, debug=debug)
                 if m:
                     tps = m.get("consensus_tps", 0)
                     lat = m.get("consensus_latency_ms", 0)
