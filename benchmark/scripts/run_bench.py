@@ -92,8 +92,8 @@ def main() -> None:
     run_p.add_argument("--faults", type=str, help="Comma-separated fault counts")
     run_p.add_argument(
         "--fault-mode",
-        choices=["silence", "invalid_payload"],
-        help="Fault behavior: silence stops faulty nodes; invalid_payload runs faulty primaries that inject invalid batch digests",
+        choices=["silence", "invalid_payload", "equivocation"],
+        help="Fault behavior: silence stops faulty nodes; invalid_payload injects unavailable batches; equivocation sends distinct signed blocks to honest peers",
     )
     run_p.add_argument("--delays", type=str, help="Comma-separated one-way delays (ms)")
     run_p.add_argument("--nodes", type=int, help="Number of nodes")
@@ -156,7 +156,9 @@ def main() -> None:
     full_p.add_argument("--protocols", type=str)
     full_p.add_argument("--rates", type=str)
     full_p.add_argument("--faults", type=str)
-    full_p.add_argument("--fault-mode", choices=["silence", "invalid_payload"])
+    full_p.add_argument(
+        "--fault-mode", choices=["silence", "invalid_payload", "equivocation"]
+    )
     full_p.add_argument("--delays", type=str)
     full_p.add_argument("--nodes", type=int)
     full_p.add_argument("--duration", type=int)

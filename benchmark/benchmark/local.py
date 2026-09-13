@@ -98,14 +98,25 @@ class LocalBench:
                     self._background_run(cmd, log_file)
 
             # Run the primaries. In silence mode, faulty authorities are not
-            # started. In invalid_payload mode, all authorities run but the
-            # last `faults` primaries inject invalid batch digests into blocks.
+            # started. In active attack modes, all authorities run and the
+            # last `faults` primaries receive process-local attack settings.
             primary_addresses = committee.primary_addresses(silent_faults)
+            all_primary_addresses = committee.primary_addresses(0)
             byzantine_start = nodes - self.faults
             for i, address in enumerate(primary_addresses):
                 env = None
                 if self.fault_mode == 'invalid_payload' and i >= byzantine_start:
                     env = 'NOVELDAG_BYZANTINE_ATTACK=invalid_payload'
+                elif self.fault_mode == 'equivocation' and i >= byzantine_start:
+                    byzantine_addresses = ','.join(
+                        all_primary_addresses[byzantine_start:]
+                    )
+                    variants = max(1, nodes - self.faults)
+                    env = (
+                        'NOVELDAG_BYZANTINE_ATTACK=equivocation '
+                        f'NOVELDAG_BYZANTINE_PRIMARY_ADDRS={byzantine_addresses} '
+                        f'NOVELDAG_EQUIVOCATION_VARIANTS={variants}'
+                    )
                 cmd = CommandMaker.run_primary(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),

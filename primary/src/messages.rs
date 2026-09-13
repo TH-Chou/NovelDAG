@@ -244,6 +244,10 @@ pub struct Header {
     /// other protocols, and for Wahoo PBC (even-round) headers.
     #[serde(default)]
     pub leader_link: Option<LeaderLink>,
+    /// Benchmark-only nonce used to create independently signed conflicting
+    /// blocks from one author and round. Zero is the normal protocol value.
+    #[serde(default)]
+    pub equivocation_tag: u64,
     pub id: Digest,
     pub signature: Signature,
 }
@@ -305,6 +309,7 @@ impl Header {
             coin_share,
             wahoo_tag,
             leader_link,
+            equivocation_tag: 0,
             id: Digest::default(),
             signature: Signature::default(),
         };
@@ -597,6 +602,10 @@ impl Hash for Header {
                     }
                 }
             }
+        }
+        if self.equivocation_tag != 0 {
+            hasher.update(b"EQVC");
+            hasher.update(self.equivocation_tag.to_le_bytes());
         }
         let digest = hasher.finalize();
         Digest(digest[..32].try_into().unwrap())

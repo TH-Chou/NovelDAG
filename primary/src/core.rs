@@ -1,5 +1,6 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 use crate::aggregators::{CertificatesAggregator, CertificatesVecAggregator, VotesAggregator};
+use crate::byzantine::ByzantineConfig;
 use crate::error::{DagError, DagResult};
 use crate::messages::{Certificate, EmbeddedQc, Header, Vote};
 use crate::primary::{PrimaryMessage, Round};
@@ -124,6 +125,9 @@ pub struct Core {
     vote_network: SimpleSender,
     /// Keeps the cancel handlers of the messages we sent.
     cancel_handlers: HashMap<Round, Vec<CancelHandler>>,
+    /// Optional process-local attack behavior. Honest processes keep the
+    /// default disabled configuration.
+    byzantine: ByzantineConfig,
 }
 
 impl Core {
@@ -153,6 +157,7 @@ impl Core {
             .values()
             .map(|certificate| (certificate.digest(), certificate.clone()))
             .collect();
+        let byzantine = ByzantineConfig::from_env();
         tokio::spawn(async move {
             Self {
                 name,
@@ -200,6 +205,7 @@ impl Core {
                 network: ReliableSender::new(),
                 vote_network: SimpleSender::new(),
                 cancel_handlers: HashMap::with_capacity(2 * gc_depth as usize),
+                byzantine,
             }
             .run()
             .await;
@@ -891,12 +897,12 @@ impl Core {
     }
 
     async fn vote_for_header(&mut self, header: &Header) -> DagResult<()> {
-        if !self
+        let first_vote_for_author = self
             .last_voted
             .entry(header.round)
             .or_insert_with(HashSet::new)
-            .insert(header.author)
-        {
+            .insert(header.author);
+        if !first_vote_for_author && !self.byzantine.allows_multiple_votes() {
             return Ok(());
         }
 
@@ -929,6 +935,10 @@ impl Core {
     }
 
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
+        let variants = self
+            .byzantine
+            .signed_variants(&header, &mut self.signature_service)
+            .await;
         // Track the own header so late votes can still assemble its QC after
         // the proposer has moved on.
         if self.dag_protocol.is_shortfin_family() {
@@ -955,8 +965,39 @@ impl Core {
             .or_insert_with(Vec::new)
             .extend(handlers);
 
-        // Process the header.
-        self.process_header(&header).await
+        // Process the canonical header first. ReliableSender preserves FIFO
+        // order per peer, so honest replicas vote for it before seeing their
+        // targeted conflicting variant.
+        self.process_header(&header).await?;
+
+        for variant in variants {
+            self.own_headers.insert(variant.id.clone(), variant.clone());
+            self.votes_aggregators
+                .entry(variant.id.clone())
+                .or_insert_with(VotesAggregator::new);
+
+            let targets = self.byzantine.variant_targets(
+                &self.committee,
+                &self.name,
+                variant.equivocation_tag,
+            );
+            let bytes = bincode::serialize(&PrimaryMessage::Header(variant.clone()))
+                .expect("Failed to serialize equivocation header");
+            let handlers = self.network.broadcast(targets, Bytes::from(bytes)).await;
+            self.cancel_handlers
+                .entry(variant.round)
+                .or_insert_with(Vec::new)
+                .extend(handlers);
+            warn!(
+                "Byzantine equivocation: sent variant {} for round {} as {:?}",
+                variant.equivocation_tag, variant.round, variant.id
+            );
+
+            self.process_header(&variant).await?;
+            self.maybe_synthesize_uncertified_cert(&variant).await;
+        }
+
+        Ok(())
     }
 
     #[async_recursion]

@@ -262,8 +262,10 @@ class BenchParameters:
             raise ConfigError(
                 f'Duration must be at most {self.MAX_DURATION_SECONDS}s'
             )
-        if self.fault_mode not in ('silence', 'invalid_payload'):
-            raise ConfigError('fault_mode must be silence or invalid_payload')
+        if self.fault_mode not in ('silence', 'invalid_payload', 'equivocation'):
+            raise ConfigError(
+                'fault_mode must be silence, invalid_payload, or equivocation'
+            )
 
 
 class PlotParameters:

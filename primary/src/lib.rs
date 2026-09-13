@@ -2,6 +2,7 @@
 #[macro_use]
 mod error;
 mod aggregators;
+mod byzantine;
 mod certificate_waiter;
 mod core;
 mod garbage_collector;

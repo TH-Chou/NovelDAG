@@ -91,6 +91,17 @@ pub async fn broadcast_header(
     sender.broadcast(addresses, Bytes::from(bytes)).await
 }
 
+/// Send a Wahoo header to an explicit subset of primaries.
+pub async fn broadcast_header_to(
+    sender: &mut ReliableSender,
+    addresses: Vec<std::net::SocketAddr>,
+    header: Header,
+) -> Vec<CancelHandler> {
+    let bytes = bincode::serialize(&PrimaryMessage::Header(header))
+        .expect("Failed to serialize Wahoo Header");
+    sender.broadcast(addresses, Bytes::from(bytes)).await
+}
+
 /// Broadcast the PBC delivery certificate. This is Wahoo's PBC third
 /// communication step: recipients verify the certificate before delivering
 /// the proposal into the DAG.

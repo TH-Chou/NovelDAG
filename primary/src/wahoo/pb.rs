@@ -206,7 +206,8 @@ impl Pb {
         self.pending_blocks
             .entry(block.round)
             .or_insert_with(HashMap::new)
-            .insert(block.author, block.clone());
+            .entry(block.author)
+            .or_insert_with(|| block.clone());
     }
 
     fn store_certificate(&mut self, certificate: Certificate) {

@@ -1,4 +1,5 @@
 use crate::aggregators::{WahooQuorum, WahooVotesAggregator};
+use crate::byzantine::ByzantineConfig;
 use crate::messages::{
     Certificate, LeaderLink, LeaderProof, RecpMessage, WahooTag, WahooVotePhase,
 };
@@ -72,6 +73,11 @@ pub struct Node {
     /// buffer). Mirrors the pattern used by `Core::cancel_handlers` /
     /// `Proposer::cancel_handlers` in the rest of Shortfin-family.
     cancel_handlers: Vec<CancelHandler>,
+    byzantine: ByzantineConfig,
+    /// One vote per phase and block digest. Honest replicas keep the first
+    /// digest for each author-round, while Byzantine replicas may endorse
+    /// every distinct equivocation.
+    sent_votes: HashMap<(Round, PublicKey, WahooVotePhase), HashSet<Digest>>,
 
     // ---- DAG state ----
     /// `dag map[round][sender]*Block` — accepted blocks.
@@ -199,6 +205,7 @@ impl Node {
         let recp_threshold = crypto::recp_threshold(node_num);
 
         let pb = Pb::new(name, committee.clone());
+        let byzantine = ByzantineConfig::from_env();
 
         Self {
             name,
@@ -215,6 +222,8 @@ impl Node {
             signature_service,
             sender: ReliableSender::new(),
             cancel_handlers: Vec::new(),
+            byzantine,
+            sent_votes: HashMap::new(),
             dag: HashMap::new(),
             pending_blocks: HashMap::new(),
             blocks_by_digest: HashMap::new(),
@@ -561,6 +570,10 @@ impl Node {
         for action in actions {
             match action {
                 PbAction::SendVote { target, mut vote } => {
+                    let phase = vote.wahoo_phase.expect("PB vote action must carry a phase");
+                    if !self.should_send_vote(vote.round, vote.origin, phase, &vote.id) {
+                        continue;
+                    }
                     // Phase B Step 3d: sign the vote inline and send as
                     // `PrimaryMessage::Vote`, not `SignedWahoo`.
                     vote.signature = self
@@ -607,7 +620,8 @@ impl Node {
         self.epbc_blocks
             .entry(round)
             .or_insert_with(HashMap::new)
-            .insert(sender, block.clone());
+            .entry(sender)
+            .or_insert_with(|| block.clone());
         if !self.check_whether_can_add_to_dag(&block) {
             self.block_query += 1;
             return;
@@ -807,6 +821,10 @@ impl Node {
                 .signature_service
                 .request_signature(block.id.clone())
                 .await;
+            let variants = self
+                .byzantine
+                .signed_variants(&block, &mut self.signature_service)
+                .await;
             if round % 2 == 0 {
                 // Even round: PB phase 1 broadcast.
                 self.pb.broadcast_block(&block);
@@ -847,6 +865,31 @@ impl Node {
                 // Self-deliver to keep our own DAG and Ready logic in sync.
                 self.handle_fast_block(block).await;
             }
+
+            for variant in variants {
+                let targets = self.byzantine.variant_targets(
+                    &self.committee,
+                    &self.name,
+                    variant.equivocation_tag,
+                );
+                let hs =
+                    msg_send::broadcast_header_to(&mut self.sender, targets, variant.clone()).await;
+                self.cancel_handlers.extend(hs);
+                warn!(
+                    "Byzantine equivocation: sent Wahoo variant {} for round {} as {:?}",
+                    variant.equivocation_tag, round, variant.id
+                );
+
+                // Byzantine replicas endorse their own distinct blocks too.
+                // The first block remains the canonical state entry, so this
+                // extra work cannot replace the block that advances the node.
+                if round % 2 == 0 {
+                    let actions = self.pb.handle_block(variant);
+                    self.dispatch_pb_actions(actions).await;
+                } else {
+                    self.handle_fast_block(variant).await;
+                }
+            }
         })
     }
 
@@ -874,6 +917,9 @@ impl Node {
         block_sender: PublicKey,
         phase: WahooVotePhase,
     ) {
+        if !self.should_send_vote(round, block_sender, phase, &block_id) {
+            return;
+        }
         let mut vote = WahooVote {
             id: block_id,
             round,
@@ -894,6 +940,27 @@ impl Node {
                 msg_send::send_vote(&mut self.sender, &self.committee, &block_sender, vote).await;
             self.cancel_handlers.push(h);
         }
+    }
+
+    fn should_send_vote(
+        &mut self,
+        round: Round,
+        origin: PublicKey,
+        phase: WahooVotePhase,
+        block_id: &Digest,
+    ) -> bool {
+        let seen = self
+            .sent_votes
+            .entry((round, origin, phase))
+            .or_insert_with(HashSet::new);
+        if seen.contains(block_id) {
+            return false;
+        }
+        if !seen.is_empty() && !self.byzantine.allows_multiple_votes() {
+            return false;
+        }
+        seen.insert(block_id.clone());
+        true
     }
 
     async fn broadcast_epbc_certificate(&mut self, certificate: Certificate) {
@@ -1623,6 +1690,38 @@ mod tests {
         assert_eq!(node.batch_size, 4);
         assert_eq!(node.chain.round, 0);
         assert!(node.dag.is_empty());
+    }
+
+    #[tokio::test]
+    async fn honest_wahoo_votes_once_but_byzantine_votes_for_each_digest() {
+        let (publics, mut secrets, committee) = make_test_committee(4);
+        let sig_service = SignatureService::new(secrets.remove(0));
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            publics[0],
+            committee,
+            ConsensusProtocol::RoundRobin,
+            sig_service,
+            1,
+            32,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+        let first = Digest([1; 32]);
+        let second = Digest([2; 32]);
+        assert!(node.should_send_vote(3, publics[1], WahooVotePhase::Tf, &first));
+        assert!(!node.should_send_vote(3, publics[1], WahooVotePhase::Tf, &second));
+        assert!(node.should_send_vote(3, publics[1], WahooVotePhase::Ts1, &second));
+
+        node.byzantine = ByzantineConfig::equivocation_for_test();
+        assert!(node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &first));
+        assert!(node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &second));
+        assert!(!node.should_send_vote(5, publics[1], WahooVotePhase::Tf, &second));
     }
 
     #[tokio::test]
