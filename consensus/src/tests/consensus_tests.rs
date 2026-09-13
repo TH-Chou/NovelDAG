@@ -281,7 +281,7 @@ async fn commit_one() {
 }
 
 // Rounds 1..=8 with one dead non-leader node. Two wave boundaries fire:
-// r=4 → leader at r1, r=8 → leader at r5.
+// r=4 -> the first leader at r1, r=8 -> the second leader at r5.
 #[tokio::test]
 async fn dead_node() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -325,9 +325,9 @@ async fn dead_node() {
     assert!(first.round() <= second.round());
 }
 
-// Leader (keys[0], coin=0 in tests) misses round 3, breaking the QC chain for
-// the wave ending at r=4 (b1 = leader@r3 is absent). The next wave ends at
-// r=8 with leader at r=5; the full b3/b2/b1 chain is present, so we commit.
+// The first leader misses round 3, breaking the QC chain for the wave ending
+// at r=4 (b1 = leader@r3 is absent). The next wave uses the second leader and
+// ends at r=8; its full b3/b2/b1 chain is present, so we commit.
 #[tokio::test]
 async fn not_enough_support() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();
@@ -385,9 +385,8 @@ async fn not_enough_support() {
     );
 }
 
-// Leader absent for rounds 1..=2, present from round 3 onwards. Wave at r=4
-// finds leader@r1 missing → skip. Wave at r=8 finds leader@r5 with a full
-// chain → commit.
+// The first leader is absent for rounds 1..=2 and present from round 3 onward.
+// Wave r=4 skips it; wave r=8 elects the second leader with a full chain.
 #[tokio::test]
 async fn missing_leader() {
     let mut keys: Vec<_> = keys().into_iter().map(|(x, _)| x).collect();

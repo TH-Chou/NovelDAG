@@ -178,15 +178,15 @@ impl Consensus {
     // ---------------- Shared helpers (used by multiple protocol modules) ----------------
 
     pub(crate) fn round_robin_coin(&self, round: Round) -> Round {
-        #[cfg(test)]
-        {
-            let _ = round;
-            0
-        }
-        #[cfg(not(test))]
-        {
-            self.coin_committee.round_robin(round)
-        }
+        let election_slot = match self.dag_protocol {
+            DagProtocol::Shortfin => coin::round_robin_slot(round, 1, 4),
+            DagProtocol::Narwhal | DagProtocol::Bullshark => coin::round_robin_slot(round, 2, 2),
+            DagProtocol::MahiMahi | DagProtocol::MahiMahi4 | DagProtocol::MahiMahi5 => {
+                coin::round_robin_slot(round, 1, 1)
+            }
+            DagProtocol::Wahoo => round,
+        };
+        self.coin_committee.round_robin(election_slot)
     }
 
     pub(crate) fn pseudo_random_coin(&self, round: Round) -> Round {

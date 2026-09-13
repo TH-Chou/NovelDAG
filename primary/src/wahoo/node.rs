@@ -1162,7 +1162,9 @@ impl Node {
             return;
         }
         let value = match self.consensus_protocol {
-            ConsensusProtocol::RoundRobin => self.coin_committee.round_robin(round),
+            ConsensusProtocol::RoundRobin => self
+                .coin_committee
+                .round_robin(coin::round_robin_slot(round, 2, 2)),
             ConsensusProtocol::PseudoRandom => self.coin_committee.pseudo_random(round),
             ConsensusProtocol::CommonCoin => {
                 let shares: Vec<(PublicKey, Vec<u8>)> =
@@ -1747,7 +1749,9 @@ mod tests {
             }
 
             let expected_value = match protocol {
-                ConsensusProtocol::RoundRobin => schedule.round_robin(round),
+                ConsensusProtocol::RoundRobin => {
+                    schedule.round_robin(coin::round_robin_slot(round, 2, 2))
+                }
                 ConsensusProtocol::PseudoRandom => schedule.pseudo_random(round),
                 ConsensusProtocol::CommonCoin => {
                     let shares = node

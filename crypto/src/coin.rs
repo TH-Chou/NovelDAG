@@ -30,8 +30,8 @@ impl CoinCommittee {
         self.authorities.as_slice()
     }
 
-    pub fn round_robin(&self, round: u64) -> u64 {
-        round
+    pub fn round_robin(&self, election_slot: u64) -> u64 {
+        election_slot
     }
 
     /// Deterministic, communication-free pseudorandom value. The committee is
@@ -55,6 +55,22 @@ impl CoinCommittee {
     pub fn leader(&self, value: u64, offset: usize) -> PublicKey {
         self.authorities[(value as usize + offset) % self.authorities.len()]
     }
+}
+
+/// Convert a protocol round into a zero-based round-robin election slot.
+///
+/// Protocols elect leaders at different round strides. Using the physical DAG
+/// round directly can repeatedly select only a subset of a committee when the
+/// stride and committee size share a divisor.
+pub fn round_robin_slot(round: u64, first_round: u64, stride: u64) -> u64 {
+    assert!(stride > 0, "round-robin stride must be positive");
+    assert!(round >= first_round, "round precedes first leader round");
+    debug_assert_eq!(
+        (round - first_round) % stride,
+        0,
+        "round is not a leader round for this schedule"
+    );
+    (round - first_round) / stride
 }
 
 /// Shared threshold-coin backend used by every protocol.

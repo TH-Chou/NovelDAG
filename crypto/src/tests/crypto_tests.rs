@@ -246,3 +246,20 @@ fn pseudo_random_coin_is_order_independent() {
         second.leader(second.pseudo_random(9), 0)
     );
 }
+
+#[test]
+fn round_robin_slots_cover_the_committee_for_strided_protocol_rounds() {
+    let authorities: Vec<_> = keys().into_iter().map(|(public, _)| public).collect();
+    let schedule = coin::CoinCommittee::new(&authorities);
+
+    for (first_round, stride) in [(1, 4), (2, 2), (1, 1)] {
+        let leaders = (0..authorities.len())
+            .map(|index| {
+                let round = first_round + index as u64 * stride;
+                let slot = coin::round_robin_slot(round, first_round, stride);
+                schedule.leader(schedule.round_robin(slot), 0)
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(leaders.len(), authorities.len());
+    }
+}

@@ -256,15 +256,11 @@ impl Proposer {
     }
 
     fn round_robin_coin(&self, round: Round) -> Round {
-        #[cfg(test)]
-        {
-            let _ = round;
-            0
-        }
-        #[cfg(not(test))]
-        {
-            self.coin_committee.round_robin(round)
-        }
+        let election_slot = match self.dag_protocol {
+            DagProtocol::Bullshark => coin::round_robin_slot(round, 2, 2),
+            _ => round,
+        };
+        self.coin_committee.round_robin(election_slot)
     }
 
     fn threshold_coin_from_parents(&self) -> Option<Round> {
