@@ -45,6 +45,13 @@ Summarized CSV files are under:
 paperdata/csv/
 ```
 
+The final four-protocol pre-cloud validation data from 2026-09-14 is stored in
+`benchmark/csv_plots/` with the `local_precloud_` prefix. It contains three
+60-second wide-load matrices, three representative 200 ms RTT matrices, and a
+three-run Wahoo equivocation check. See
+`docs/local-precloud-validation-20260914.md` for workload semantics, excluded
+legacy data, and interpretation.
+
 Important local files:
 
 | File | Meaning |

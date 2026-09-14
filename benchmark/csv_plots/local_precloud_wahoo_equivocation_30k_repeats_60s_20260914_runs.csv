@@ -1,0 +1,4 @@
+"sample","run","protocol","faults","fault_mode","delay_ms","rate","duration_s","consensus_tps","consensus_latency_ms","end_to_end_tps","end_to_end_latency_ms"
+"wide-matrix","1","wahoo","1","equivocation","0","30000","60","15171.745632","87.047563","15122.647779","988.402655"
+"liveness-recheck","1","wahoo","1","equivocation","0","30000","60","22541.878640","67.275571","22473.819457","2087.141577"
+"repeat-3","1","wahoo","1","equivocation","0","30000","60","22548.632854","94.080262","22503.150662","1164.655554"
