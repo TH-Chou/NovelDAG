@@ -1,0 +1,5 @@
+protocol,validity,requested_duration_s,observed_commit_span_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,historical_consensus_tps,historical_consensus_latency_ms,historical_end_to_end_tps,historical_end_to_end_latency_ms,end_to_end_tps_delta_pct,end_to_end_latency_delta_pct,notes
+narwhal,valid,50,52,100410,4864,96498,5801,97883,4820,93928,5795,2.74,0.10,full commit window and close historical reproduction
+shortfin,invalid_stall,50,33,113359,4590,108517,5899,110147,3117,105616,4088,2.75,44.30,stalled around rounds 57-58; do not use performance values
+mahi_mahi,valid,50,54,111145,4720,107333,5682,,,,,,,full commit window; no historical baseline
+wahoo,invalid_zero_commit,50,0,0,0,0,0,118114,2046,117243,2859,,,EPBC Ts1/Ts2 ran but ordering stalled at round 5 with 6/7
