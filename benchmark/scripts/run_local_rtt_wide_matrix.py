@@ -63,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cooldown-seconds", type=int, default=5)
     parser.add_argument("--benchmark-dir", type=Path, default=benchmark_dir)
     parser.add_argument("--fresh", action="store_true", help="Ignore complete line CSVs")
+    parser.add_argument(
+        "--postcheck-only",
+        action="store_true",
+        help="Recheck completed mode CSVs with strict shape rules and retry flagged points",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -161,7 +166,7 @@ def detect_anomalies(
         prev_tps = as_float(prev_row, "end_to_end_tps")
         tps = as_float(row, "end_to_end_tps")
         next_tps = as_float(next_row, "end_to_end_tps")
-        if tps < 0.60 * min(prev_tps, next_tps):
+        if tps < 0.75 * min(prev_tps, next_tps):
             issues[current].append("isolated throughput trough")
 
         prev_latency = as_float(prev_row, "end_to_end_latency_ms")
@@ -169,6 +174,13 @@ def detect_anomalies(
         next_latency = as_float(next_row, "end_to_end_latency_ms")
         if latency > 3_000 and latency > 2.50 * max(prev_latency, next_latency):
             issues[current].append("isolated latency spike")
+
+    if len(ordered) >= 2:
+        previous, current = ordered[-2], ordered[-1]
+        previous_tps = as_float(by_rate[previous], "end_to_end_tps")
+        current_tps = as_float(by_rate[current], "end_to_end_tps")
+        if current_tps < 0.65 * previous_tps:
+            issues[current].append("terminal throughput collapse")
 
     return dict(issues)
 
@@ -437,6 +449,92 @@ class MatrixRunner:
         write_csv(path, rows, fields)
         return path
 
+    def postcheck(self, modes: list[str], protocols: list[str], rates: list[int]) -> None:
+        if self.manifest_path.exists():
+            self.manifest = json.loads(self.manifest_path.read_text())
+        all_attempts_path = self.csv_dir / f"{self.args.session}_attempts.csv"
+        all_attempts = read_csv(all_attempts_path)
+        postcheck_manifest = {}
+
+        for mode in modes:
+            mode_path = self.csv_dir / f"{self.args.session}_{mode}_runs.csv"
+            mode_rows = read_csv(mode_path)
+            if len(mode_rows) != len(protocols) * len(rates):
+                raise MatrixError(
+                    f"Postcheck requires a complete {mode} CSV: "
+                    f"expected {len(protocols) * len(rates)} rows, found {len(mode_rows)}"
+                )
+
+            for protocol in protocols:
+                protocol_rows = [row for row in mode_rows if row.get("protocol") == protocol]
+                issues = detect_anomalies(protocol_rows, mode, rates)
+                if not issues:
+                    self.log(f"postcheck accepted: {mode}/{protocol}")
+                    continue
+
+                description = ", ".join(
+                    f"{rate}:{'|'.join(reasons)}" for rate, reasons in sorted(issues.items())
+                )
+                self.log(f"postcheck anomalies: {mode}/{protocol}: {description}")
+                postcheck_manifest[f"{mode}/{protocol}"] = {
+                    str(rate): reasons for rate, reasons in issues.items()
+                }
+
+                for rate, reasons in sorted(issues.items()):
+                    base = next(
+                        (row for row in protocol_rows if row.get("rate") == str(rate)),
+                        None,
+                    )
+                    candidates = []
+                    if base is not None:
+                        candidates.append(("postcheck-base", base))
+                    candidates.extend(
+                        ("postcheck-retry", row)
+                        for row in self.retry_rate(mode, protocol, rate)
+                    )
+                    usable = [(source, row) for source, row in candidates if row_is_usable(row)]
+                    if not usable:
+                        raise MatrixError(
+                            f"Postcheck found no usable result for {mode}/{protocol} rate={rate}"
+                        )
+                    usable.sort(key=lambda item: as_float(item[1], "end_to_end_tps"))
+                    source, chosen_row = usable[len(usable) // 2]
+                    replacement = chosen_row.copy()
+                    replacement["selection"] = source
+                    replacement["anomaly_reason"] = "; ".join(reasons)
+
+                    mode_rows = [
+                        replacement
+                        if row.get("protocol") == protocol and row.get("rate") == str(rate)
+                        else row
+                        for row in mode_rows
+                    ]
+                    protocol_rows = [
+                        replacement if row.get("rate") == str(rate) else row
+                        for row in protocol_rows
+                    ]
+
+                    for attempt_source, row in candidates:
+                        attempt = row.copy()
+                        attempt["attempt_source"] = attempt_source
+                        attempt["selected"] = "yes" if row is chosen_row else "no"
+                        attempt["anomaly_reason"] = "; ".join(reasons)
+                        all_attempts.append(attempt)
+
+            self.write_mode_csv(mode, mode_rows)
+
+        write_csv(
+            all_attempts_path,
+            all_attempts,
+            CSV_FIELDS + ("attempt_source", "selected", "anomaly_reason"),
+        )
+        self.manifest["postcheck"] = {
+            "completed_at": utc_now(),
+            "anomalies": postcheck_manifest,
+        }
+        self.save_manifest()
+        self.log(f"postcheck complete: {len(postcheck_manifest)} lines required retries")
+
     def run(self, modes: list[str], protocols: list[str], rates: list[int]) -> None:
         self.result_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -521,7 +619,10 @@ def main() -> None:
 
     try:
         runner.configure_netem()
-        runner.run(args.modes, args.protocols, args.rates)
+        if args.postcheck_only:
+            runner.postcheck(args.modes, args.protocols, args.rates)
+        else:
+            runner.run(args.modes, args.protocols, args.rates)
     except Exception:
         runner.manifest["status"] = "failed"
         runner.manifest["failed_at"] = utc_now()
