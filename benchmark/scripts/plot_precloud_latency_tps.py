@@ -129,6 +129,77 @@ def plot_mode(input_dir, output_dir, mode):
     return stem
 
 
+def plot_end_to_end_combined(input_dir, output_dir):
+    fig, axes = plt.subplots(1, 3, figsize=(14.8, 4.4), sharex=True, sharey=True)
+    panel_labels = {
+        "normal": "(a) Normal",
+        "silence": "(b) Silence",
+        "equivocation": "(c) Equivocation",
+    }
+
+    for ax, mode in zip(axes, MODES):
+        grouped = load_mode(input_dir, mode)
+        for protocol, style in PROTOCOLS.items():
+            rows = grouped[protocol]
+            throughput = [float(row["end_to_end_tps"]) for row in rows]
+            latency = [float(row["end_to_end_latency_ms"]) / 1_000 for row in rows]
+            ax.plot(
+                throughput,
+                latency,
+                label=style["label"],
+                color=style["color"],
+                marker=style["marker"],
+                linestyle=style["linestyle"],
+                linewidth=1.7,
+                markersize=5.3,
+                markeredgecolor="white",
+                markeredgewidth=0.6,
+                zorder=3,
+            )
+
+        ax.set_xlim(0, 240_000)
+        ax.set_ylim(0, 15.0)
+        ax.xaxis.set_major_locator(MultipleLocator(60_000))
+        ax.xaxis.set_major_formatter(FuncFormatter(thousands))
+        ax.yaxis.set_major_locator(MultipleLocator(2.5))
+        ax.grid(axis="both", color="#D9D9D9", linewidth=0.6, alpha=0.8)
+        ax.set_axisbelow(True)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.text(
+            0.03,
+            0.96,
+            panel_labels[mode],
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=4,
+        frameon=False,
+        handlelength=2.2,
+        columnspacing=1.5,
+    )
+    fig.supxlabel("End-to-end throughput (tx/s)", y=0.02)
+    fig.supylabel("End-to-end latency (s)", x=0.015)
+    fig.subplots_adjust(left=0.065, right=0.995, bottom=0.16, top=0.85, wspace=0.12)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = output_dir / "local_precloud_rtt0_end_to_end_throughput_latency"
+    fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight")
+    fig.savefig(stem.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return stem
+
+
 def main():
     args = parse_args()
     plt.rcParams.update(
@@ -147,6 +218,8 @@ def main():
     for mode in MODES:
         stem = plot_mode(args.input_dir, args.output_dir, mode)
         print(f"Saved {stem}.pdf and {stem}.png")
+    stem = plot_end_to_end_combined(args.input_dir, args.output_dir)
+    print(f"Saved {stem}.pdf and {stem}.png")
 
 
 if __name__ == "__main__":

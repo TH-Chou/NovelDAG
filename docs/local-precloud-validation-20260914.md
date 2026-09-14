@@ -171,6 +171,7 @@ increasing offered-rate order. All three figures use the same linear axes.
 - `benchmark/plots/precloud_20260914/local_precloud_normal_throughput_latency.pdf`
 - `benchmark/plots/precloud_20260914/local_precloud_silence_throughput_latency.pdf`
 - `benchmark/plots/precloud_20260914/local_precloud_equivocation_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_rtt0_end_to_end_throughput_latency.pdf`
 
 High-resolution PNG versions are stored beside the vector PDFs. The figures
 can be regenerated with `benchmark/scripts/plot_precloud_latency_tps.py`.
