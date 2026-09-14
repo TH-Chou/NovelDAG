@@ -1,0 +1,5 @@
+protocol,validity,requested_duration_s,observed_commit_span_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,archived_consensus_tps,archived_consensus_latency_ms,archived_end_to_end_tps,archived_end_to_end_latency_ms,consensus_tps_delta_pct,consensus_latency_delta_pct,end_to_end_tps_delta_pct,end_to_end_latency_delta_pct,notes
+narwhal,valid,50,54,98564,5417,95035,6349,86573,5845,86573,5845,13.85,-7.32,9.77,8.62,complete window
+shortfin,valid_with_replica_lag,50,54,115126,4723,110697,5719,114612,4090,114612,4090,0.45,15.48,-3.42,39.83,seven replicas commit through round 75 and three through round 63
+mahi_mahi,valid,50,54,111712,3980,107629,4933,,,,,,,,,complete window; no archived paper baseline
+wahoo,diagnostic_late_stall,50,39,112470,1866,106587,2692,115172,2490,115172,2490,-2.35,-25.06,-7.45,8.11,all replicas stall at round 101 with move_count 6/7
