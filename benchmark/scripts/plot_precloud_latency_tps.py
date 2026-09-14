@@ -37,6 +37,7 @@ PROTOCOLS = {
 }
 
 MODES = ("normal", "silence", "equivocation")
+DEFAULT_INPUT_TEMPLATE = "local_precloud_{mode}_rtt0_60s_20260914_runs.csv"
 
 
 def parse_args():
@@ -53,11 +54,15 @@ def parse_args():
         type=Path,
         default=benchmark_dir / "plots" / "precloud_20260914",
     )
+    parser.add_argument(
+        "--rtt-wide-session",
+        help="Plot separate end-to-end figures from <session>_<mode>_runs.csv",
+    )
     return parser.parse_args()
 
 
-def load_mode(input_dir, mode):
-    path = input_dir / f"local_precloud_{mode}_rtt0_60s_20260914_runs.csv"
+def load_mode(input_dir, mode, input_template=DEFAULT_INPUT_TEMPLATE):
+    path = input_dir / input_template.format(mode=mode)
     with path.open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
 
@@ -73,6 +78,56 @@ def load_mode(input_dir, mode):
             raise ValueError(f"{path}: non-positive consensus TPS for {protocol}")
         grouped[protocol] = values
     return grouped
+
+
+def plot_end_to_end_mode(input_dir, output_dir, session, mode):
+    grouped = load_mode(input_dir, mode, f"{session}_{{mode}}_runs.csv")
+    fig, ax = plt.subplots(figsize=(6.6, 4.3), constrained_layout=True)
+
+    for protocol, style in PROTOCOLS.items():
+        rows = grouped[protocol]
+        throughput = [float(row["end_to_end_tps"]) for row in rows]
+        latency = [float(row["end_to_end_latency_ms"]) / 1_000 for row in rows]
+        ax.plot(
+            throughput,
+            latency,
+            label=style["label"],
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.8,
+            markersize=6.0,
+            markeredgecolor="white",
+            markeredgewidth=0.7,
+            zorder=3,
+        )
+
+    ax.set_xlim(0, 160_000)
+    ax.set_ylim(0, 12.0)
+    ax.set_xlabel("End-to-end throughput (tx/s)")
+    ax.set_ylabel("End-to-end latency (s)")
+    ax.xaxis.set_major_locator(MultipleLocator(20_000))
+    ax.xaxis.set_major_formatter(FuncFormatter(thousands))
+    ax.yaxis.set_major_locator(MultipleLocator(1.0))
+    ax.grid(axis="both", color="#D9D9D9", linewidth=0.6, alpha=0.8)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=4,
+        frameon=False,
+        handlelength=2.2,
+        columnspacing=1.3,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = output_dir / f"{session}_{mode}_end_to_end_throughput_latency"
+    fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight")
+    fig.savefig(stem.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return stem
 
 
 def thousands(value, _position):
@@ -215,6 +270,17 @@ def main():
             "ps.fonttype": 42,
         }
     )
+    if args.rtt_wide_session:
+        for mode in MODES:
+            stem = plot_end_to_end_mode(
+                args.input_dir,
+                args.output_dir,
+                args.rtt_wide_session,
+                mode,
+            )
+            print(f"Saved {stem}.pdf and {stem}.png")
+        return
+
     for mode in MODES:
         stem = plot_mode(args.input_dir, args.output_dir, mode)
         print(f"Saved {stem}.pdf and {stem}.png")

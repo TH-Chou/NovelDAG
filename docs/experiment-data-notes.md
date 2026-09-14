@@ -52,6 +52,12 @@ three-run Wahoo equivocation check. See
 `docs/local-precloud-validation-20260914.md` for workload semantics, excluded
 legacy data, and interpretation.
 
+The complete 200 ms RTT rerun uses the
+`local_precloud_rtt200_wide_60s_20260914_` prefix. Its three mode files contain
+96 selected points; the companion `attempts.csv` retains all 12 targeted
+retries. The run manifest and automation log are under
+`benchmark/results/local_precloud_rtt200_wide_60s_20260914/`.
+
 Important local files:
 
 | File | Meaning |

@@ -1,0 +1,58 @@
+[2026-09-14T11:40:41] netem active: one-way=100 ms, ping RTT=200.4 ms
+[2026-09-14T11:40:41] start line: normal/shortfin; rates=[15000, 5000, 300000, 30000, 60000, 120000, 180000, 240000]
+[2026-09-14T11:49:39] finish line: normal/shortfin; rows=8
+[2026-09-14T11:49:39] line accepted without retries: normal/shortfin
+[2026-09-14T11:49:44] start line: normal/narwhal; rates=[240000, 120000, 60000, 30000, 5000, 300000, 180000, 15000]
+[2026-09-14T11:58:09] finish line: normal/narwhal; rows=7
+[2026-09-14T11:58:09] line anomalies: normal/narwhal: 30000:unexpected low-load utilization, 120000:missing result
+[2026-09-14T11:58:09] retry anomaly: normal/narwhal rate=30000; runs=2
+[2026-09-14T12:00:15] retry anomaly: normal/narwhal rate=120000; runs=2
+[2026-09-14T12:02:28] start line: normal/mahi_mahi; rates=[30000, 240000, 120000, 300000, 15000, 60000, 180000, 5000]
+[2026-09-14T12:11:38] finish line: normal/mahi_mahi; rows=8
+[2026-09-14T12:11:38] line accepted without retries: normal/mahi_mahi
+[2026-09-14T12:11:43] start line: normal/wahoo; rates=[60000, 120000, 5000, 15000, 240000, 300000, 180000, 30000]
+[2026-09-14T12:20:09] finish line: normal/wahoo; rows=8
+[2026-09-14T12:20:09] line accepted without retries: normal/wahoo
+[2026-09-14T12:20:14] start line: silence/shortfin; rates=[60000, 180000, 30000, 5000, 300000, 15000, 240000, 120000]
+[2026-09-14T12:28:38] finish line: silence/shortfin; rows=8
+[2026-09-14T12:28:38] line accepted without retries: silence/shortfin
+[2026-09-14T12:28:43] start line: silence/narwhal; rates=[5000, 60000, 120000, 180000, 300000, 30000, 240000, 15000]
+[2026-09-14T12:37:08] finish line: silence/narwhal; rows=8
+[2026-09-14T12:37:08] line accepted without retries: silence/narwhal
+[2026-09-14T12:37:13] start line: silence/mahi_mahi; rates=[300000, 240000, 5000, 30000, 180000, 60000, 15000, 120000]
+[2026-09-14T12:45:38] finish line: silence/mahi_mahi; rows=8
+[2026-09-14T12:45:38] line accepted without retries: silence/mahi_mahi
+[2026-09-14T12:45:43] start line: silence/wahoo; rates=[180000, 300000, 30000, 120000, 240000, 15000, 5000, 60000]
+[2026-09-14T12:54:07] finish line: silence/wahoo; rows=8
+[2026-09-14T12:54:07] line accepted without retries: silence/wahoo
+[2026-09-14T12:54:12] start line: equivocation/shortfin; rates=[15000, 60000, 30000, 300000, 240000, 120000, 5000, 180000]
+[2026-09-14T13:02:38] finish line: equivocation/shortfin; rows=8
+[2026-09-14T13:02:38] line anomalies: equivocation/shortfin: 120000:unexpected low-load utilization
+[2026-09-14T13:02:38] retry anomaly: equivocation/shortfin rate=120000; runs=2
+[2026-09-14T13:04:50] start line: equivocation/narwhal; rates=[5000, 120000, 60000, 240000, 300000, 30000, 15000, 180000]
+[2026-09-14T13:13:17] finish line: equivocation/narwhal; rows=8
+[2026-09-14T13:13:17] line anomalies: equivocation/narwhal: 30000:unexpected low-load utilization
+[2026-09-14T13:13:17] retry anomaly: equivocation/narwhal rate=30000; runs=2
+[2026-09-14T13:15:29] start line: equivocation/mahi_mahi; rates=[60000, 300000, 30000, 15000, 120000, 180000, 240000, 5000]
+[2026-09-14T13:23:55] finish line: equivocation/mahi_mahi; rows=8
+[2026-09-14T13:23:55] line accepted without retries: equivocation/mahi_mahi
+[2026-09-14T13:24:00] start line: equivocation/wahoo; rates=[240000, 300000, 30000, 60000, 5000, 120000, 15000, 180000]
+[2026-09-14T13:32:25] finish line: equivocation/wahoo; rows=8
+[2026-09-14T13:32:25] line accepted without retries: equivocation/wahoo
+[2026-09-14T13:32:25] matrix complete: 12 lines, 96 selected points
+[2026-09-14T13:34:43] netem active: one-way=100 ms, ping RTT=206.5 ms
+[2026-09-14T13:34:43] postcheck accepted: normal/shortfin
+[2026-09-14T13:34:43] postcheck accepted: normal/narwhal
+[2026-09-14T13:34:43] postcheck anomalies: normal/mahi_mahi: 240000:isolated throughput trough
+[2026-09-14T13:34:43] retry anomaly: normal/mahi_mahi rate=240000; runs=2
+[2026-09-14T13:36:51] postcheck accepted: normal/wahoo
+[2026-09-14T13:36:51] postcheck accepted: silence/shortfin
+[2026-09-14T13:36:51] postcheck accepted: silence/narwhal
+[2026-09-14T13:36:51] postcheck accepted: silence/mahi_mahi
+[2026-09-14T13:36:51] postcheck anomalies: silence/wahoo: 300000:terminal throughput collapse
+[2026-09-14T13:36:51] retry anomaly: silence/wahoo rate=300000; runs=2
+[2026-09-14T13:38:59] postcheck accepted: equivocation/shortfin
+[2026-09-14T13:38:59] postcheck accepted: equivocation/narwhal
+[2026-09-14T13:38:59] postcheck accepted: equivocation/mahi_mahi
+[2026-09-14T13:38:59] postcheck accepted: equivocation/wahoo
+[2026-09-14T13:38:59] postcheck complete: 2 lines required retries

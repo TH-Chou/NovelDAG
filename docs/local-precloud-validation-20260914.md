@@ -17,6 +17,8 @@
 - Each wide-sweep point is one 60-second run with no injected delay.
 - A representative 30k point was also run with 100 ms one-way loopback delay,
   which is approximately 200 ms RTT.
+- A second complete wide sweep used the same 100 ms one-way delay at every
+  point. It contains 96 selected results across all protocols and modes.
 - Protocol and rate order was permuted between groups. Fresh keys and databases
   were generated for each run.
 - Long soak tests were intentionally excluded from this pass.
@@ -88,6 +90,70 @@ a one-run localhost result should not be treated as a precise estimate.
 
 The external netem rule was removed after the matrix. The curated CSV records
 `delay_ms=100`, which is the one-way setting; the filenames state RTT 200.
+
+## Complete Wide Sweep, Approximately 200 ms RTT
+
+The automated runner executed one complete protocol/mode curve before
+inspection, randomized the rate order within each curve, and retained the raw
+attempts. It ran 96 planned 60-second points and 12 targeted retries. The
+initial ping measured 200.4 ms RTT and the postcheck measured 206.5 ms. The
+matrix plus strict postcheck took approximately 1 hour 58 minutes.
+
+At 120k offered TPS, the selected results are:
+
+| Mode | Protocol | E2E TPS | E2E latency | Consensus TPS | Consensus latency |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Normal | Shortfin | 114.34k | 4.31 s | 117.86k | 2.99 s |
+| Normal | Narwhal/Tusk | 93.54k | 6.10 s | 96.33k | 4.85 s |
+| Normal | Mahi-Mahi | 109.10k | 5.60 s | 111.92k | 4.38 s |
+| Normal | Wahoo | 114.88k | 4.19 s | 118.07k | 1.95 s |
+| Silence | Shortfin | 107.49k | 5.22 s | 110.62k | 3.13 s |
+| Silence | Narwhal/Tusk | 101.09k | 6.53 s | 104.08k | 3.93 s |
+| Silence | Mahi-Mahi | 95.52k | 6.66 s | 98.30k | 4.04 s |
+| Silence | Wahoo | 101.36k | 5.98 s | 103.79k | 2.45 s |
+| Equivocation | Shortfin | 85.49k | 4.67 s | 88.50k | 3.40 s |
+| Equivocation | Narwhal/Tusk | 66.47k | 6.02 s | 68.50k | 4.79 s |
+| Equivocation | Mahi-Mahi | 83.53k | 8.48 s | 85.65k | 7.24 s |
+| Equivocation | Wahoo | 87.11k | 2.85 s | 89.50k | 1.72 s |
+
+The peak end-to-end throughput selected from each eight-point curve is:
+
+| Mode | Protocol | Offered rate at peak | Peak E2E TPS | E2E latency |
+| --- | --- | ---: | ---: | ---: |
+| Normal | Shortfin | 240k | 141.84k | 4.55 s |
+| Normal | Narwhal/Tusk | 180k | 117.68k | 5.71 s |
+| Normal | Mahi-Mahi | 180k | 135.08k | 5.29 s |
+| Normal | Wahoo | 180k | 141.49k | 3.77 s |
+| Silence | Shortfin | 120k | 107.49k | 5.22 s |
+| Silence | Narwhal/Tusk | 300k | 102.68k | 6.22 s |
+| Silence | Mahi-Mahi | 240k | 98.01k | 7.34 s |
+| Silence | Wahoo | 240k | 104.12k | 5.11 s |
+| Equivocation | Shortfin | 180k | 104.59k | 4.82 s |
+| Equivocation | Narwhal/Tusk | 240k | 87.00k | 6.45 s |
+| Equivocation | Mahi-Mahi | 180k | 103.60k | 7.05 s |
+| Equivocation | Wahoo | 300k | 104.64k | 3.18 s |
+
+The first-pass checks retried normal Narwhal at 30k and 120k,
+equivocation Shortfin at 120k, and equivocation Narwhal at 30k. The strict
+cross-curve postcheck then replaced a normal Mahi-Mahi 240k trough and a
+silence Wahoo 300k collapse with the median of the original and two fresh
+runs. A second strict scan found no remaining isolated trough, latency spike,
+terminal collapse, missing result, or cap violation.
+
+The 200 ms curves expose the saturation knees more clearly than the
+zero-delay curves. Normal Shortfin and Wahoo peak near 142k E2E TPS,
+Mahi-Mahi near 135k, and Narwhal/Tusk near 118k. Under equivocation, Shortfin,
+Mahi-Mahi, and Wahoo all peak near 104k useful E2E TPS, while Narwhal/Tusk
+peaks near 87k. Mahi-Mahi's main attack penalty is latency: at 120k offered
+load it rises from 5.60 seconds in normal mode to 8.48 seconds under
+equivocation. Shortfin rises only from 4.31 to 4.67 seconds.
+
+Wahoo's 200 ms consensus latency is 1.7-2.5 seconds around moderate load, not
+the implausibly small zero-delay value. Its fast path remains the lowest
+latency path, while the end-to-end metric still includes batching and client
+queueing. Equivocation also reduces useful offered load to 75%, so Wahoo's
+lower attack latency must not be interpreted as the attack accelerating the
+protocol.
 
 ## Wide-Sweep Peaks
 
@@ -161,6 +227,10 @@ faster than their no-fault controls.
 - `benchmark/csv_plots/local_precloud_silence_rtt200_30k_60s_20260914_runs.csv`
 - `benchmark/csv_plots/local_precloud_equivocation_rtt200_30k_60s_20260914_runs.csv`
 - `benchmark/csv_plots/local_precloud_wahoo_equivocation_30k_repeats_60s_20260914_runs.csv`
+- `benchmark/csv_plots/local_precloud_rtt200_wide_60s_20260914_normal_runs.csv`
+- `benchmark/csv_plots/local_precloud_rtt200_wide_60s_20260914_silence_runs.csv`
+- `benchmark/csv_plots/local_precloud_rtt200_wide_60s_20260914_equivocation_runs.csv`
+- `benchmark/csv_plots/local_precloud_rtt200_wide_60s_20260914_attempts.csv`
 
 ## Figures
 
@@ -172,6 +242,9 @@ increasing offered-rate order. All three figures use the same linear axes.
 - `benchmark/plots/precloud_20260914/local_precloud_silence_throughput_latency.pdf`
 - `benchmark/plots/precloud_20260914/local_precloud_equivocation_throughput_latency.pdf`
 - `benchmark/plots/precloud_20260914/local_precloud_rtt0_end_to_end_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_rtt200_wide_60s_20260914_normal_end_to_end_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_rtt200_wide_60s_20260914_silence_end_to_end_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_rtt200_wide_60s_20260914_equivocation_end_to_end_throughput_latency.pdf`
 
 High-resolution PNG versions are stored beside the vector PDFs. The figures
 can be regenerated with `benchmark/scripts/plot_precloud_latency_tps.py`.

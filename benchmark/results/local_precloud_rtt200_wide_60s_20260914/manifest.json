@@ -1,0 +1,127 @@
+{
+  "attempts_csv": "/root/noveldag-bench-20260913/benchmark/csv_plots/local_precloud_rtt200_wide_60s_20260914_attempts.csv",
+  "completed_at": "2026-09-14T05:32:25+00:00",
+  "duration_s": 60,
+  "expected_rtt_ms": 200,
+  "git_commit": "3b929a18eab1c7eb153eb503c523ba4fae756059",
+  "lines": {
+    "equivocation/mahi_mahi": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T05:23:55+00:00",
+      "selected_rows": 8
+    },
+    "equivocation/narwhal": {
+      "anomalies": {
+        "30000": [
+          "unexpected low-load utilization"
+        ]
+      },
+      "completed_at": "2026-09-14T05:15:24+00:00",
+      "selected_rows": 8
+    },
+    "equivocation/shortfin": {
+      "anomalies": {
+        "120000": [
+          "unexpected low-load utilization"
+        ]
+      },
+      "completed_at": "2026-09-14T05:04:45+00:00",
+      "selected_rows": 8
+    },
+    "equivocation/wahoo": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T05:32:25+00:00",
+      "selected_rows": 8
+    },
+    "normal/mahi_mahi": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:11:38+00:00",
+      "selected_rows": 8
+    },
+    "normal/narwhal": {
+      "anomalies": {
+        "120000": [
+          "missing result"
+        ],
+        "30000": [
+          "unexpected low-load utilization"
+        ]
+      },
+      "completed_at": "2026-09-14T04:02:23+00:00",
+      "selected_rows": 8
+    },
+    "normal/shortfin": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T03:49:39+00:00",
+      "selected_rows": 8
+    },
+    "normal/wahoo": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:20:09+00:00",
+      "selected_rows": 8
+    },
+    "silence/mahi_mahi": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:45:38+00:00",
+      "selected_rows": 8
+    },
+    "silence/narwhal": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:37:08+00:00",
+      "selected_rows": 8
+    },
+    "silence/shortfin": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:28:38+00:00",
+      "selected_rows": 8
+    },
+    "silence/wahoo": {
+      "anomalies": {},
+      "completed_at": "2026-09-14T04:54:07+00:00",
+      "selected_rows": 8
+    }
+  },
+  "modes": [
+    "normal",
+    "silence",
+    "equivocation"
+  ],
+  "nodes": 4,
+  "observed_ping_rtt_ms": 200.359,
+  "one_way_delay_ms": 100,
+  "postcheck": {
+    "anomalies": {
+      "normal/mahi_mahi": {
+        "240000": [
+          "isolated throughput trough"
+        ]
+      },
+      "silence/wahoo": {
+        "300000": [
+          "terminal throughput collapse"
+        ]
+      }
+    },
+    "completed_at": "2026-09-14T05:38:59+00:00"
+  },
+  "protocols": [
+    "shortfin",
+    "narwhal",
+    "mahi_mahi",
+    "wahoo"
+  ],
+  "rates": [
+    5000,
+    15000,
+    30000,
+    60000,
+    120000,
+    180000,
+    240000,
+    300000
+  ],
+  "retry_runs": 2,
+  "session": "local_precloud_rtt200_wide_60s_20260914",
+  "started_at": "2026-09-14T03:40:39+00:00",
+  "status": "complete"
+}
