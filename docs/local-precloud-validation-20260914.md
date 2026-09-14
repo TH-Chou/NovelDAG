@@ -162,6 +162,19 @@ faster than their no-fault controls.
 - `benchmark/csv_plots/local_precloud_equivocation_rtt200_30k_60s_20260914_runs.csv`
 - `benchmark/csv_plots/local_precloud_wahoo_equivocation_30k_repeats_60s_20260914_runs.csv`
 
+## Figures
+
+The following throughput-latency figures use the valid zero-delay wide-sweep
+rows. Each marker is one 60-second measurement; lines connect points in
+increasing offered-rate order. All three figures use the same linear axes.
+
+- `benchmark/plots/precloud_20260914/local_precloud_normal_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_silence_throughput_latency.pdf`
+- `benchmark/plots/precloud_20260914/local_precloud_equivocation_throughput_latency.pdf`
+
+High-resolution PNG versions are stored beside the vector PDFs. The figures
+can be regenerated with `benchmark/scripts/plot_precloud_latency_tps.py`.
+
 ## Pre-Cloud Recommendation
 
 The implementation is ready for a low-cost cloud pilot. Use a small set of
