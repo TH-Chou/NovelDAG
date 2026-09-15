@@ -62,6 +62,7 @@ class GcpTestbed:
         self.expected_nodes = expected_nodes
         self.expected_per_region = expected_nodes // len(self.expected_regions)
         self.expected_disk_size = int(instances["disk_size_gb"])
+        self.expected_commit = instances.get("image_commit")
 
         if expected_nodes % len(self.expected_regions):
             raise ValueError("Node count must divide evenly across configured regions")
@@ -243,7 +244,7 @@ class GcpTestbed:
         return outputs
 
     def check_binaries(self):
-        commit = self.local_commit()
+        commit = self.expected_commit or self.local_commit()
         command = (
             "test -x /home/{user}/node && "
             "test -x /home/{user}/benchmark_client && "

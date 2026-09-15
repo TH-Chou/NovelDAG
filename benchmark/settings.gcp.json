@@ -27,6 +27,7 @@
     "firewall_rule": "noveldag-benchmark",
     "image_project": "shortfin",
     "image_family": "shortfin-noveldag-25gb",
+    "image_commit": "c6190fdb8e814bebba858e54a8d77432366c24a7",
     "disk_size_gb": 25,
     "ssh_user": "ubuntu"
   }
