@@ -334,6 +334,68 @@ class GcpTestbed:
         print("Replacement placements: {}".format(dict(sorted(placements.items()))))
         return self.validate_inventory()
 
+    def replace_instance(self, instance_name, target_zone=None):
+        instances = self.validate_inventory(require_status="TERMINATED")
+        matches = [item for item in instances if item["name"] == instance_name]
+        if len(matches) != 1:
+            raise RuntimeError(
+                "Expected one instance named {}, found {}".format(
+                    instance_name, len(matches)
+                )
+            )
+
+        source_zone = self.zone_of(matches[0])
+        target_zone = target_zone or source_zone
+        source_region = self.region(source_zone)
+        if source_region != self.region(target_zone):
+            raise ValueError("Instance replacement must stay in the same GCP region")
+
+        public_key_path = Path(str(self.key) + ".pub")
+        if not public_key_path.exists():
+            raise RuntimeError("Missing SSH public key {}".format(public_key_path))
+        public_key = public_key_path.read_text(encoding="utf-8").strip()
+
+        print("Deleting stopped instance {} in {}".format(instance_name, source_zone))
+        run(
+            [
+                "gcloud",
+                "compute",
+                "instances",
+                "delete",
+                instance_name,
+                "--project",
+                self.project,
+                "--zone",
+                source_zone,
+                "--delete-disks=all",
+                "--quiet",
+            ]
+        )
+
+        last_result = None
+        for zone in self._available_zones(source_region, target_zone):
+            result = self._create_instance(instance_name, zone, public_key)
+            if result.returncode == 0:
+                print("Recreated {} in {}".format(instance_name, zone))
+                return self.validate_inventory()
+            last_result = result
+            if self._capacity_error(result):
+                print("No capacity in {}; trying the next zone".format(zone))
+                continue
+            raise RuntimeError(
+                "Failed to recreate {} in {}:\n{}".format(
+                    instance_name, zone, result.stderr.strip()
+                )
+            )
+
+        raise RuntimeError(
+            "No capacity to recreate {} in {}: {}".format(
+                instance_name,
+                source_region,
+                last_result.stderr.strip() if last_result else "no zones",
+            )
+        )
+
     def local_commit(self):
         result = run(
             ["git", "rev-parse", "HEAD"],
@@ -566,7 +628,15 @@ def run_matrix(testbed, args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("status", "start", "stop", "replace-zone", "run")
+        "command",
+        choices=(
+            "status",
+            "start",
+            "stop",
+            "replace-zone",
+            "replace-instance",
+            "run",
+        ),
     )
     parser.add_argument("--settings", default=str(DEFAULT_SETTINGS))
     parser.add_argument("--nodes", type=int, default=50)
@@ -581,6 +651,7 @@ def build_parser():
     parser.add_argument("--keep-running", action="store_true")
     parser.add_argument("--source-zone")
     parser.add_argument("--target-zone")
+    parser.add_argument("--instance")
     return parser
 
 
@@ -598,6 +669,10 @@ def main():
         if not args.source_zone or not args.target_zone:
             raise ValueError("replace-zone requires --source-zone and --target-zone")
         testbed.replace_zone(args.source_zone, args.target_zone)
+    elif args.command == "replace-instance":
+        if not args.instance:
+            raise ValueError("replace-instance requires --instance")
+        testbed.replace_instance(args.instance, args.target_zone)
     else:
         run_matrix(testbed, args)
 

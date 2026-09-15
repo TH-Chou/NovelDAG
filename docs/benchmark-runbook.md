@@ -302,6 +302,14 @@ python3 scripts/run_gcp_single_point.py replace-zone --nodes=50 \
   --source-zone=us-west1-a --target-zone=us-west1-b
 ```
 
+A persistently unreachable stopped VM can be rebuilt individually from the
+same image and disk settings. Omit `--target-zone` to keep its current zone:
+
+```bash
+python3 scripts/run_gcp_single_point.py replace-instance --nodes=50 \
+  --instance=noveldag-node-asia-southeast1-a-EXAMPLE
+```
+
 All instances must be stopped before a zone replacement. The runner also
 reports a failed start after 30 seconds when no instance is still transitioning,
 including the zones whose nodes remained stopped.
