@@ -47,7 +47,7 @@ def run(command, *, cwd=None, env=None, capture=False, check=True):
 
 
 class GcpTestbed:
-    def __init__(self, settings_path, expected_nodes):
+    def __init__(self, settings_path, expected_nodes, expected_commit=None):
         self.settings_path = Path(settings_path).resolve()
         with self.settings_path.open(encoding="utf-8") as handle:
             settings = json.load(handle)
@@ -62,7 +62,8 @@ class GcpTestbed:
         self.expected_nodes = expected_nodes
         self.expected_per_region = expected_nodes // len(self.expected_regions)
         self.expected_disk_size = int(instances["disk_size_gb"])
-        self.expected_commit = instances.get("image_commit")
+        self.image_commit = instances.get("image_commit")
+        self.expected_commit = expected_commit
         self.machine_type = instances["type"]
         self.network = instances["network"]
         self.subnetwork = instances.get("subnetwork", "")
@@ -649,6 +650,10 @@ def build_parser():
     parser.add_argument("--protocols", default=DEFAULT_PROTOCOLS)
     parser.add_argument("--consensus", default="round_robin")
     parser.add_argument("--run-id")
+    parser.add_argument(
+        "--expected-commit",
+        help="Remote source commit to verify (defaults to the local HEAD)",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--keep-running", action="store_true")
     parser.add_argument("--source-zone")
@@ -659,7 +664,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    testbed = GcpTestbed(args.settings, args.nodes)
+    testbed = GcpTestbed(args.settings, args.nodes, args.expected_commit)
     if args.command == "status":
         testbed.validate_inventory()
     elif args.command == "start":
