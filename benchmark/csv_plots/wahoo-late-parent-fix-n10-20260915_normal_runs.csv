@@ -1,0 +1,2 @@
+run,protocol,faults,fault_mode,delay_ms,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,selection,anomaly_reason
+1,wahoo,0,normal,100,30000,30,21677.984740,6124.576213,20807.837414,8759.048787,retry,unexpected low-load utilization
