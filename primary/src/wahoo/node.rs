@@ -623,6 +623,10 @@ impl Node {
             .entry(sender)
             .or_insert_with(|| block.clone());
         if !self.check_whether_can_add_to_dag(&block) {
+            debug!(
+                "Wahoo defers EPBC vote: round={} sender={} missing parent",
+                round, sender
+            );
             self.block_query += 1;
             return;
         }
@@ -1104,9 +1108,34 @@ impl Node {
                     self.try_to_commit_leader(round).await;
                 }
                 self.try_to_update_dag_from_pending(round + 1).await;
+                self.retry_pending_epbc(round + 1).await;
             } else {
                 self.store_pending_block(block);
                 self.block_query += 1;
+            }
+        })
+    }
+
+    fn retry_pending_epbc(&mut self, round: Round) -> futures::future::BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let ready: Vec<WahooBlock> = self
+                .epbc_blocks
+                .get(&round)
+                .map(|blocks| {
+                    blocks
+                        .values()
+                        .filter(|block| self.check_whether_can_add_to_dag(block))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for block in ready {
+                let hash = block.digest();
+                self.send_epbc_vote(block.round, hash.clone(), block.author, WahooVotePhase::Ts1)
+                    .await;
+                self.send_epbc_vote(block.round, hash, block.author, WahooVotePhase::Tf)
+                    .await;
             }
         })
     }
@@ -1742,6 +1771,56 @@ mod tests {
         node.block_send.insert(2);
 
         node.handle_fast_block(block.clone()).await;
+
+        for phase in [WahooVotePhase::Ts1, WahooVotePhase::Tf] {
+            assert!(node
+                .sent_votes
+                .get(&(block.round, block.author, phase))
+                .is_some_and(|digests| digests.contains(&block.id)));
+        }
+    }
+
+    #[tokio::test]
+    async fn epbc_vote_retries_after_late_parent_arrives() {
+        let (publics, mut secrets, committee) = make_test_committee(4);
+        let me = publics[0];
+        let sig_service = SignatureService::new(secrets.remove(0));
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            me,
+            committee,
+            ConsensusProtocol::RoundRobin,
+            sig_service,
+            1,
+            32,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+
+        let mut parent = WahooBlock {
+            author: publics[1],
+            round: 0,
+            ..WahooBlock::default()
+        };
+        parent.id = parent.digest();
+        let mut block = WahooBlock {
+            author: me,
+            round: 1,
+            parents: BTreeSet::from([parent.digest()]),
+            wahoo_tag: Some(WahooTag::EpbcTf),
+            ..WahooBlock::default()
+        };
+        block.id = block.digest();
+
+        node.handle_fast_block(block.clone()).await;
+        assert!(!node.sent_votes.keys().any(|(round, _, _)| *round == 1));
+
+        node.try_to_update_dag(parent).await;
 
         for phase in [WahooVotePhase::Ts1, WahooVotePhase::Tf] {
             assert!(node
