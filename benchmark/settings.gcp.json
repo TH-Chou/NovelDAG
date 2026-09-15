@@ -25,9 +25,9 @@
     "network": "default",
     "subnetwork": "",
     "firewall_rule": "noveldag-benchmark",
-    "image_project": "ubuntu-os-cloud",
-    "image_family": "ubuntu-2204-lts",
-    "disk_size_gb": 100,
+    "image_project": "shortfin",
+    "image_family": "shortfin-noveldag-25gb",
+    "disk_size_gb": 25,
     "ssh_user": "ubuntu"
   }
 }

@@ -251,8 +251,10 @@ also contains machine-local values. Confirm these fields before running:
 | `repo.branch` | Remote code version. | Use `icde_shortfin_archive` for this branch archive. |
 
 The GCP instance manager creates a firewall rule allowing SSH and TCP
-`5000-7000`, creates Ubuntu 22.04 instances with 100GB SSD boot disks, and
-labels them with the configured instance name for later discovery.
+`5000-7000`, creates instances from the image configured in
+`benchmark/settings.gcp.json`, and labels them with the configured instance
+name for later discovery. The current 50-node testbed uses the
+`shortfin-noveldag-25gb` image family and 25GB `pd-ssd` boot disks.
 
 ## Cloud Lifecycle With Fabric
 
@@ -268,6 +270,26 @@ fab stop --settings=settings.gcp.json
 fab start --settings=settings.gcp.json --max=2
 fab destroy --settings=settings.gcp.json
 ```
+
+For a resumable single-point run, prefer the lifecycle wrapper. It starts and
+checks the complete testbed, runs protocols sequentially, archives each
+protocol's raw logs, writes the summary CSV after every successful protocol,
+and stops all instances in a `finally` block:
+
+```bash
+python3 scripts/run_gcp_single_point.py status --nodes=50
+python3 scripts/run_gcp_single_point.py run \
+  --nodes=50 --faults=0 --rate=120000 --duration=40 \
+  --protocols=narwhal,shortfin,mahi_mahi,wahoo \
+  --run-id=gcp-n50-f0-r120k-smoke
+```
+
+Use `--resume` with the same `--run-id` after an interrupted run. The script
+skips protocols already present in the CSV. `start` and `stop` are also
+available as explicit commands. Instances use ephemeral public IPs, so a
+configuration distributed before a stop/start cycle must not be reused; each
+Fabric benchmark invocation regenerates the committee and redistributes the
+configuration using the current addresses.
 
 `--nodes` in `fab create` is per configured zone/region. With the current five
 GCP zones, `--nodes=2` creates a 10-machine testbed and `--nodes=4` creates a
