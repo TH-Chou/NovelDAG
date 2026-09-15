@@ -539,6 +539,8 @@ def run_protocol(testbed, args, protocol, archive_root):
 
     environment = os.environ.copy()
     environment["NOVELDAG_SKIP_REMOTE_BUILD"] = "1"
+    rustup_bin = str(Path.home() / ".cargo" / "bin")
+    environment["PATH"] = rustup_bin + os.pathsep + environment.get("PATH", "")
     run(
         [
             find_fab(),

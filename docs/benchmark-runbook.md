@@ -318,6 +318,10 @@ GCP may report a VM as running before its SSH service accepts connections. The
 runner retries the all-node binary and image-commit check for up to three
 minutes before treating this as a failure.
 
+When launched as `wsl -e python3 ...`, the lifecycle wrapper prepends the
+Rustup binary directory to `PATH`. This prevents Fabric's local configuration
+build from accidentally using an older distribution-provided Cargo.
+
 `--nodes` in `fab create` is per configured zone/region. With the current five
 GCP zones, `--nodes=2` creates a 10-machine testbed and `--nodes=4` creates a
 20-machine testbed.
