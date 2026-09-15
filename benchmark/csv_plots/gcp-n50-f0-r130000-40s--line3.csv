@@ -1,0 +1,4 @@
+protocol,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+narwhal,50,0,130000,40,91548,5844,89915,6821,yes
+shortfin,50,0,130000,40,68125,6374,66931,7790,yes
+mahi_mahi,50,0,130000,40,106557,4380,103714,5384,yes
