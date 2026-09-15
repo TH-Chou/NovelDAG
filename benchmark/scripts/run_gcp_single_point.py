@@ -483,7 +483,6 @@ def run_protocol(testbed, args, protocol, archive_root):
             "--duration={}".format(args.duration),
             "--runs=1",
             "--benchmark-delay={}".format(args.benchmark_delay),
-            "--no-debug",
         ],
         cwd=BENCHMARK_ROOT,
         env=environment,
