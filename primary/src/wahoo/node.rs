@@ -739,7 +739,14 @@ impl Node {
                     round,
                 };
                 self.handle_done(done.clone()).await;
-                self.broadcast_done(done).await;
+                // The delivery certificate is already broadcast by the
+                // proposer. Every recipient can advance locally from that
+                // proof, but only the proposer should fan out the matching
+                // Done message. Broadcasting it again from every recipient
+                // adds an unnecessary factor of n to EPBC traffic.
+                if origin == self.name {
+                    self.broadcast_done(done).await;
+                }
             }
             WahooVotePhase::Pbc => {}
         }
@@ -1248,7 +1255,7 @@ impl Node {
             return;
         }
         let count = *self.move_round.get(&round).unwrap_or(&0);
-        info!(
+        debug!(
             "Wahoo try_to_next_round: round={} move_count={}/{} next_signaled={}",
             round,
             count,
@@ -1742,6 +1749,62 @@ mod tests {
                 .get(&(block.round, block.author, phase))
                 .is_some_and(|digests| digests.contains(&block.id)));
         }
+    }
+
+    #[tokio::test]
+    async fn epbc_recipient_advances_without_rebroadcasting_done() {
+        let (publics, mut secrets, committee) = make_test_committee(4);
+        let me = publics[3];
+        let origin = publics[0];
+        let sig_service = SignatureService::new(secrets.pop().unwrap());
+        let (_tx_msg, rx_msg) = tokio::sync::mpsc::channel(64);
+        let (_tx_workers, rx_workers) = tokio::sync::mpsc::channel(64);
+        let (_tx_recp, rx_recp) = tokio::sync::mpsc::channel(64);
+        let (tx_committed, _rx_committed) = tokio::sync::mpsc::channel(64);
+        let mut node = Node::new(
+            me,
+            committee,
+            ConsensusProtocol::RoundRobin,
+            sig_service,
+            1,
+            32,
+            rx_msg,
+            rx_workers,
+            rx_recp,
+            tx_committed,
+        );
+
+        let mut header = WahooBlock {
+            author: origin,
+            round: 1,
+            wahoo_tag: Some(WahooTag::EpbcTs2),
+            ..WahooBlock::default()
+        };
+        header.id = header.digest();
+        let votes = publics
+            .iter()
+            .zip(secrets.iter())
+            .take(node.quorum_num)
+            .map(|(author, secret)| {
+                let mut vote = WahooVote {
+                    id: header.id.clone(),
+                    round: header.round,
+                    voter_round: header.round,
+                    origin,
+                    author: *author,
+                    wahoo_phase: Some(WahooVotePhase::Ts2),
+                    ..WahooVote::default()
+                };
+                vote.signature = Signature::new(&vote.digest(), secret);
+                vote
+            })
+            .collect();
+
+        node.handle_epbc_certificate(Certificate { header, votes })
+            .await;
+
+        assert_eq!(node.move_round.get(&1), Some(&1));
+        assert!(node.cancel_handlers.is_empty());
     }
 
     #[tokio::test]
