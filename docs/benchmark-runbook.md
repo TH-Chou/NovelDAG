@@ -306,6 +306,10 @@ All instances must be stopped before a zone replacement. The runner also
 reports a failed start after 30 seconds when no instance is still transitioning,
 including the zones whose nodes remained stopped.
 
+GCP may report a VM as running before its SSH service accepts connections. The
+runner retries the all-node binary and image-commit check for up to three
+minutes before treating this as a failure.
+
 `--nodes` in `fab create` is per configured zone/region. With the current five
 GCP zones, `--nodes=2` creates a 10-machine testbed and `--nodes=4` creates a
 20-machine testbed.

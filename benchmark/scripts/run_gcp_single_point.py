@@ -387,14 +387,23 @@ class GcpTestbed:
             ))
         return outputs
 
-    def check_binaries(self):
+    def check_binaries(self, timeout=180):
         commit = self.expected_commit or self.local_commit()
         command = (
             "test -x /home/{user}/node && "
             "test -x /home/{user}/benchmark_client && "
             "test \"$(git -C /home/{user}/NovelDAG rev-parse HEAD)\" = {commit}"
         ).format(user=self.user, commit=commit)
-        self.parallel_ssh(command)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self.parallel_ssh(command)
+                break
+            except RuntimeError as error:
+                if time.monotonic() >= deadline:
+                    raise
+                print("Nodes are not SSH-ready yet: {}".format(error), flush=True)
+                time.sleep(10)
         print("Binary check: {}/{} nodes at commit {}".format(
             self.expected_nodes, self.expected_nodes, commit[:8]
         ))
