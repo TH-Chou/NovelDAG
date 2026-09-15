@@ -63,6 +63,12 @@ class GcpTestbed:
         self.expected_per_region = expected_nodes // len(self.expected_regions)
         self.expected_disk_size = int(instances["disk_size_gb"])
         self.expected_commit = instances.get("image_commit")
+        self.machine_type = instances["type"]
+        self.network = instances["network"]
+        self.subnetwork = instances.get("subnetwork", "")
+        self.firewall_rule = instances["firewall_rule"]
+        self.image_project = instances["image_project"]
+        self.image_family = instances["image_family"]
 
         if expected_nodes % len(self.expected_regions):
             raise ValueError("Node count must divide evenly across configured regions")
@@ -169,7 +175,8 @@ class GcpTestbed:
                 ]
             )
 
-        deadline = time.monotonic() + timeout
+        started_at = time.monotonic()
+        deadline = started_at + timeout
         while time.monotonic() < deadline:
             current = self.instances()
             statuses = Counter(str(item.get("status", "UNKNOWN")) for item in current)
@@ -177,6 +184,19 @@ class GcpTestbed:
             if statuses == Counter({target_status: self.expected_nodes}):
                 self.validate_inventory(require_status=target_status)
                 return current
+            if action == "start" and time.monotonic() - started_at >= 30:
+                transitional = {"PROVISIONING", "STAGING", "REPAIRING", "STOPPING"}
+                if not transitional.intersection(statuses) and statuses.get("TERMINATED"):
+                    failed_zones = Counter(
+                        self.zone_of(item)
+                        for item in current
+                        if item.get("status") == "TERMINATED"
+                    )
+                    raise RuntimeError(
+                        "Instances failed to start in zones: {}".format(
+                            dict(sorted(failed_zones.items()))
+                        )
+                    )
             time.sleep(5)
         raise TimeoutError("Timed out waiting for {}".format(target_status))
 
@@ -189,6 +209,130 @@ class GcpTestbed:
             {"PROVISIONING", "STAGING", "RUNNING"},
             "TERMINATED",
         )
+
+    def _available_zones(self, region, preferred_zone):
+        zones = self.gcloud_json(
+            [
+                "compute",
+                "zones",
+                "list",
+                "--filter",
+                "name~'^{}-' AND status=UP".format(region),
+            ]
+        )
+        names = sorted(str(item["name"]) for item in zones)
+        return [preferred_zone] + [name for name in names if name != preferred_zone]
+
+    @staticmethod
+    def _capacity_error(result):
+        output = "{}\n{}".format(result.stdout, result.stderr)
+        return (
+            "ZONE_RESOURCE_POOL_EXHAUSTED" in output
+            or "resource_availability" in output
+        )
+
+    def _create_instance(self, name, zone, public_key):
+        command = [
+            "gcloud",
+            "compute",
+            "instances",
+            "create",
+            name,
+            "--project",
+            self.project,
+            "--zone",
+            zone,
+            "--machine-type",
+            self.machine_type,
+            "--network",
+            self.network,
+            "--tags",
+            self.firewall_rule,
+            "--labels",
+            "name={}".format(self.label),
+            "--image-project",
+            self.image_project,
+            "--image-family",
+            self.image_family,
+            "--boot-disk-size",
+            "{}GB".format(self.expected_disk_size),
+            "--boot-disk-type",
+            "pd-ssd",
+            "--metadata",
+            "enable-oslogin=FALSE,ssh-keys={}:{}".format(self.user, public_key),
+            "--quiet",
+        ]
+        if self.subnetwork:
+            command.extend(["--subnet", self.subnetwork])
+        return run(command, capture=True, check=False)
+
+    def replace_zone(self, source_zone, target_zone):
+        source_region = self.region(source_zone)
+        if source_zone == target_zone:
+            raise ValueError("Source and target zones must differ")
+        if source_region != self.region(target_zone):
+            raise ValueError("Zone replacement must stay in the same GCP region")
+
+        instances = self.validate_inventory(require_status="TERMINATED")
+        source = sorted(
+            item["name"] for item in instances if self.zone_of(item) == source_zone
+        )
+        if not source:
+            raise RuntimeError("No instances found in {}".format(source_zone))
+
+        public_key_path = Path(str(self.key) + ".pub")
+        if not public_key_path.exists():
+            raise RuntimeError("Missing SSH public key {}".format(public_key_path))
+        public_key = public_key_path.read_text(encoding="utf-8").strip()
+
+        print("Deleting {} stopped instance(s) in {}".format(len(source), source_zone))
+        run(
+            [
+                "gcloud",
+                "compute",
+                "instances",
+                "delete",
+            ]
+            + source
+            + [
+                "--project",
+                self.project,
+                "--zone",
+                source_zone,
+                "--delete-disks=all",
+                "--quiet",
+            ]
+        )
+
+        candidate_zones = self._available_zones(source_region, target_zone)
+        placements = Counter()
+        for name in source:
+            last_result = None
+            for zone in candidate_zones:
+                result = self._create_instance(name, zone, public_key)
+                if result.returncode == 0:
+                    placements[zone] += 1
+                    break
+                last_result = result
+                if self._capacity_error(result):
+                    print("No capacity in {}; trying the next zone".format(zone))
+                    continue
+                raise RuntimeError(
+                    "Failed to create {} in {}:\n{}".format(
+                        name, zone, result.stderr.strip()
+                    )
+                )
+            else:
+                raise RuntimeError(
+                    "No capacity for {} in {}: {}".format(
+                        name,
+                        source_region,
+                        last_result.stderr.strip() if last_result else "no zones",
+                    )
+                )
+
+        print("Replacement placements: {}".format(dict(sorted(placements.items()))))
+        return self.validate_inventory()
 
     def local_commit(self):
         result = run(
@@ -413,7 +557,9 @@ def run_matrix(testbed, args):
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "start", "stop", "run"))
+    parser.add_argument(
+        "command", choices=("status", "start", "stop", "replace-zone", "run")
+    )
     parser.add_argument("--settings", default=str(DEFAULT_SETTINGS))
     parser.add_argument("--nodes", type=int, default=50)
     parser.add_argument("--faults", type=int, default=0)
@@ -425,6 +571,8 @@ def build_parser():
     parser.add_argument("--run-id")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--keep-running", action="store_true")
+    parser.add_argument("--source-zone")
+    parser.add_argument("--target-zone")
     return parser
 
 
@@ -438,6 +586,10 @@ def main():
         testbed.check_binaries()
     elif args.command == "stop":
         testbed.stop()
+    elif args.command == "replace-zone":
+        if not args.source_zone or not args.target_zone:
+            raise ValueError("replace-zone requires --source-zone and --target-zone")
+        testbed.replace_zone(args.source_zone, args.target_zone)
     else:
         run_matrix(testbed, args)
 

@@ -291,6 +291,21 @@ configuration distributed before a stop/start cycle must not be reused; each
 Fabric benchmark invocation regenerates the committee and redistributes the
 configuration using the current addresses.
 
+If stopped instances repeatedly fail to start because one availability zone
+has no capacity, move that zone's instances within the same region in one
+batch. The command preserves the instance names and recreates them from the
+configured image with the configured SSD size. It tries other active zones in
+the region if the requested target also lacks capacity:
+
+```bash
+python3 scripts/run_gcp_single_point.py replace-zone --nodes=50 \
+  --source-zone=us-west1-a --target-zone=us-west1-b
+```
+
+All instances must be stopped before a zone replacement. The runner also
+reports a failed start after 30 seconds when no instance is still transitioning,
+including the zones whose nodes remained stopped.
+
 `--nodes` in `fab create` is per configured zone/region. With the current five
 GCP zones, `--nodes=2` creates a 10-machine testbed and `--nodes=4` creates a
 20-machine testbed.
