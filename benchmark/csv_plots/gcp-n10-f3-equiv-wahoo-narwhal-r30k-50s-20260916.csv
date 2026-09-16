@@ -1,0 +1,3 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+wahoo,10,3,equivocation,30000,50,20294,1944,19558,2791,yes
+narwhal,10,3,equivocation,30000,50,19088,5088,18765,6039,yes

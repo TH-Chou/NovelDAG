@@ -10,7 +10,7 @@ It is intended as an initial load sweep before running a wider attack curve.
 - Fault mode: `equivocation`.
 - Input rates: 30,000 / 100,000 / 110,000 / 120,000 / 130,000 / 140,000 / 150,000 tx/s.
 - Duration: 50 s.
-- Protocols: Shortfin and Mahi-Mahi.
+- Protocols: Shortfin, Mahi-Mahi, Wahoo, and Narwhal/Tusk.
 - Remote binary commit checked on VMs: `2814bbc2552a067aa16851e8920491e35ce3ab75`.
 - Local benchmark-script fixes used for the run:
   - `d8404ca` supports active remote fault modes.
@@ -28,6 +28,8 @@ CSVs:
 - `benchmark/csv_plots/gcp-n10-f3-equiv-shortfin-mahi-r130k-50s-20260916.csv`
 - `benchmark/csv_plots/gcp-n10-f3-equiv-shortfin-mahi-r140k-50s-20260916.csv`
 - `benchmark/csv_plots/gcp-n10-f3-equiv-shortfin-mahi-r150k-50s-20260916.csv`
+- `benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r30k-50s-20260916.csv`
+- `benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r100k-50s-20260916.csv`
 
 | Rate | Protocol | E2E TPS | E2E latency | Consensus TPS | Consensus latency | Notes |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
@@ -45,8 +47,17 @@ CSVs:
 | 140K | Mahi-Mahi | 82,600 | 8,585 ms | 85,233 | 7,423 ms | 303 client missed-target warnings. |
 | 150K | Shortfin | 71,302 | 22,182 ms | 73,681 | 9,612 ms | No client missed-target warnings, but latency shows overload. |
 | 150K | Mahi-Mahi | 93,005 | 7,044 ms | 95,530 | 5,894 ms | 355 client missed-target warnings. |
+| 30K | Wahoo | 19,558 | 2,791 ms | 20,294 | 1,944 ms | No client missed-target warnings. |
+| 30K | Narwhal/Tusk | 18,765 | 6,039 ms | 19,088 | 5,088 ms | No client missed-target warnings. |
+| 100K | Wahoo | 64,428 | 2,761 ms | 66,314 | 1,916 ms | No client missed-target warnings. |
+| 100K | Narwhal/Tusk | 63,293 | 5,811 ms | 65,665 | 4,847 ms | No client missed-target warnings. |
 
-The archived logs are under `benchmark/logs/gcp-n10-f3-equiv-shortfin-mahi-r{30k,100k,110k,120k,130k,140k,150k}-50s-20260916/` in the local workspace, but those directories are ignored by Git.
+The archived logs are under:
+
+- `benchmark/logs/gcp-n10-f3-equiv-shortfin-mahi-r{30k,100k,110k,120k,130k,140k,150k}-50s-20260916/`
+- `benchmark/logs/gcp-n10-f3-equiv-wahoo-narwhal-r{30k,100k}-50s-20260916/`
+
+These directories are ignored by Git.
 
 ## Sanity Checks
 
@@ -62,6 +73,8 @@ The archived logs are under `benchmark/logs/gcp-n10-f3-equiv-shortfin-mahi-r{30k
   - 130K: Shortfin 316 equivocation-send / 24 refusal lines; Mahi-Mahi 1,105 equivocation-send / 4,255 refusal lines.
   - 140K: Shortfin 100 equivocation-send / 0 refusal lines; Mahi-Mahi 1,456 equivocation-send / 4,797 refusal lines.
   - 150K: Shortfin 404 equivocation-send / 39 refusal lines; Mahi-Mahi 1,400 equivocation-send / 4,699 refusal lines.
+  - 30K: Wahoo 1,332 equivocation-send / 0 refusal lines; Narwhal/Tusk 928 equivocation-send / 2 refusal lines.
+  - 100K: Wahoo 1,340 equivocation-send / 0 refusal lines; Narwhal/Tusk 928 equivocation-send / 20 refusal lines.
 
 ## Initial Interpretation
 
