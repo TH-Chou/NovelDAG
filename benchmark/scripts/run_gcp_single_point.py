@@ -549,7 +549,7 @@ def run_protocol(testbed, args, protocol, archive_root):
         [
             find_fab(),
             "remote",
-            "--settings={}".format(args.settings),
+            "--settings={}".format(Path(args.settings).resolve()),
             "--dag-protocol={}".format(protocol),
             "--protocol={}".format(args.consensus),
             "--nodes={}".format(args.nodes),
