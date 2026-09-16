@@ -1,0 +1,83 @@
+protocol,protocol_label,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,source_csv,note
+shortfin,Shortfin,10,0,30000,49,29621.0,3794.0,29621.0,3794.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,60000,49,56285.0,4033.0,56285.0,4033.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,90000,49,80563.0,4729.0,80563.0,4729.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,120000,49,114612.0,4090.0,114612.0,4090.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,150000,49,141453.0,4032.0,141453.0,4032.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,180000,49,148084.0,4455.0,148084.0,4455.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,210000,49,156552.0,4331.0,156552.0,4331.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,10,0,240000,49,161809.0,3135.0,157616.0,4497.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,30000,49,21434.0,5516.0,21434.0,5516.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,60000,49,48098.0,5610.0,48098.0,5610.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,90000,49,61898.0,5603.0,61898.0,5603.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,120000,49,86573.0,5845.0,86573.0,5845.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,150000,49,97782.0,6803.0,97782.0,6803.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,180000,49,106474.0,6915.0,106474.0,6915.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,210000,49,101605.0,8462.0,101605.0,8462.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,10,0,240000,49,135679.0,5102.0,134249.0,6608.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+mahi_mahi,Mahi-Mahi,10,0,30000,50,27899.0,4012.0,27134.0,4986.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,10,0,60000,50,55950.0,3895.0,54240.0,4898.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,10,0,90000,50,83889.0,3935.0,81583.0,4909.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,10,0,120000,50,111712.0,3980.0,107629.0,4933.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,complete window; no archived paper baseline
+mahi_mahi,Mahi-Mahi,10,0,150000,50,139849.0,4109.0,136331.0,5057.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,10,0,180000,50,167140.0,3976.0,162533.0,5013.0,benchmark/csv_plots/gcp-n10-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,10,0,200000,50,181260.0,4200.0,176509.0,5362.0,benchmark/csv_plots/gcp-n10-f0-mahi_mahi-r200k-50s-20260916.csv,current single run
+mahi_mahi,Mahi-Mahi,10,0,220000,50,181026.0,4592.0,175740.0,5840.0,benchmark/csv_plots/gcp-n10-f0-mahi_mahi-r220k-50s-20260916.csv,current single run
+wahoo,Wahoo,10,0,30000,49,29564.0,1854.0,29564.0,1854.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,60000,49,58724.0,1992.0,58724.0,1992.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,90000,49,88339.0,2184.0,88339.0,2184.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,120000,49,115172.0,2490.0,115172.0,2490.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,150000,49,120581.0,5230.0,120581.0,5230.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,180000,49,114648.0,7461.0,114648.0,7461.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,210000,49,121158.0,7376.0,121158.0,7376.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+wahoo,Wahoo,10,0,240000,49,118938.0,1703.0,118395.0,8002.0,paperdata/csv/wan/wan_n10_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,60000,49,48511.0,3333.0,47003.0,4335.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,120000,49,103551.0,3307.0,98427.0,4332.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,180000,48,172129.0,3011.0,164216.0,4050.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,200000,49,175666.0,3740.0,169651.0,4815.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,220000,44,198412.0,2978.0,190832.0,4334.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,240000,40,199631.0,3585.0,191336.0,4975.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,20,0,260000,36,211516.0,5363.0,202717.0,6128.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,20,0,60000,49,46315.0,5963.0,44926.0,6889.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,20,0,120000,49,82394.0,4994.0,79847.0,5999.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,20,0,180000,48,119015.0,5064.0,115424.0,6059.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,20,0,200000,49,153653.0,4772.0,148032.0,5843.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+narwhal,Narwhal/Tusk,20,0,220000,49,137039.0,5169.0,132264.0,6432.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+mahi_mahi,Mahi-Mahi,20,0,60000,50,54672.0,3987.0,52758.0,4935.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,20,0,120000,50,110181.0,3990.0,108061.0,5014.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run
+mahi_mahi,Mahi-Mahi,20,0,180000,50,165899.0,4014.0,162286.0,5028.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run; near clean upper range
+mahi_mahi,Mahi-Mahi,20,0,200000,50,180156.0,4049.0,176104.0,5109.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run; pressure point
+mahi_mahi,Mahi-Mahi,20,0,220000,50,179407.0,4079.0,174998.0,5332.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run; overloaded
+mahi_mahi,Mahi-Mahi,20,0,240000,50,180787.0,4180.0,176659.0,5723.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run; overloaded
+mahi_mahi,Mahi-Mahi,20,0,260000,50,171233.0,3984.0,167117.0,5432.0,benchmark/csv_plots/gcp-n20-f0-mahi-line-20260916-summary.csv,single run; overloaded
+wahoo,Wahoo,20,0,60000,49,56074.0,1891.0,54511.0,2656.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,120000,49,113020.0,2078.0,108905.0,2921.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,180000,48,170662.0,2330.0,164606.0,3260.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,200000,49,181884.0,2393.0,176167.0,3635.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,220000,49,187029.0,2412.0,181489.0,3907.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,240000,49,190015.0,2482.0,182826.0,3983.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+wahoo,Wahoo,20,0,260000,49,180843.0,4579.0,174323.0,5803.0,paperdata/csv/wan/wan_n20_f0_plot_summary.csv,legacy baseline
+shortfin,Shortfin,50,0,30000,40,22406.0,4016.0,22191.0,4952.0,benchmark/csv_plots/gcp-n50-f0-r30000-40s-20260915-line3.csv,current curated 50-node summary
+shortfin,Shortfin,50,0,60000,40,50525.0,4467.0,49167.0,5440.0,benchmark/csv_plots/gcp-n50-f0-r60000-40s-20260915-line3.csv,current curated 50-node summary
+shortfin,Shortfin,50,0,90000,40,66415.0,5022.0,65040.0,6090.0,benchmark/csv_plots/gcp-n50-f0-r90000-40s-20260915-line3.csv,current curated 50-node summary
+shortfin,Shortfin,50,0,120000,40,101798.0,4521.0,98912.0,5673.0,benchmark/csv_plots/gcp-n50-f0-r120k-40s-20260915.csv,current curated 50-node summary
+shortfin,Shortfin,50,0,130000,40,68125.0,6374.0,66931.0,7790.0,benchmark/csv_plots/gcp-n50-f0-r130000-40s--line3.csv,current curated 50-node summary
+shortfin,Shortfin,50,0,150000,40,107544.0,10785.0,105982.0,12263.0,benchmark/csv_plots/gcp-n50-f0-r150000-40s-20260915-line3.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,30000,40,18134.0,5429.0,17670.0,6364.0,benchmark/csv_plots/gcp-n50-f0-r30000-40s-20260915-line3.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,60000,40,47297.0,4743.0,45874.0,5716.0,benchmark/csv_plots/gcp-n50-f0-r60000-40s-20260915-line3.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,90000,40,67755.0,5109.0,65501.0,6054.0,benchmark/csv_plots/gcp-n50-f0-r90000-40s-20260915-line3.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,120000,40,95991.0,5084.0,93205.0,6083.0,benchmark/csv_plots/gcp-n50-f0-r120k-40s-20260915.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,130000,40,91548.0,5844.0,89915.0,6821.0,benchmark/csv_plots/gcp-n50-f0-r130000-40s--line3.csv,current curated 50-node summary
+narwhal,Narwhal/Tusk,50,0,150000,40,107783.0,4844.0,104999.0,5857.0,benchmark/csv_plots/gcp-n50-f0-r150000-40s-20260915-line3.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,30000,40,24974.0,4123.0,24320.0,5056.0,benchmark/csv_plots/gcp-n50-f0-r30000-40s-20260915-line3.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,60000,40,48321.0,4554.0,47399.0,5532.0,benchmark/csv_plots/gcp-n50-f0-r60000-40s-20260915-line3.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,90000,40,73682.0,4149.0,71842.0,5102.0,benchmark/csv_plots/gcp-n50-f0-r90000-40s-20260915-line3.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,120000,40,95243.0,4430.0,92248.0,5420.0,benchmark/csv_plots/gcp-n50-f0-r120k-40s-20260915.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,130000,40,106557.0,4380.0,103714.0,5384.0,benchmark/csv_plots/gcp-n50-f0-r130000-40s--line3.csv,current curated 50-node summary
+mahi_mahi,Mahi-Mahi,50,0,150000,40,72910.0,4594.0,72047.0,5622.0,benchmark/csv_plots/gcp-n50-f0-r150000-40s--mahi-fill.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,10000,40,3053.0,20282.0,2951.0,25276.0,csv_plots/gcp-n50-f0-wahoo-r10k-40s-20260916.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,20000,40,5362.0,24894.0,5105.0,30061.0,csv_plots/gcp-n50-f0-wahoo-r20k-40s-20260916.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,30000,40,8432.0,24884.0,8232.0,30873.0,csv_plots/gcp-n50-f0-wahoo-r30k-40s-retry3-20260916.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,40000,40,11991.0,24025.0,11654.0,30883.0,csv_plots/gcp-n50-f0-wahoo-r40k-40s-20260916.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,50000,40,4486.0,22895.0,4285.0,25950.0,csv_plots/gcp-n50-f0-wahoo-r50k-40s-20260916.csv,current curated 50-node summary
+wahoo,Wahoo,50,0,120000,40,4902.0,33080.0,4330.0,35930.0,csv_plots/gcp-n50-f0-wahoo-r120k-40s-20260915.csv,current curated 50-node summary
