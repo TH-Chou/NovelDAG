@@ -106,6 +106,27 @@ raw protocol labels = narwhal, noveldag, wahoo
 rates = 30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000
 ```
 
+### No-Fault WAN Main Summary
+
+The current no-Byzantine WAN experiment summary for the four protocols across
+10, 20, and 50 nodes is:
+
+```text
+benchmark/csv_plots/gcp-f0-n10-n20-n50-four-protocols-e2e-summary-20260916.csv
+```
+
+This is the canonical merged source for the current no-fault E2E TPS/latency
+plot. It contains Shortfin, Narwhal/Tusk, Mahi-Mahi, and Wahoo rows for the
+available 10-, 20-, and 50-node load sweeps. The corresponding reproducible
+plot artifacts are:
+
+```text
+benchmark/scripts/plot_gcp_all_nodes_e2e.py
+benchmark/figures/gcp_f0_n10_n20_n50_four_protocols_e2e_20260916.pdf
+benchmark/figures/gcp_f0_n10_n20_n50_four_protocols_e2e_20260916.png
+docs/gcp-all-nodes-four-protocol-e2e-20260916.md
+```
+
 ## Reproducibility Checklist
 
 Before running new experiments:
