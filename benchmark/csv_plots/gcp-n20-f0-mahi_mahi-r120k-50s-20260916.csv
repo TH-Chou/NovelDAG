@@ -1,0 +1,2 @@
+protocol,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+mahi_mahi,20,0,120000,50,110181,3990,108061,5014,yes
