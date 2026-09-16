@@ -33,9 +33,10 @@ SUMMARY_FIELDS = [
 ]
 
 
-def run(command, *, cwd=None, env=None, capture=False, check=True):
+def run(command, *, cwd=None, env=None, capture=False, check=True, quiet=False):
     display = " ".join(str(x) for x in command)
-    print("+", display, flush=True)
+    if not quiet:
+        print("+", display, flush=True)
     return subprocess.run(
         [str(x) for x in command],
         cwd=str(cwd) if cwd else None,
@@ -424,6 +425,7 @@ class GcpTestbed:
             ],
             capture=True,
             check=False,
+            quiet=True,
         )
 
     def parallel_ssh(self, remote_command, collect_stdout=False):
@@ -450,7 +452,7 @@ class GcpTestbed:
             ))
         return outputs
 
-    def check_binaries(self, timeout=180):
+    def check_binaries(self, timeout=900):
         commit = self.expected_commit or self.local_commit()
         command = (
             "test -x /home/{user}/node && "
@@ -466,7 +468,7 @@ class GcpTestbed:
                 if time.monotonic() >= deadline:
                     raise
                 print("Nodes are not SSH-ready yet: {}".format(error), flush=True)
-                time.sleep(10)
+                time.sleep(20)
         print("Binary check: {}/{} nodes at commit {}".format(
             self.expected_nodes, self.expected_nodes, commit[:8]
         ))
