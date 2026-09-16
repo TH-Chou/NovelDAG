@@ -1,0 +1,3 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+shortfin,10,3,equivocation,100000,50,65613,5921,62863,7093,yes
+mahi_mahi,10,3,equivocation,100000,50,64283,5168,62087,6137,yes
