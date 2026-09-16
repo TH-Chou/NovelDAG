@@ -751,20 +751,29 @@ class Bench:
             protocol,
         )
 
-    def _parse_run_logs(self, run_dir, faults, nodes, bench_parameters, rate, protocol):
+    def _parse_run_logs(
+        self,
+        run_dir,
+        output_faults,
+        parser_faults,
+        nodes,
+        bench_parameters,
+        rate,
+        protocol,
+    ):
         output_file = self._result_output_file(
-            faults, nodes, bench_parameters, rate, run_dir, protocol
+            output_faults, nodes, bench_parameters, rate, run_dir, protocol
         )
         if protocol == 'wahoo':
             Print.info(f'Fast-parsing Wahoo logs in {run_dir}')
             fast_parser = self._load_fast_log_parser()
             parsed = fast_parser.parse_directory(Path(run_dir))
-            result = fast_parser.format_result(parsed, faults)
+            result = fast_parser.format_result(parsed, parser_faults)
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
             Path(output_file).write_text(result)
             return
 
-        logger = LogParser.process(str(run_dir), faults=faults)
+        logger = LogParser.process(str(run_dir), faults=parser_faults)
         logger.print(output_file)
 
     def run_batch(self, bench_parameters_dict, node_parameters_dict, batch_id, debug=False):
@@ -970,7 +979,12 @@ class Bench:
         )
 
         # Parse each rate's logs and write result files.
-        faults = bench_parameters.faults
+        output_faults = bench_parameters.faults
+        parser_faults = (
+            bench_parameters.faults
+            if bench_parameters.fault_mode == 'silence'
+            else 0
+        )
         protocol = node_parameters.json['dag_protocol']
         for n in bench_parameters.nodes:
             for r in bench_parameters.rate:
@@ -986,5 +1000,11 @@ class Bench:
                     run_dirs = [Path(rate_logs_dir)]
                 for run_dir in run_dirs:
                     self._parse_run_logs(
-                        run_dir, faults, n, bench_parameters, r, protocol
+                        run_dir,
+                        output_faults,
+                        parser_faults,
+                        n,
+                        bench_parameters,
+                        r,
+                        protocol,
                     )
