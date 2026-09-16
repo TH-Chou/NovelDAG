@@ -1,0 +1,2 @@
+protocol,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+wahoo,50,0,10000,40,3053,20282,2951,25276,yes
