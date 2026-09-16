@@ -590,6 +590,7 @@ def remote(
     protocol='round_robin',
     dag_protocol='shortfin',
     faults=3,
+    fault_mode='silence',
     nodes=10,
     workers=1,
     rate=10_000,
@@ -610,6 +611,7 @@ def remote(
 
     bench_params = {
         'faults': int(faults),
+        'fault_mode': fault_mode,
         'nodes': [int(nodes)],
         'workers': int(workers),
         'collocate': True,
@@ -644,6 +646,7 @@ def remote_run_batch(
     dag_protocol='shortfin',
     batch_id='default',
     faults=3,
+    fault_mode='silence',
     nodes=10,
     workers=1,
     rates='10000',
@@ -668,6 +671,7 @@ def remote_run_batch(
 
     bench_params = {
         'faults': int(faults),
+        'fault_mode': fault_mode,
         'nodes': [int(nodes)],
         'workers': int(workers),
         'collocate': True,

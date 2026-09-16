@@ -403,8 +403,10 @@ class Bench:
 
         node_parameters.print(PathMaker.parameters_file())
 
-        # Cleanup all nodes and upload configuration files.
-        names = names[:len(names)-bench_parameters.faults]
+        # In silence mode faulty authorities are not started. Active attack
+        # modes still need configs on Byzantine nodes so they can run.
+        silent_faults = bench_parameters.faults if bench_parameters.fault_mode == 'silence' else 0
+        names = names[:len(names)-silent_faults]
         progress = progress_bar(names, prefix='Uploading config files:')
         for i, name in enumerate(progress):
             for ip in committee.ips(name):
@@ -422,20 +424,26 @@ class Bench:
         rate,
         committee,
         bench_parameters,
+        node_parameters,
         debug=False,
         clean_logs=True,
     ):
         faults = bench_parameters.faults
+        silent_faults = faults if bench_parameters.fault_mode == 'silence' else 0
 
         # Kill any potentially unfinished run and (optionally) delete logs.
         hosts = committee.ips()
         self.kill(hosts=hosts, delete_logs=clean_logs)
 
-        workers_addresses = committee.workers_addresses(faults)
+        workers_addresses = committee.workers_addresses(silent_faults)
         active_workers = sum(len(addresses) for addresses in workers_addresses)
         if active_workers == 0:
             raise BenchError('No active workers available to inject transactions')
         rate_share = ceil(rate / active_workers)
+        byzantine_start = committee.size() - faults
+        all_primary_addresses = committee.primary_addresses(0)
+        dag_protocol = node_parameters.json['dag_protocol'].replace('-', '_')
+        mahi_mahi = dag_protocol.startswith('mahi_mahi')
 
         # Start workers first so transaction endpoints and worker-to-primary
         # connectors are up before primaries start proposing. Each phase is
@@ -444,27 +452,55 @@ class Bench:
         for i, addresses in enumerate(workers_addresses):
             for (id, address) in addresses:
                 host = Committee.ip(address)
+                env = None
+                if bench_parameters.fault_mode == 'equivocation' and i >= byzantine_start:
+                    authorities = list(committee.json['authorities'].values())
+                    byzantine_worker_addresses = ','.join(
+                        authority['workers'][id]['worker_to_worker']
+                        for authority in authorities[byzantine_start:]
+                    )
+                    variants = max(1, committee.size() - faults if mahi_mahi else faults)
+                    env = (
+                        'NOVELDAG_BYZANTINE_ATTACK=equivocation '
+                        f'NOVELDAG_DAG_PROTOCOL={dag_protocol} '
+                        f'NOVELDAG_BYZANTINE_WORKER_ADDRS={byzantine_worker_addresses} '
+                        f'NOVELDAG_EQUIVOCATION_VARIANTS={variants}'
+                    )
                 cmd = CommandMaker.run_worker(
                     PathMaker.key_file(i),
                     PathMaker.committee_file(),
                     PathMaker.db_path(i, id),
                     PathMaker.parameters_file(),
                     id,
-                    debug=debug
+                    debug=debug,
+                    env=env,
                 )
                 worker_jobs.append((host, cmd, PathMaker.worker_log_file(i, id)))
         self._background_run_many(worker_jobs, 'workers')
 
-        primary_addresses = committee.primary_addresses(faults)
+        primary_addresses = committee.primary_addresses(silent_faults)
         primary_jobs = []
         for i, address in enumerate(primary_addresses):
             host = Committee.ip(address)
+            env = None
+            if bench_parameters.fault_mode == 'invalid_payload' and i >= byzantine_start:
+                env = 'NOVELDAG_BYZANTINE_ATTACK=invalid_payload'
+            elif bench_parameters.fault_mode == 'equivocation' and i >= byzantine_start:
+                byzantine_addresses = ','.join(all_primary_addresses[byzantine_start:])
+                variants = max(1, committee.size() - faults if mahi_mahi else faults)
+                env = (
+                    'NOVELDAG_BYZANTINE_ATTACK=equivocation '
+                    f'NOVELDAG_DAG_PROTOCOL={dag_protocol} '
+                    f'NOVELDAG_BYZANTINE_PRIMARY_ADDRS={byzantine_addresses} '
+                    f'NOVELDAG_EQUIVOCATION_VARIANTS={variants}'
+                )
             cmd = CommandMaker.run_primary(
                 PathMaker.key_file(i),
                 PathMaker.committee_file(),
                 PathMaker.db_path(i),
                 PathMaker.parameters_file(),
-                debug=debug
+                debug=debug,
+                env=env,
             )
             primary_jobs.append((host, cmd, PathMaker.primary_log_file(i)))
         self._background_run_many(primary_jobs, 'primaries')
@@ -775,6 +811,7 @@ class Bench:
                             r,
                             committee_copy,
                             bench_parameters,
+                            node_parameters,
                             debug,
                         )
                         self._checkpoint_logs(
@@ -903,13 +940,18 @@ class Bench:
                             )
                         ).unlink(missing_ok=True)
                         self._run_single(
-                            r, committee_copy, bench_parameters, debug,
+                            r, committee_copy, bench_parameters, node_parameters, debug,
                             clean_logs=True,
                         )
 
                         checkpoint_id = f'r{r}-run{i+1}'
                         self._checkpoint_logs(
-                            self._active_hosts(committee_copy, bench_parameters.faults),
+                            self._active_hosts(
+                                committee_copy,
+                                bench_parameters.faults
+                                if bench_parameters.fault_mode == 'silence'
+                                else 0,
+                            ),
                             node_parameters.json['dag_protocol'],
                             checkpoint_id,
                         )

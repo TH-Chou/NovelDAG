@@ -23,6 +23,7 @@ SUMMARY_FIELDS = [
     "protocol",
     "nodes",
     "faults",
+    "fault_mode",
     "rate",
     "duration_s",
     "consensus_tps",
@@ -553,6 +554,7 @@ def run_protocol(testbed, args, protocol, archive_root):
             "--protocol={}".format(args.consensus),
             "--nodes={}".format(args.nodes),
             "--faults={}".format(args.faults),
+            "--fault-mode={}".format(args.fault_mode),
             "--workers=1",
             "--rate={}".format(args.rate),
             "--tx-size=512",
@@ -611,6 +613,7 @@ def run_matrix(testbed, args):
                 "protocol": protocol,
                 "nodes": args.nodes,
                 "faults": args.faults,
+                "fault_mode": args.fault_mode,
                 "rate": args.rate,
                 "duration_s": args.duration,
                 "config_hash_verified": "yes",
@@ -646,6 +649,11 @@ def build_parser():
     parser.add_argument("--settings", default=str(DEFAULT_SETTINGS))
     parser.add_argument("--nodes", type=int, default=50)
     parser.add_argument("--faults", type=int, default=0)
+    parser.add_argument(
+        "--fault-mode",
+        choices=("silence", "invalid_payload", "equivocation"),
+        default="silence",
+    )
     parser.add_argument("--rate", type=int, default=120000)
     parser.add_argument("--duration", type=int, default=40)
     parser.add_argument("--benchmark-delay", type=int, default=20)
