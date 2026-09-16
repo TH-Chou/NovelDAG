@@ -30,6 +30,8 @@ CSVs:
 - `benchmark/csv_plots/gcp-n10-f3-equiv-shortfin-mahi-r150k-50s-20260916.csv`
 - `benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r30k-50s-20260916.csv`
 - `benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r100k-50s-20260916.csv`
+- `benchmark/csv_plots/gcp-n10-f3-equiv-narwhal-r120k-50s-20260917.csv`
+- `benchmark/csv_plots/gcp-n10-f3-equiv-narwhal-r150k-50s-20260917.csv`
 
 | Rate | Protocol | E2E TPS | E2E latency | Consensus TPS | Consensus latency | Notes |
 | ---: | --- | ---: | ---: | ---: | ---: | --- |
@@ -51,11 +53,14 @@ CSVs:
 | 30K | Narwhal/Tusk | 18,765 | 6,039 ms | 19,088 | 5,088 ms | No client missed-target warnings. |
 | 100K | Wahoo | 64,428 | 2,761 ms | 66,314 | 1,916 ms | No client missed-target warnings. |
 | 100K | Narwhal/Tusk | 63,293 | 5,811 ms | 65,665 | 4,847 ms | No client missed-target warnings. |
+| 120K | Narwhal/Tusk | 75,266 | 5,663 ms | 77,851 | 4,716 ms | No client missed-target warnings. |
+| 150K | Narwhal/Tusk | 91,119 | 6,048 ms | 93,885 | 5,086 ms | 3 client missed-target warnings. |
 
 The archived logs are under:
 
 - `benchmark/logs/gcp-n10-f3-equiv-shortfin-mahi-r{30k,100k,110k,120k,130k,140k,150k}-50s-20260916/`
 - `benchmark/logs/gcp-n10-f3-equiv-wahoo-narwhal-r{30k,100k}-50s-20260916/`
+- `benchmark/logs/gcp-n10-f3-equiv-narwhal-r{120k,150k}-50s-20260917/`
 
 These directories are ignored by Git.
 
@@ -75,6 +80,8 @@ These directories are ignored by Git.
   - 150K: Shortfin 404 equivocation-send / 39 refusal lines; Mahi-Mahi 1,400 equivocation-send / 4,699 refusal lines.
   - 30K: Wahoo 1,332 equivocation-send / 0 refusal lines; Narwhal/Tusk 928 equivocation-send / 2 refusal lines.
   - 100K: Wahoo 1,340 equivocation-send / 0 refusal lines; Narwhal/Tusk 928 equivocation-send / 20 refusal lines.
+  - 120K: Narwhal/Tusk 908 equivocation-send / 24 refusal lines.
+  - 150K: Narwhal/Tusk 912 equivocation-send / 47 refusal lines.
 
 ## Initial Interpretation
 

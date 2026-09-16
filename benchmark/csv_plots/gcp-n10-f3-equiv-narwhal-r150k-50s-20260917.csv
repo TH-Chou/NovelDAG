@@ -1,0 +1,2 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+narwhal,10,3,equivocation,150000,50,93885,5086,91119,6048,yes
