@@ -1,0 +1,2 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified,notes
+mahi_mahi,10,3,silence,120000,50,108921,5275,105852,6498,active_nodes_only,"Run completed and logs parsed; post-run full-VM config hash check reported two variants because silent nodes retained older config."
