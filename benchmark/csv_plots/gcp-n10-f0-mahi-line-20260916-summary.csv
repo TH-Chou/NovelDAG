@@ -1,0 +1,7 @@
+protocol,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified,source_csv,note
+mahi_mahi,10,0,30000,50,27899.0,4012.0,27134.0,4986.0,yes,csv_plots/gcp-n10-f0-mahi-line-20260916-r30000.csv,single run
+mahi_mahi,10,0,60000,50,55950.0,3895.0,54240.0,4898.0,yes,csv_plots/gcp-n10-f0-mahi-line-20260916-r60000.csv,single run
+mahi_mahi,10,0,90000,50,83889.0,3935.0,81583.0,4909.0,yes,csv_plots/gcp-n10-f0-mahi-line-20260916-r90000.csv,single run
+mahi_mahi,10,0,120000,50,111712.0,3980.0,107629.0,4933.0,yes,csv_plots/gcp_pilot_n10_f0_r120k_50s_20260914.csv,complete window; no archived paper baseline
+mahi_mahi,10,0,150000,50,139849.0,4109.0,136331.0,5057.0,yes,csv_plots/gcp-n10-f0-mahi-line-20260916-r150000.csv,single run
+mahi_mahi,10,0,180000,50,167140.0,3976.0,162533.0,5013.0,yes,csv_plots/gcp-n10-f0-mahi-line-20260916-r180000.csv,single run
