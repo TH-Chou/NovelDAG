@@ -1,0 +1,8 @@
+protocol,nodes,faults,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified,client_missed_target_warnings,source_csv,note
+mahi_mahi,20,0,60000,50,54672,3987,52758,4935,yes,0,csv_plots/gcp-n20-f0-mahi-line-20260916-r60000.csv,single run
+mahi_mahi,20,0,120000,50,110181,3990,108061,5014,yes,0,csv_plots/gcp-n20-f0-mahi_mahi-r120k-50s-20260916.csv,single run
+mahi_mahi,20,0,180000,50,165899,4014,162286,5028,yes,2,csv_plots/gcp-n20-f0-mahi-line-20260916-r180000.csv,single run; near clean upper range
+mahi_mahi,20,0,200000,50,180156,4049,176104,5109,yes,45,csv_plots/gcp-n20-f0-mahi-line-20260916-r200000.csv,single run; pressure point
+mahi_mahi,20,0,220000,50,179407,4079,174998,5332,yes,647,csv_plots/gcp-n20-f0-mahi-line-20260916-r220000.csv,single run; overloaded
+mahi_mahi,20,0,240000,50,180787,4180,176659,5723,yes,1303,csv_plots/gcp-n20-f0-mahi-line-20260916-r240000.csv,single run; overloaded
+mahi_mahi,20,0,260000,50,171233,3984,167117,5432,yes,1573,csv_plots/gcp-n20-f0-mahi-line-20260916-r260000.csv,single run; overloaded
