@@ -1,0 +1,26 @@
+protocol,raw_protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,source_group,source_file,notes
+shortfin,noveldag,10,3,silence,30000,,21279,4727,20987,5475,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_noveldag_retry_30k_120k_active.csv
+narwhal,narwhal,10,3,silence,30000,,16582,6509,16582,6509,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+wahoo,wahoo,10,3,silence,30000,,29723,3017,28988,4128,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,30000,50,27096,5318,26455,6537,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,
+shortfin,noveldag,10,3,silence,60000,,58989,4006,58989,4006,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+narwhal,narwhal,10,3,silence,60000,,31553,8501,31553,8501,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+wahoo,wahoo,10,3,silence,60000,,58211,3145,56866,5598,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,60000,50,54974,5258,52878,6391,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,
+shortfin,noveldag,10,3,silence,90000,,88464,4181,88464,4181,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+narwhal,narwhal,10,3,silence,90000,,49920,7166,49920,7166,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+wahoo,wahoo,10,3,silence,90000,,88209,3137,86403,4726,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,100000,50,91271,5265,88026,6428,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,
+shortfin,noveldag,10,3,silence,120000,,115151,6938,115151,6938,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+narwhal,narwhal,10,3,silence,120000,,80115,9896,80115,9896,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+wahoo,wahoo,10,3,silence,120000,,118465,3211,116264,4342,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,120000,50,108921,5275,105852,6498,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,
+mahi_mahi,mahi_mahi,10,3,silence,140000,50,120026,5406,115893,8012,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,2 client missed-target warnings
+shortfin,noveldag,10,3,silence,150000,,142202,3042,140473,4475,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_noveldag_retry_150k_180k_active.csv
+narwhal,narwhal,10,3,silence,150000,,104228,7930,100276,8831,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,restored_from_prior_table_e2e
+wahoo,wahoo,10,3,silence,150000,,137279,3151,135374,6137,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,150000,50,128110,5357,123681,9084,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,
+shortfin,noveldag,10,3,silence,180000,,164347,3007,160624,4024,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_noveldag_retry_150k_180k_active.csv
+narwhal,narwhal,10,3,silence,180000,,133029,5292,130834,16611,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_narwhal_180k.csv
+wahoo,wahoo,10,3,silence,180000,,132694,3136,129470,15844,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
+mahi_mahi,mahi_mahi,10,3,silence,180000,50,141981,5358,137003,9590,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,152 client missed-target warnings; overload/reference point
