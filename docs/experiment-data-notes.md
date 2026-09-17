@@ -2,6 +2,16 @@
 
 This document records the benchmark data layout and metric definitions for the Shortfin / historical NovelDAG result archive.
 
+For the current post-repair GCP/WSL workflow, start with:
+
+```text
+docs/current-experiment-runbook-20260917.md
+```
+
+That document records the current GCP project, VM image, WSL invocation style,
+supported protocols/fault modes, command template, and the most recent no-fault
+and f=3 attack data locations.
+
 The archived data files for this branch live under:
 
 ```text
@@ -125,6 +135,30 @@ benchmark/scripts/plot_gcp_all_nodes_e2e.py
 benchmark/figures/gcp_f0_n10_n20_n50_four_protocols_e2e_20260916.pdf
 benchmark/figures/gcp_f0_n10_n20_n50_four_protocols_e2e_20260916.png
 docs/gcp-all-nodes-four-protocol-e2e-20260916.md
+```
+
+### f=3 Silence And Equivocation Summary
+
+The current 10-node, f=3 fault/attack summary is:
+
+```text
+benchmark/csv_plots/gcp-n10-f3-attacks-combined-20260917.csv
+```
+
+It combines silence/crash and equivocation runs for Shortfin, Narwhal/Tusk,
+Mahi-Mahi, and Wahoo. The corresponding plot and notes are:
+
+```text
+benchmark/plots/gcp_20260917/gcp-n10-f3-attacks-e2e-tps-latency-20260917.pdf
+benchmark/plots/gcp_20260917/gcp-n10-f3-attacks-e2e-tps-latency-20260917.png
+docs/gcp-n10-f3-attacks-combined-20260917.md
+```
+
+For silence-only inspection, use:
+
+```text
+benchmark/csv_plots/gcp-n10-f3-silence-combined-20260917.csv
+docs/gcp-n10-f3-silence-combined-20260917.md
 ```
 
 ## Reproducibility Checklist

@@ -16,11 +16,11 @@ experiments:
 ```text
 settings file: benchmark/settings.gcp.json
 provider: gcp
-project: noveldag-496906
-zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-a, europe-west1-b
+project: shortfin
+zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-b, europe-west1-b
 machine type: n2-standard-2
-image: ubuntu-2204-lts
-disk: 100GB pd-ssd
+image family: shortfin-noveldag-25gb
+disk: 25GB pd-ssd
 ssh user: ubuntu
 base port: 5000
 ```
@@ -30,11 +30,12 @@ Before a new cloud reproduction, update the private fields in
 permissions, and `repo.branch`. For this archive, `repo.branch` should be
 `icde_shortfin_archive`.
 
-Use a Unix-like controller environment for running the benchmark scripts. The
-local and cloud orchestration invoke commands such as `tmux`, `rm`, `ln`, and
-`bash`. Native Windows PowerShell is useful for repository management, but the
-benchmark control path is intended for macOS, Linux, or WSL. Local RTT/delay
-runs specifically use macOS `pfctl` and `dnctl`.
+Use a Unix-like controller environment for running the benchmark scripts. On the
+current Windows controller, run benchmark commands inside WSL from
+`/mnt/d/Paper/DAG/NovelDAG`. Native Windows PowerShell is useful for
+repository management, but the benchmark control path is intended for Linux or
+WSL because the orchestration invokes tools such as `tmux`, `rm`, `ln`, and
+`bash`. The current Linux/WSL local delay runner uses `tc netem`.
 
 ## Prerequisites
 
@@ -192,7 +193,9 @@ python3 scripts/run_bench.py --mode local run \
 
 ## Local RTT / Delay Runs
 
-Local delay is configured through macOS `pfctl` and `dnctl`. The configured delay is one-way, so `--delays 100` corresponds approximately to RTT `200 ms`.
+Local delay is configured through Linux `tc netem` in the current WSL workflow.
+The configured delay is one-way, so `--delays 100` corresponds approximately to
+RTT `200 ms`.
 
 Example:
 
@@ -245,7 +248,7 @@ also contains machine-local values. Confirm these fields before running:
 | --- | --- | --- |
 | `key.path` | Controller SSH private key path. | Replace with the key path on the controller machine; the matching `.pub` file is used when creating GCP VMs. |
 | `key.user` / `instances.ssh_user` | Remote SSH user. | Keep `ubuntu` for the Ubuntu image unless the image changes. |
-| `instances.project` | GCP project. | The controller must be authenticated and authorized for `noveldag-496906` or a replacement project. |
+| `instances.project` | GCP project. | The controller must be authenticated and authorized for `shortfin` or a replacement project. |
 | `instances.zones` | WAN placement. | Current zones span Asia, US, and Europe; `fab create --nodes=2` creates up to 10 VMs total. |
 | `instances.type` | VM size. | Current archived setting is `n2-standard-2`. |
 | `repo.branch` | Remote code version. | Use `icde_shortfin_archive` for this branch archive. |
@@ -253,8 +256,9 @@ also contains machine-local values. Confirm these fields before running:
 The GCP instance manager creates a firewall rule allowing SSH and TCP
 `5000-7000`, creates instances from the image configured in
 `benchmark/settings.gcp.json`, and labels them with the configured instance
-name for later discovery. The current 50-node testbed uses the
-`shortfin-noveldag-25gb` image family and 25GB `pd-ssd` boot disks.
+name for later discovery. The current 10-node retained testbed and the latest
+50-node expansion both use the `shortfin-noveldag-25gb` image family and 25GB
+`pd-ssd` boot disks.
 
 ## Cloud Lifecycle With Fabric
 

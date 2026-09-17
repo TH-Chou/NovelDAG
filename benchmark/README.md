@@ -24,18 +24,26 @@ tool installation. For this branch archive, set `repo.branch` in
 The checked-in GCP topology is:
 
 ```text
-project: noveldag-496906
-zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-a, europe-west1-b
+project: shortfin
+zones: asia-east1-a, asia-southeast1-a, us-east1-b, us-west1-b, europe-west1-b
 machine type: n2-standard-2
-image: ubuntu-2204-lts
-disk: 100GB pd-ssd
+image family: shortfin-noveldag-25gb
+disk: 25GB pd-ssd
 ssh user: ubuntu
 ```
 
-Run benchmark control commands from macOS, Linux, or WSL. The scripts invoke
-Unix tools such as `tmux`, `rm`, `ln`, and `bash`. Local RTT emulation uses
-macOS `pfctl`/`dnctl`; it is not directly reproducible on native Windows without
-rewriting the delay-injection path.
+Run benchmark control commands from Linux or WSL. On the current Windows
+controller, prefer WSL from `/mnt/d/Paper/DAG/NovelDAG`; native PowerShell is
+fine for Git and file inspection, but the benchmark scripts invoke Unix tools
+such as `tmux`, `rm`, `ln`, and `bash`. Current local RTT emulation uses Linux
+`tc netem` and is not meant to run directly in native Windows PowerShell.
+
+For the current post-repair experiment map, including active data files and
+recommended GCP commands, see:
+
+```text
+../docs/current-experiment-runbook-20260917.md
+```
 
 ## Entry Points
 
@@ -189,10 +197,11 @@ Configuration in `benchmark/settings.gcp.json`:
   "repo": { "name": "NovelDAG", "url": "https://github.com/TH-Chou/NovelDAG.git", "branch": "icde_shortfin_archive" },
   "instances": {
     "type": "n2-standard-2",
-    "project": "noveldag-496906",
-    "zones": ["asia-east1-a", "asia-southeast1-a", "us-east1-b", "us-west1-a", "europe-west1-b"],
-    "image_family": "ubuntu-2204-lts",
-    "disk_size_gb": 100,
+    "project": "shortfin",
+    "zones": ["asia-east1-a", "asia-southeast1-a", "us-east1-b", "us-west1-b", "europe-west1-b"],
+    "image_project": "shortfin",
+    "image_family": "shortfin-noveldag-25gb",
+    "disk_size_gb": 25,
     "ssh_user": "ubuntu"
   }
 }
