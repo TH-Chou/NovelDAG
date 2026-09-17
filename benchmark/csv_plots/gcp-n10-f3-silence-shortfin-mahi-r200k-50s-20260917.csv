@@ -1,0 +1,3 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+shortfin,10,3,silence,200000,50,137429,4930,129440,10408,skipped_silence
+mahi_mahi,10,3,silence,200000,50,134464,5377,130462,12604,skipped_silence

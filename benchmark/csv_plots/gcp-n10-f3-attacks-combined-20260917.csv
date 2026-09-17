@@ -24,6 +24,8 @@ silence,shortfin,noveldag,10,3,180000,,164347,3007,160624,4024,paperdata/csv/wan
 silence,narwhal,narwhal,10,3,180000,,133029,5292,130834,16611,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_narwhal_180k.csv
 silence,wahoo,wahoo,10,3,180000,,132694,3136,129470,15844,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
 silence,mahi_mahi,mahi_mahi,10,3,180000,50,141981,5358,137003,9590,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,152 client missed-target warnings; overload/reference point
+silence,shortfin,shortfin,10,3,200000,50,137429,4930,129440,10408,benchmark/csv_plots/gcp-n10-f3-silence-shortfin-mahi-r200k-50s-20260917.csv,341 client missed-target warnings; overload/reference point
+silence,mahi_mahi,mahi_mahi,10,3,200000,50,134464,5377,130462,12604,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,193 client missed-target warnings; overload/reference point
 equivocation,shortfin,shortfin,10,3,30000,50,19985,3435,19240,4433,benchmark/csv_plots/gcp-n10-f3-equiv-shortfin-mahi-r30k-50s-20260916.csv,
 equivocation,narwhal,narwhal,10,3,30000,50,19088,5088,18765,6039,benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r30k-50s-20260916.csv,
 equivocation,wahoo,wahoo,10,3,30000,50,20294,1944,19558,2791,benchmark/csv_plots/gcp-n10-f3-equiv-wahoo-narwhal-r30k-50s-20260916.csv,

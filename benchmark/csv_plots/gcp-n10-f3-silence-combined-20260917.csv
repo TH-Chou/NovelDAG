@@ -24,3 +24,5 @@ shortfin,noveldag,10,3,silence,180000,,164347,3007,160624,4024,legacy_paperdata_
 narwhal,narwhal,10,3,silence,180000,,133029,5292,130834,16611,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_narwhal_180k.csv
 wahoo,wahoo,10,3,silence,180000,,132694,3136,129470,15844,legacy_paperdata_wan_crash_f3,paperdata/csv/wan/wan_n10_all_faults_results.csv,csv:gcp_fig3_f3_wahoo_180k.csv
 mahi_mahi,mahi_mahi,10,3,silence,180000,50,141981,5358,137003,9590,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,152 client missed-target warnings; overload/reference point
+shortfin,shortfin,10,3,silence,200000,50,137429,4930,129440,10408,current_gcp_shortfin_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-shortfin-mahi-r200k-50s-20260917.csv,341 client missed-target warnings; overload/reference point
+mahi_mahi,mahi_mahi,10,3,silence,200000,50,134464,5377,130462,12604,current_gcp_mahi_f3_silence,benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv,193 client missed-target warnings; overload/reference point
