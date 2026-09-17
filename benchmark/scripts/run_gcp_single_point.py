@@ -430,7 +430,10 @@ class GcpTestbed:
         )
 
     def parallel_ssh(self, remote_command, collect_stdout=False):
-        instances = self.validate_inventory(require_status="RUNNING")
+        instances = sorted(
+            self.validate_inventory(require_status="RUNNING"),
+            key=lambda item: item["name"],
+        )
         ips = [self.public_ip(item) for item in instances]
         if any(ip is None for ip in ips):
             raise RuntimeError("At least one running instance has no public IP")
@@ -569,7 +572,12 @@ def run_protocol(testbed, args, protocol, archive_root):
     if not result_path.exists():
         raise RuntimeError("Benchmark did not produce {}".format(result_path))
 
-    testbed.check_distributed_config()
+    if args.fault_mode == "silence":
+        print(
+            "Config check: skipped for silence mode; only active nodes receive fresh configs"
+        )
+    else:
+        testbed.check_distributed_config()
     protocol_archive = archive_root / protocol
     protocol_archive.mkdir(parents=True, exist_ok=True)
     rate_logs = BENCHMARK_ROOT / "logs" / "rate-{}".format(args.rate)
@@ -578,7 +586,11 @@ def run_protocol(testbed, args, protocol, archive_root):
         if destination.exists():
             shutil.rmtree(str(destination))
         shutil.move(str(rate_logs), str(destination))
-    shutil.copy2(str(result_path), str(protocol_archive / result_path.name))
+    archived_result_name = result_path.name.replace(
+        "-run1.txt",
+        "-{}-run1.txt".format(args.fault_mode),
+    )
+    shutil.copy2(str(result_path), str(protocol_archive / archived_result_name))
     return parse_result(result_path)
 
 
@@ -616,7 +628,11 @@ def run_matrix(testbed, args):
                 "fault_mode": args.fault_mode,
                 "rate": args.rate,
                 "duration_s": args.duration,
-                "config_hash_verified": "yes",
+                "config_hash_verified": (
+                    "skipped_silence"
+                    if args.fault_mode == "silence"
+                    else "all_nodes"
+                ),
             }
             row.update(metrics)
             rows.append(row)

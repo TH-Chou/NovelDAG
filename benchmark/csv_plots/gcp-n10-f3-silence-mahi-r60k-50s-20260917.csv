@@ -1,0 +1,2 @@
+protocol,nodes,faults,fault_mode,rate,duration_s,consensus_tps,consensus_latency_ms,end_to_end_tps,end_to_end_latency_ms,config_hash_verified
+mahi_mahi,10,3,silence,60000,50,54974,5258,52878,6391,skipped_silence

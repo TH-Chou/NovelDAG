@@ -1,42 +1,47 @@
-# GCP 10-Node f=3 Silence Probe, 2026-09-17
+# GCP 10-Node f=3 Silence Line, 2026-09-17
 
-This note records the first Mahi-Mahi point for the 10-node, 3-silent-node WAN setting.
+This note records the Mahi-Mahi line for the 10-node, 3-silent-node WAN setting.
 
 ## Setup
 
 - Nodes: 10 total, two VMs per region across five GCP regions.
 - Faults: 3 silent nodes, leaving 7 active primaries/workers/clients.
 - Fault mode: `silence`.
-- Input rate: 120,000 tx/s.
-- Duration: 50 s.
+- Input rates: 30,000 / 60,000 / 100,000 / 120,000 / 150,000 tx/s.
+- Duration: 50 s per point, single run per point.
 - Protocol: Mahi-Mahi.
 - Remote binary commit checked on VMs: `2814bbc2552a067aa16851e8920491e35ce3ab75`.
 
-## Result
+## Results
 
-CSV:
+Combined CSV:
 
+- `benchmark/csv_plots/gcp-n10-f3-silence-mahi-line-20260917.csv`
+
+Per-point CSVs:
+
+- `benchmark/csv_plots/gcp-n10-f3-silence-mahi-r30k-50s-20260917.csv`
+- `benchmark/csv_plots/gcp-n10-f3-silence-mahi-r60k-50s-20260917.csv`
+- `benchmark/csv_plots/gcp-n10-f3-silence-mahi-r100k-50s-20260917.csv`
 - `benchmark/csv_plots/gcp-n10-f3-silence-mahi-r120k-50s-20260917.csv`
+- `benchmark/csv_plots/gcp-n10-f3-silence-mahi-r150k-50s-20260917.csv`
 
-| Protocol | E2E TPS | E2E latency | Consensus TPS | Consensus latency | Notes |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Mahi-Mahi | 105,852 | 6,498 ms | 108,921 | 5,275 ms | No panic lines; no client missed-target warnings. |
+| Input rate | E2E TPS | E2E latency | Consensus TPS | Consensus latency | Log check |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 30K | 26,455 | 6,537 ms | 27,096 | 5,318 ms | Clean |
+| 60K | 52,878 | 6,391 ms | 54,974 | 5,258 ms | Clean |
+| 100K | 88,026 | 6,428 ms | 91,271 | 5,265 ms | Clean |
+| 120K | 105,852 | 6,498 ms | 108,921 | 5,275 ms | Clean |
+| 150K | 123,681 | 9,084 ms | 128,110 | 5,357 ms | Clean |
 
-## Comparison
+No panic lines or client missed-target warnings were observed in the 30K/60K/100K/150K logs. The earlier 120K probe also had no panic lines or missed-target warnings.
 
-The current workspace does not contain a saved 10-node f=3 silence CSV for the other protocols, so this is not yet a same-mode four-protocol comparison.
+## Interpretation
 
-Nearby 120K reference points:
+The line is directionally reasonable. Up to 120K, E2E latency stays near 6.4-6.5 s while throughput tracks the offered load after accounting for 3 silent nodes. At 150K, throughput still increases, but E2E latency rises to about 9.1 s, which suggests this is entering the higher-load region.
 
-| Setting | Protocol | E2E TPS | E2E latency | Notes |
-| --- | --- | ---: | ---: | --- |
-| f=0 | Mahi-Mahi | 107,629 | 4,933 ms | `gcp_pilot_n10_f0_r120k_50s_20260914.csv` |
-| f=1 silence | Mahi-Mahi | 107,333 | 5,682 ms | `gcp_pilot_n10_f1_r120k_50s_20260914.csv` |
-| f=3 silence | Mahi-Mahi | 105,852 | 6,498 ms | This run. |
-| f=3 equivocation | Mahi-Mahi | 73,433 | 6,911 ms | Different fault mode; active Byzantine attack. |
+Compared with the active equivocation setting, silence is much less damaging for Mahi-Mahi because silent nodes remove both data producers and protocol participants. Equivocation keeps Byzantine nodes active and deliberately spends synchronization and payload resources.
 
-This first f=3 silence point is directionally reasonable: throughput remains close to f=0/f=1 because silent faults remove both data producers and protocol participants, while latency increases modestly. It is much higher than the f=3 equivocation point because equivocation keeps Byzantine nodes active and deliberately consumes synchronization and payload resources.
+## Script Note
 
-## Caveat
-
-The benchmark run completed and produced complete logs for 7 active primaries, workers, and clients. The wrapper failed after log download during the full-VM configuration hash check with `Committee/parameter hashes differ across nodes: 2 variants`. In silence mode only the 7 active nodes receive fresh run configuration; the 3 silent VMs can retain an older config, so this post-run check is stricter than the actual active testbed. The saved CSV marks `config_hash_verified=active_nodes_only`.
+The wrapper now skips the full-VM configuration hash check in `silence` mode. Only active nodes receive fresh run configuration, while silent VMs can retain older `.committee.json` / `.parameters.json`; checking all stopped participants after the run can report false mismatches. Result CSVs mark this as `config_hash_verified=skipped_silence` for new runs.
